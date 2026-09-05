@@ -1,0 +1,6 @@
+.idea
+server/.air.toml
+server/tmp
+*.log
+node_modules/
+dist/
