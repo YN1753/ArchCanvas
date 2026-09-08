@@ -4,3 +4,5 @@ server/tmp
 *.log
 node_modules/
 dist/
+server/configs/.env
+server/configs/config.yaml
