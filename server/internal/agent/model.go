@@ -13,11 +13,11 @@ func NewChatModel(ctx context.Context, cfg config.ModelConfig, modelName string)
 	switch cfg.Type {
 	case "openai":
 		return openai.NewChatModel(ctx, &openai.ChatModelConfig{
-			APIKey:              cfg.APIKey,
-			BaseURL:             cfg.BaseURL,
-			Model:               modelName,
-			Temperature:         &cfg.Temperature,
-			MaxCompletionTokens: &cfg.MaxTokens,
+			APIKey:  cfg.APIKey,
+			BaseURL: cfg.BaseURL,
+			Model:   modelName,
+			//Temperature:         &cfg.Temperature,
+			//MaxCompletionTokens: &cfg.MaxTokens,
 		})
 	default:
 		return nil, fmt.Errorf("unknown model type: %s", cfg.Type)

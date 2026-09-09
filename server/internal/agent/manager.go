@@ -9,26 +9,26 @@ import (
 )
 
 type ModelManager struct {
-	configs         map[string]config.ModelConfig
-	currentName     string
-	currentProvider string
-	cache           map[string]model.BaseChatModel
+	Configs         map[string]config.ModelConfig
+	CurrentName     string
+	CurrentProvider string
+	Cache           map[string]model.BaseChatModel
 }
 
 func NewModelManager(
 	ctx context.Context,
 	configs map[string]config.ModelConfig,
 	defaultProvider string,
-) *ModelManager {
+) ModelManager {
 	defaultModelConfig, ok := configs[defaultProvider]
 	if !ok {
 		panic(fmt.Errorf("default provider not found: %s", defaultProvider))
 	}
 	manager := &ModelManager{
-		configs:         configs,
-		currentProvider: defaultProvider,
-		currentName:     defaultModelConfig.DefaultModel,
-		cache:           make(map[string]model.BaseChatModel),
+		Configs:         configs,
+		CurrentProvider: defaultProvider,
+		CurrentName:     defaultModelConfig.DefaultModel,
+		Cache:           make(map[string]model.BaseChatModel),
 	}
 
 	defaultModelKey, defaultModel, err := manager.CreateModel(
@@ -39,13 +39,16 @@ func NewModelManager(
 	if err != nil {
 		panic(err)
 	}
-	manager.cache[defaultModelKey] = defaultModel
+	manager.Cache[defaultModelKey] = defaultModel
 
-	return manager
+	return *manager
+}
+func (m *ModelManager) GetKey() string {
+	return fmt.Sprintf("%s:%s", m.CurrentProvider, m.CurrentName)
 }
 func (m *ModelManager) CreateModel(ctx context.Context, name string, provider string) (string, model.BaseChatModel, error) {
 	key := fmt.Sprintf("%s:%s", provider, name)
-	baseModel, err := NewChatModel(ctx, m.configs[provider], name)
+	baseModel, err := NewChatModel(ctx, m.Configs[provider], name)
 	if err != nil {
 		return "", nil, err
 	}
@@ -55,40 +58,40 @@ func (m *ModelManager) LoadModel(ctx context.Context) (model.BaseChatModel, erro
 
 	key := fmt.Sprintf(
 		"%s:%s",
-		m.currentProvider,
-		m.currentName,
+		m.CurrentProvider,
+		m.CurrentName,
 	)
 
-	if chatModel, ok := m.cache[key]; ok {
+	if chatModel, ok := m.Cache[key]; ok {
 		return chatModel, nil
 	}
 
 	_, chatModel, err := m.CreateModel(
 		ctx,
-		m.currentName,
-		m.currentProvider,
+		m.CurrentName,
+		m.CurrentProvider,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	m.cache[key] = chatModel
+	m.Cache[key] = chatModel
 
 	return chatModel, nil
 }
 func (m *ModelManager) SwitchModel(ctx context.Context, name string, provider string) (model.BaseChatModel, error) {
 	key := fmt.Sprintf("%s:%s", provider, name)
-	if chatModel, ok := m.cache[key]; ok {
-		m.currentName = name
-		m.currentProvider = provider
+	if chatModel, ok := m.Cache[key]; ok {
+		m.CurrentName = name
+		m.CurrentProvider = provider
 		return chatModel, nil
 	}
 	_, chatModel, err := m.CreateModel(ctx, name, provider)
 	if err != nil {
 		return nil, err
 	}
-	m.cache[key] = chatModel
-	m.currentProvider = provider
-	m.currentName = name
+	m.Cache[key] = chatModel
+	m.CurrentProvider = provider
+	m.CurrentName = name
 	return chatModel, nil
 }
