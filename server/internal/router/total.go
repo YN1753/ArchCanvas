@@ -15,6 +15,7 @@ func InitRouter(total handler.TotalHandler) *gin.Engine {
 	agent := route.Group("agent")
 	{
 		agent.POST("chat", total.Agent.Chat)
+		agent.POST("requirement/analyze", total.Agent.AnalyzeRequirement)
 	}
 
 	return r

@@ -20,3 +20,9 @@ func (a *AgentService) Run(ctx context.Context, input string) (*schema.StreamRea
 	})
 	return resp, err
 }
+
+func (a *AgentService) AnalyzeRequirement(ctx context.Context, input string) (*RequirementResult, error) {
+	return a.Requirement.Analyze(ctx, RequirementInput{
+		Message: input,
+	})
+}

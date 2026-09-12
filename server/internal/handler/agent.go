@@ -6,6 +6,7 @@ import (
 	"archcanvas/request"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +19,29 @@ func NewAgentHandler(agent service.AgentService) AgentHandler {
 	return AgentHandler{
 		Agent: agent,
 	}
+}
+
+func (a *AgentHandler) AnalyzeRequirement(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.GetChatReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	input := strings.TrimSpace(req.Input)
+	if input == "" {
+		response.Fail(c, http.StatusBadRequest, "input is required", nil)
+		return
+	}
+
+	result, err := a.Agent.AnalyzeRequirement(ctx, input)
+	if err != nil {
+		response.Fail(c, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+
+	response.Success(c, result)
 }
 
 func (a *AgentHandler) Chat(c *gin.Context) {

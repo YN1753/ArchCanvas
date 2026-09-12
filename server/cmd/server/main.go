@@ -3,6 +3,7 @@ package main
 import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/config"
+	"archcanvas/internal/database"
 	"archcanvas/internal/handler"
 	"archcanvas/internal/router"
 	"archcanvas/internal/service"
@@ -12,6 +13,9 @@ import (
 
 func main() {
 	cfg := config.Load("./configs")
+	if _, err := database.Initialize(cfg.Database); err != nil {
+		panic(err)
+	}
 	ctx := context.Background()
 	modelManager := agent.NewModelManager(ctx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider)
 

@@ -3,6 +3,10 @@ package service
 import (
 	"archcanvas/internal/agent"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -371,11 +375,175 @@ func (r *RequirementAgent) Run(
 	ctx context.Context,
 	input RequirementInput,
 ) (*schema.StreamReader[*schema.Message], error) {
+	messages := r.buildMessages(input)
 
-	messages := []*schema.Message{
+	chatModel, err := r.Model.LoadModel(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return chatModel.Stream(ctx, messages)
+}
+
+func (r *RequirementAgent) Analyze(
+	ctx context.Context,
+	input RequirementInput,
+) (*RequirementResult, error) {
+	messages := r.buildMessages(input)
+
+	chatModel, err := r.Model.LoadModel(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	msg, err := chatModel.Generate(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+
+	jsonText, err := extractJSONObject(msg.Content)
+	if err != nil {
+		return nil, fmt.Errorf("extract requirement result json: %w", err)
+	}
+
+	var result RequirementResult
+	if err := json.Unmarshal([]byte(jsonText), &result); err != nil {
+		return nil, fmt.Errorf("parse requirement result json: %w", err)
+	}
+
+	if err := ValidateRequirementResult(&result); err != nil {
+		return nil, fmt.Errorf("validate requirement result: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (r *RequirementAgent) buildMessages(input RequirementInput) []*schema.Message {
+	return []*schema.Message{
 		schema.SystemMessage(r.SystemPrompt),
 		schema.UserMessage(input.Message),
 	}
+}
 
-	return r.Model.Cache[r.Model.GetKey()].Stream(ctx, messages)
+func ValidateRequirementResult(result *RequirementResult) error {
+	if result == nil {
+		return errors.New("result is nil")
+	}
+
+	validOperationScopes := map[string]bool{
+		"create": true,
+		"modify": true,
+		"delete": true,
+		"mixed":  true,
+	}
+	validOperations := map[string]bool{
+		"create": true,
+		"modify": true,
+		"delete": true,
+	}
+	validTargetTypes := map[string]bool{
+		"entity":     true,
+		"attribute":  true,
+		"relation":   true,
+		"constraint": true,
+	}
+	validSources := map[string]bool{
+		"explicit": true,
+		"inferred": true,
+	}
+
+	result.OperationScope = strings.TrimSpace(result.OperationScope)
+	result.Summary = strings.TrimSpace(result.Summary)
+
+	if !validOperationScopes[result.OperationScope] {
+		return fmt.Errorf("invalid operation_scope: %q", result.OperationScope)
+	}
+	if result.Summary == "" {
+		return errors.New("summary is required")
+	}
+	if result.NeedClarification && len(result.Questions) == 0 {
+		return errors.New("questions are required when need_clarification is true")
+	}
+	if !result.NeedClarification && len(result.Decisions) == 0 {
+		return errors.New("decisions are required when need_clarification is false")
+	}
+
+	for i := range result.Decisions {
+		decision := &result.Decisions[i]
+		decision.Operation = strings.TrimSpace(decision.Operation)
+		decision.TargetType = strings.TrimSpace(decision.TargetType)
+		decision.Target = strings.TrimSpace(decision.Target)
+		decision.Description = strings.TrimSpace(decision.Description)
+		decision.Reason = strings.TrimSpace(decision.Reason)
+		decision.Source = strings.TrimSpace(decision.Source)
+
+		if !validOperations[decision.Operation] {
+			return fmt.Errorf("decisions[%d].operation is invalid: %q", i, decision.Operation)
+		}
+		if !validTargetTypes[decision.TargetType] {
+			return fmt.Errorf("decisions[%d].target_type is invalid: %q", i, decision.TargetType)
+		}
+		if decision.Target == "" {
+			return fmt.Errorf("decisions[%d].target is required", i)
+		}
+		if decision.Description == "" {
+			return fmt.Errorf("decisions[%d].description is required", i)
+		}
+		if decision.Reason == "" {
+			return fmt.Errorf("decisions[%d].reason is required", i)
+		}
+		if !validSources[decision.Source] {
+			return fmt.Errorf("decisions[%d].source is invalid: %q", i, decision.Source)
+		}
+	}
+
+	return nil
+}
+
+func extractJSONObject(content string) (string, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", errors.New("model response content is empty")
+	}
+
+	start := strings.Index(content, "{")
+	if start < 0 {
+		return "", errors.New("json object start not found")
+	}
+
+	inString := false
+	escaped := false
+	depth := 0
+
+	for i := start; i < len(content); i++ {
+		ch := content[i]
+
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return content[start : i+1], nil
+			}
+		}
+	}
+
+	return "", errors.New("json object end not found")
 }

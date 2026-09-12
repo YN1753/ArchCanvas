@@ -1,6 +1,6 @@
 package domain
 
-type Architecture struct {
+type ERDesign struct {
 	Entities  []Entity   `json:"entities"`
 	Relations []Relation `json:"relations"`
 }
