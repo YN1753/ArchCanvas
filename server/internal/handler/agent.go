@@ -23,7 +23,7 @@ func NewAgentHandler(agent service.AgentService) AgentHandler {
 
 func (a *AgentHandler) AnalyzeRequirement(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.GetChatReq
+	var req request.AnalyzeRequirementReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -35,7 +35,7 @@ func (a *AgentHandler) AnalyzeRequirement(c *gin.Context) {
 		return
 	}
 
-	result, err := a.Agent.AnalyzeRequirement(ctx, input)
+	result, err := a.Agent.AnalyzeRequirement(ctx, req.ProjectID, input)
 	if err != nil {
 		response.Fail(c, http.StatusBadGateway, err.Error(), nil)
 		return

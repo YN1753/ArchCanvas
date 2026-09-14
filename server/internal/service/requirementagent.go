@@ -2,6 +2,7 @@ package service
 
 import (
 	"archcanvas/internal/agent"
+	"archcanvas/internal/domain"
 	"context"
 	"encoding/json"
 	"errors"
@@ -341,8 +342,9 @@ type RequirementAgent struct {
 	SystemPrompt string
 }
 type RequirementInput struct {
-	Message string
-	Context *localmodel.AIContext
+	Message         string
+	CurrentERDesign *domain.ERDesign
+	Context         *localmodel.AIContext
 }
 type RequirementDecision struct {
 	Operation   string `json:"operation"`
@@ -375,7 +377,10 @@ func (r *RequirementAgent) Run(
 	ctx context.Context,
 	input RequirementInput,
 ) (*schema.StreamReader[*schema.Message], error) {
-	messages := r.buildMessages(input)
+	messages, err := r.buildMessages(input)
+	if err != nil {
+		return nil, err
+	}
 
 	chatModel, err := r.Model.LoadModel(ctx)
 	if err != nil {
@@ -389,7 +394,10 @@ func (r *RequirementAgent) Analyze(
 	ctx context.Context,
 	input RequirementInput,
 ) (*RequirementResult, error) {
-	messages := r.buildMessages(input)
+	messages, err := r.buildMessages(input)
+	if err != nil {
+		return nil, err
+	}
 
 	chatModel, err := r.Model.LoadModel(ctx)
 	if err != nil {
@@ -418,11 +426,25 @@ func (r *RequirementAgent) Analyze(
 	return &result, nil
 }
 
-func (r *RequirementAgent) buildMessages(input RequirementInput) []*schema.Message {
+func (r *RequirementAgent) buildMessages(input RequirementInput) ([]*schema.Message, error) {
+	userMessage := input.Message
+	if input.CurrentERDesign != nil {
+		erDesignJSON, err := json.Marshal(input.CurrentERDesign)
+		if err != nil {
+			return nil, fmt.Errorf("marshal current er design: %w", err)
+		}
+
+		userMessage = fmt.Sprintf(
+			"【当前 ER 设计】\n%s\n\n【用户本次需求】\n%s\n\n请基于当前 ER 设计输出本次增量决策，不要重复创建已有内容。",
+			erDesignJSON,
+			input.Message,
+		)
+	}
+
 	return []*schema.Message{
 		schema.SystemMessage(r.SystemPrompt),
-		schema.UserMessage(input.Message),
-	}
+		schema.UserMessage(userMessage),
+	}, nil
 }
 
 func ValidateRequirementResult(result *RequirementResult) error {
