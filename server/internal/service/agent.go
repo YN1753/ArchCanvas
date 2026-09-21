@@ -30,9 +30,6 @@ func NewAgentService(
 	}
 }
 
-// Chat 作为总指挥中枢，显式编排全流程：
-// 1. 组装输入；2. 调用 AnalyzeRequirement 推理并推送打字流；
-// 3. 开发者在代码中执行硬编码业务决策（如澄清分支）；4. 显式调用 ProjectService 落库；5. 推送最终结果。
 func (a *AgentService) Chat(
 	ctx context.Context,
 	req request.ChatReq,
@@ -51,11 +48,8 @@ func (a *AgentService) Chat(
 			}
 		}
 
-		// 2. 发送初始状态
-		outCh <- StreamEvent{Type: EventStatus, Data: "AI 正在分析架构需求…"}
-
-		// 3. 调用纯净推理方法：只负责接收 Input、产出 Output，期间将思考 token 回调推给打字机
-		output, err := a.AnalyzeRequirement(ctx, RequirementInput{
+		outCh <- StreamEvent{Type: EventStatus, Data: "AI 需求分析师正在梳理业务概念与边界…"}
+		reqOutput, err := a.AnalyzeRequirement(ctx, RequirementInput{
 			ProjectID:       req.ProjectID,
 			Message:         req.Input,
 			CurrentERDesign: currentDesign,
@@ -69,47 +63,48 @@ func (a *AgentService) Chat(
 			return
 		}
 
-		// 4. 开发者在代码里写显式硬编码业务逻辑判断！
-		if output.NeedClarification {
-			// 检测到需求存在歧义，不盲目落库，直接向前端返回确认问题
+		if reqOutput.NeedClarification {
 			outCh <- StreamEvent{Type: EventStatus, Data: "检测到需求存在疑问，需要进一步确认"}
-			outCh <- StreamEvent{Type: EventResult, Data: output}
+			outCh <- StreamEvent{Type: EventResult, Data: reqOutput}
 			outCh <- StreamEvent{Type: EventDone, Data: true}
 			return
 		}
 
-		// 5. 显式调用 ProjectService 落库，代码清晰可控
-		outCh <- StreamEvent{Type: EventStatus, Data: "数据模型分析完成，正在持久化落库…"}
-		outCh <- StreamEvent{Type: EventToolCall, Data: output}
+		outCh <- StreamEvent{Type: EventStatus, Data: "业务概念已明确，架构师正在设计物理表结构与字段类型…"}
+
+		erDesign, err := a.DesignSchema(ctx, SchemaDesignInput{
+			Requirement:     reqOutput,
+			CurrentERDesign: currentDesign,
+			ModelProvider:   req.ModelProvider,
+			ModelName:       req.ModelName,
+		}, func(chunk string) {
+			outCh <- StreamEvent{Type: EventThinking, Data: chunk}
+		})
+		if err != nil {
+			outCh <- StreamEvent{Type: EventError, Data: err.Error()}
+			return
+		}
+
+		outCh <- StreamEvent{Type: EventStatus, Data: "数据模型设计完成，正在持久化落库…"}
+		outCh <- StreamEvent{Type: EventToolCall, Data: erDesign}
 
 		if a.ProjectService != nil && req.ProjectID != "" {
-			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, domain.ERDesign{
-				Entities:  output.Entities,
-				Relations: output.Relations,
-			})
+			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, *erDesign)
 			if err != nil {
 				outCh <- StreamEvent{Type: EventError, Data: "落库失败: " + err.Error()}
 				return
 			}
-			// 6. 将最终落库成功的设计图回传前端
 			outCh <- StreamEvent{Type: EventResult, Data: savedResult.Design}
 		} else {
-			outCh <- StreamEvent{Type: EventResult, Data: domain.ERDesign{
-				Entities:  output.Entities,
-				Relations: output.Relations,
-			}}
+			outCh <- StreamEvent{Type: EventResult, Data: *erDesign}
 		}
 
-		// 7. 发送流式完成标记
 		outCh <- StreamEvent{Type: EventDone, Data: true}
 	}()
 
 	return outCh, nil
 }
 
-// AnalyzeRequirement 纯净的推理方法：
-// 职责单一：接收 Input，返回严格填写的 Output；每收到一个思考 token 触发 onThinking 回调。
-// 绝不触碰任何数据库逻辑，不产生隐式副作用。
 func (a *AgentService) AnalyzeRequirement(
 	ctx context.Context,
 	input RequirementInput,
@@ -124,7 +119,7 @@ func (a *AgentService) AnalyzeRequirement(
 		return nil, err
 	}
 
-	toolList, err := tools.BuildTools(ctx)
+	toolList, err := tools.BuildRequirementTools(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +130,6 @@ func (a *AgentService) AnalyzeRequirement(
 
 	messages := a.buildRequirementMessages(input)
 
-	// 调用大模型 Stream 发起流式推理
 	stream, err := toolModel.Stream(ctx, messages)
 	if err != nil {
 		return nil, err
@@ -163,63 +157,150 @@ func (a *AgentService) AnalyzeRequirement(
 	concatMsg, err := schema.ConcatMessages(accumulatedMses)
 	if err == nil && len(concatMsg.ToolCalls) > 0 {
 		for _, tc := range concatMsg.ToolCalls {
-			if tc.Function.Name == tools.SaveERDesignToolName {
-				var args tools.ProposeERDesignArgs
+			if tc.Function.Name == tools.ProposeRequirementToolName {
+				var args tools.ProposeRequirementArgs
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
 					return &RequirementOutput{
-						Summary:           args.Summary,
-						Entities:          args.Entities,
-						Relations:         args.Relations,
-						NeedClarification: args.NeedClarification,
-						Questions:         args.Questions,
+						Summary:             args.Summary,
+						Concepts:            args.Concepts,
+						Relations:           args.Relations,
+						Assumptions:         args.Assumptions,
+						NegativeConstraints: args.NegativeConstraints,
+						NeedClarification:   args.NeedClarification,
+						Questions:           args.Questions,
 					}, nil
 				}
 			}
 		}
 	}
+
 	if concatMsg != nil && concatMsg.Content != "" {
-		if parsed, err := tryParseJSONContent(concatMsg.Content); err == nil {
+		if parsed, err := tryParseRequirementJSON(concatMsg.Content); err == nil {
 			return parsed, nil
 		}
 		return &RequirementOutput{
 			Summary:           concatMsg.Content,
-			Entities:          []domain.Entity{},
-			Relations:         []domain.Relation{},
+			Concepts:          []domain.BusinessConcept{},
+			Relations:         []domain.ConceptRelation{},
 			NeedClarification: false,
 		}, nil
 	}
 
-	return nil, errors.New("大模型未返回有效的结构化数据模型设计方案")
+	return nil, errors.New("大模型未返回有效的业务需求分析结果")
 }
 
-// buildRequirementMessages 组装大模型结构化 Prompt
+// DesignSchema 阶段二：纯净的物理数据库建模算子
+// 职责单一：将业务概念模型转换为物理数据库表结构（domain.ERDesign，包含主键、SQL字段类型、外键关联）；零落库副作用。
+func (a *AgentService) DesignSchema(
+	ctx context.Context,
+	input SchemaDesignInput,
+	onThinking func(chunk string),
+) (*domain.ERDesign, error) {
+	if a.ModelManager == nil {
+		return nil, errors.New("model manager is not configured")
+	}
+
+	chatModel, err := a.ModelManager.GetModel(ctx, input.ModelProvider, input.ModelName)
+	if err != nil {
+		return nil, err
+	}
+
+	toolList, err := tools.BuildDesignTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toolModel, err := chatModel.WithTools(toolList)
+	if err != nil {
+		return nil, err
+	}
+
+	messages := a.buildSchemaDesignMessages(input)
+
+	stream, err := toolModel.Stream(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	var accumulatedMses []*schema.Message
+
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if chunk.Content != "" && onThinking != nil {
+			onThinking(chunk.Content)
+		}
+
+		accumulatedMses = append(accumulatedMses, chunk)
+	}
+
+	concatMsg, err := schema.ConcatMessages(accumulatedMses)
+	if err == nil && len(concatMsg.ToolCalls) > 0 {
+		for _, tc := range concatMsg.ToolCalls {
+			if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
+				var args tools.ProposeSchemaDesignArgs
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
+					return &domain.ERDesign{
+						Entities:  args.Entities,
+						Relations: args.Relations,
+					}, nil
+				}
+			}
+		}
+	}
+
+	if concatMsg != nil && concatMsg.Content != "" {
+		if parsed, err := tryParseSchemaJSON(concatMsg.Content); err == nil {
+			return parsed, nil
+		}
+	}
+
+	return nil, errors.New("大模型未返回有效的物理数据库表结构设计方案")
+}
+
+// buildRequirementMessages 组装阶段一业务需求分析 Prompt
 func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schema.Message {
 	var prompt strings.Builder
-	prompt.WriteString("你是 ArchCanvas 的资深数据模型架构师。请分析用户需求，并通过调用 save_er_design 工具提交完整合理的设计方案。\n\n")
+	prompt.WriteString("你是一位资深的系统业务分析师（Requirements Analyst）。\n")
+	prompt.WriteString("你的职责是专注业务领域模型（Business Concepts），梳理出实体概念、业务属性、概念关系、假设与业务边界。\n\n")
+
+	prompt.WriteString("【严格遵循的状态枚举取值限制】：\n")
+	prompt.WriteString("- 概念操作 operation 必须且只能是以下四项之一：\"create\"（新增概念）, \"modify\"（修改概念）, \"retain\"（保留概念）, \"delete\"（删除概念）\n")
+	prompt.WriteString("- 关联基数 cardinality 必须且只能是以下三项之一：\"one_to_one\"（一对一）, \"one_to_many\"（一对多）, \"many_to_many\"（多对多）\n")
+	prompt.WriteString("- 属性类别 category 必须且只能是以下六项之一：\"string\"（文本）, \"number\"（数值）, \"boolean\"（布尔）, \"datetime\"（日期时间）, \"enum\"（枚举）, \"media\"（文件/多媒体）\n\n")
 
 	if len(input.Constraints) > 0 {
-		prompt.WriteString("【用户历史明确提出的硬性红线与禁忌（必须绝对遵守，严禁推翻违背）】：\n")
+		prompt.WriteString("【用户历史明确提出的硬性红线（必须绝对遵守）】：\n")
 		for _, c := range input.Constraints {
 			prompt.WriteString(fmt.Sprintf("- %s\n", c))
 		}
 		prompt.WriteString("\n")
 	}
 	if len(input.Decisions) > 0 {
-		prompt.WriteString("【历史已达成的核心设计共识与决策】：\n")
+		prompt.WriteString("【历史已达成的核心设计共识】：\n")
 		for _, d := range input.Decisions {
 			prompt.WriteString(fmt.Sprintf("- %s\n", d))
 		}
 		prompt.WriteString("\n")
 	}
 
-	if input.CurrentERDesign != nil {
+	if input.CurrentERDesign != nil && len(input.CurrentERDesign.Entities) > 0 {
 		erJSON, err := json.Marshal(input.CurrentERDesign)
 		if err == nil {
-			prompt.WriteString(fmt.Sprintf("【当前已有数据库设计】：\n%s\n\n请在已有设计基础上做增量修改或扩展，切勿无故删除或重构已有表。\n\n", string(erJSON)))
+			prompt.WriteString(fmt.Sprintf("【当前已有系统数据模型（增量分析上下文）】：\n%s\n\n", string(erJSON)))
 		}
 	}
 
-	prompt.WriteString("请先用自然语言简要陈述你的设计思路与业务考虑（这会实时展现给用户），并在最后调用 `save_er_design` 工具提交结构化数据模型。")
+	prompt.WriteString("【输出要求】：\n")
+	prompt.WriteString("1. 请先用自然语言简要阐述你的业务分析思考与推导（这会流式展示给用户）；\n")
+	prompt.WriteString("2. 若需求存在重大模糊或关键矛盾，将 need_clarification 设为 true 并在 questions 中列出追问问题；\n")
+	prompt.WriteString("3. 最终通过调用 `propose_requirement` 工具提交结构化的业务概念模型。\n")
 
 	return []*schema.Message{
 		schema.SystemMessage(prompt.String()),
@@ -227,7 +308,47 @@ func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schem
 	}
 }
 
-func tryParseJSONContent(content string) (*RequirementOutput, error) {
+// buildSchemaDesignMessages 组装阶段二物理数据库建模 Prompt
+func (a *AgentService) buildSchemaDesignMessages(input SchemaDesignInput) []*schema.Message {
+	var prompt strings.Builder
+	prompt.WriteString("你是一位精通 MySQL / PostgreSQL 物理架构的资深数据库架构师（Database Architect）。\n")
+	prompt.WriteString("你的职责是根据业务分析师输出的业务概念模型（Business Concepts）和关系，推导生成高质量的物理数据库表结构（Entities）与表间关系（Relations）。\n\n")
+
+	prompt.WriteString("【建表与字段设计规范】：\n")
+	prompt.WriteString("1. 每张表必须包含主键 `id`（is_primary_key=true, db_type 为 BIGINT AUTO_INCREMENT 或 VARCHAR(36) UUID, code_type 为 int64 或 string）；\n")
+	prompt.WriteString("2. 根据业务属性类别映射最高效精准的 SQL 物理类型（db_type）与代码类型（code_type）：\n")
+	prompt.WriteString("   - string -> VARCHAR(255) / TEXT (code_type: string)\n")
+	prompt.WriteString("   - number -> BIGINT / INT / DECIMAL(10,2) (code_type: int64 / float64)\n")
+	prompt.WriteString("   - boolean -> TINYINT(1) / BOOLEAN (code_type: bool)\n")
+	prompt.WriteString("   - datetime -> DATETIME / TIMESTAMP (code_type: time.Time)\n")
+	prompt.WriteString("   - enum -> VARCHAR(32) (code_type: string)\n")
+	prompt.WriteString("   - media -> VARCHAR(512) (code_type: string)\n")
+	prompt.WriteString("3. 根据业务关联关系（one_to_many, many_to_many）建立合理的外键字段（如 user_id BIGINT）和 Relation 连线；\n")
+	prompt.WriteString("4. 表的 ID 请使用简洁英文小写复数（如 users, orders, order_items），字段 ID 请使用蛇形命名（如 user_id, order_no）。\n\n")
+
+	if input.Requirement != nil {
+		reqJSON, err := json.Marshal(input.Requirement)
+		if err == nil {
+			prompt.WriteString(fmt.Sprintf("【前置业务概念分析结果】：\n%s\n\n", string(reqJSON)))
+		}
+	}
+
+	if input.CurrentERDesign != nil && len(input.CurrentERDesign.Entities) > 0 {
+		erJSON, err := json.Marshal(input.CurrentERDesign)
+		if err == nil {
+			prompt.WriteString(fmt.Sprintf("【当前已有数据库物理表设计（平滑增量修改）】：\n%s\n\n", string(erJSON)))
+		}
+	}
+
+	prompt.WriteString("请先用自然语言简要阐明你的物理表设计理由与索引规划（流式展示给用户），随后调用 `save_er_design` 工具提交最终的物理 ER 模型。")
+
+	return []*schema.Message{
+		schema.SystemMessage(prompt.String()),
+		schema.UserMessage("请根据上述业务概念模型生成完整的物理数据库表结构与关联设计。"),
+	}
+}
+
+func tryParseRequirementJSON(content string) (*RequirementOutput, error) {
 	content = strings.TrimSpace(content)
 	if strings.Contains(content, "```json") {
 		parts := strings.Split(content, "```json")
@@ -243,5 +364,24 @@ func tryParseJSONContent(content string) (*RequirementOutput, error) {
 	if err := json.Unmarshal([]byte(content), &out); err == nil {
 		return &out, nil
 	}
-	return nil, errors.New("cannot parse JSON")
+	return nil, errors.New("cannot parse RequirementOutput JSON")
+}
+
+func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
+	content = strings.TrimSpace(content)
+	if strings.Contains(content, "```json") {
+		parts := strings.Split(content, "```json")
+		if len(parts) > 1 {
+			jsonBlock, _, _ := strings.Cut(parts[1], "```")
+			var out domain.ERDesign
+			if err := json.Unmarshal([]byte(strings.TrimSpace(jsonBlock)), &out); err == nil && len(out.Entities) > 0 {
+				return &out, nil
+			}
+		}
+	}
+	var out domain.ERDesign
+	if err := json.Unmarshal([]byte(content), &out); err == nil && len(out.Entities) > 0 {
+		return &out, nil
+	}
+	return nil, errors.New("cannot parse ERDesign JSON")
 }

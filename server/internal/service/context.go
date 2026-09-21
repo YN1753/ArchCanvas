@@ -2,7 +2,40 @@ package service
 
 import "archcanvas/internal/domain"
 
-// AgentContext 业务上下文信息，便于上下文管理、多轮对话扩展和动态切换模型
+// 类型别名重新导出，方便 service 外部或内部直接引用
+type ConceptOperation = domain.ConceptOperation
+
+const (
+	OpCreate = domain.OpCreate
+	OpModify = domain.OpModify
+	OpRetain = domain.OpRetain
+	OpDelete = domain.OpDelete
+)
+
+type ConceptCardinality = domain.ConceptCardinality
+
+const (
+	CardOneToOne   = domain.CardOneToOne
+	CardOneToMany  = domain.CardOneToMany
+	CardManyToMany = domain.CardManyToMany
+)
+
+type AttributeCategory = domain.AttributeCategory
+
+const (
+	AttrString   = domain.AttrString
+	AttrNumber   = domain.AttrNumber
+	AttrBoolean  = domain.AttrBoolean
+	AttrDateTime = domain.AttrDateTime
+	AttrEnum     = domain.AttrEnum
+	AttrMedia    = domain.AttrMedia
+)
+
+type ConceptAttribute = domain.ConceptAttribute
+type BusinessConcept = domain.BusinessConcept
+type ConceptRelation = domain.ConceptRelation
+
+// AgentContext 业务上下文信息
 type AgentContext struct {
 	ProjectID       string           `json:"project_id"`
 	CurrentERDesign *domain.ERDesign `json:"current_er_design,omitempty"`
@@ -12,7 +45,7 @@ type AgentContext struct {
 	ModelName       string           `json:"model_name,omitempty"`     // 可选：指定模型名称
 }
 
-// RequirementInput 需求分析方法的纯净输入契约
+// RequirementInput 需求分析算子的输入契约
 type RequirementInput struct {
 	ProjectID       string           `json:"project_id"`
 	Message         string           `json:"message"`
@@ -23,11 +56,21 @@ type RequirementInput struct {
 	ModelName       string           `json:"model_name,omitempty"`
 }
 
-// RequirementOutput 需求分析方法的纯净结构化输出契约
+// RequirementOutput 需求分析算子的纯净业务结构化输出契约
 type RequirementOutput struct {
-	Summary           string            `json:"summary" jsonschema:"description=数据模型设计的业务摘要与设计思路"`
-	Entities          []domain.Entity   `json:"entities" jsonschema:"description=推导出的业务实体列表"`
-	Relations         []domain.Relation `json:"relations" jsonschema:"description=实体之间的关联关系"`
-	NeedClarification bool              `json:"need_clarification" jsonschema:"description=需求是否存在重大歧义导致无法确定设计"`
-	Questions         []string          `json:"questions,omitempty" jsonschema:"description=需要用户进一步澄清确认的问题"`
+	Summary             string                   `json:"summary" jsonschema:"description=需求理解与概念模型设计的业务摘要"`
+	Concepts            []domain.BusinessConcept `json:"concepts" jsonschema:"description=梳理出的业务概念模型列表"`
+	Relations           []domain.ConceptRelation `json:"relations" jsonschema:"description=概念之间的关联关系"`
+	Assumptions         []string                 `json:"assumptions,omitempty" jsonschema:"description=推断出的业务假设"`
+	NegativeConstraints []string                 `json:"negative_constraints,omitempty" jsonschema:"description=识别出的明确业务边界与非需求"`
+	NeedClarification   bool                     `json:"need_clarification" jsonschema:"description=需求是否存在重大歧义导致无法确定设计"`
+	Questions           []string                 `json:"questions,omitempty" jsonschema:"description=需要用户进一步澄清确认的问题"`
+}
+
+// SchemaDesignInput 物理建模算子的输入契约
+type SchemaDesignInput struct {
+	Requirement     *RequirementOutput `json:"requirement"`
+	CurrentERDesign *domain.ERDesign   `json:"current_er_design,omitempty"`
+	ModelProvider   string             `json:"model_provider,omitempty"`
+	ModelName       string             `json:"model_name,omitempty"`
 }
