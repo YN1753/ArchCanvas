@@ -5,9 +5,15 @@ type ERDesign struct {
 	Relations []Relation `json:"relations"`
 }
 
+type Position struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
 type Entity struct {
 	ID         string      `json:"id"`
 	Name       string      `json:"name"`
+	Position   *Position   `json:"position,omitempty"`
 	Attributes []Attribute `json:"attributes"`
 }
 

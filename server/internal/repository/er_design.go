@@ -8,6 +8,9 @@ import (
 	"archcanvas/internal/domain"
 	"archcanvas/internal/model"
 
+	"strings"
+
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -81,9 +84,18 @@ func (r *ERDesignRepository) GetByProjectID(
 			entityAttributes = make([]domain.Attribute, 0)
 		}
 
+		var pos *domain.Position
+		if entity.PosX != nil && entity.PosY != nil {
+			pos = &domain.Position{
+				X: *entity.PosX,
+				Y: *entity.PosY,
+			}
+		}
+
 		design.Entities = append(design.Entities, domain.Entity{
 			ID:         entity.ID,
 			Name:       entity.Name,
+			Position:   pos,
 			Attributes: entityAttributes,
 		})
 	}
@@ -99,6 +111,130 @@ func (r *ERDesignRepository) GetByProjectID(
 	return design, nil
 }
 
+func (r *ERDesignRepository) SaveByProjectID(
+	ctx context.Context,
+	projectID string,
+	entities []domain.Entity,
+	relations []domain.Relation,
+) (*domain.ERDesign, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("er design repository database is nil")
+	}
+	if projectID == "" {
+		return nil, ErrProjectIDRequired
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var oldEntities []model.Entity
+		if err := tx.Where("project_id = ?", projectID).Find(&oldEntities).Error; err != nil {
+			return err
+		}
+		oldPosByID := make(map[string][2]*float64, len(oldEntities))
+		oldPosByName := make(map[string][2]*float64, len(oldEntities))
+		for _, e := range oldEntities {
+			if e.PosX != nil && e.PosY != nil {
+				oldPosByID[e.ID] = [2]*float64{e.PosX, e.PosY}
+				oldPosByName[strings.ToLower(e.Name)] = [2]*float64{e.PosX, e.PosY}
+			}
+		}
+
+		if len(oldEntities) > 0 {
+			oldEntityIDs := make([]string, 0, len(oldEntities))
+			for _, e := range oldEntities {
+				oldEntityIDs = append(oldEntityIDs, e.ID)
+			}
+			if err := tx.Where("entity_id IN ?", oldEntityIDs).Delete(&model.Attribute{}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.Entity{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.Relation{}).Error; err != nil {
+			return err
+		}
+
+		for _, e := range entities {
+			entityID := e.ID
+			if entityID == "" {
+				entityID = uuid.New().String()
+			}
+			var posX, posY *float64
+			if e.Position != nil {
+				x := e.Position.X
+				y := e.Position.Y
+				posX = &x
+				posY = &y
+			} else if oldPos, ok := oldPosByID[entityID]; ok {
+				posX = oldPos[0]
+				posY = oldPos[1]
+			} else if oldPos, ok := oldPosByName[strings.ToLower(e.Name)]; ok {
+				posX = oldPos[0]
+				posY = oldPos[1]
+			}
+
+			entityModel := model.Entity{
+				ID:        entityID,
+				ProjectID: projectID,
+				Name:      e.Name,
+				PosX:      posX,
+				PosY:      posY,
+			}
+			if err := tx.Create(&entityModel).Error; err != nil {
+				return err
+			}
+
+			for _, attr := range e.Attributes {
+				attrID := attr.ID
+				if attrID == "" {
+					attrID = uuid.New().String()
+				}
+				attrModel := model.Attribute{
+					ID:           attrID,
+					EntityID:     entityID,
+					Name:         attr.Name,
+					DBType:       attr.DBType,
+					CodeType:     attr.CodeType,
+					IsPrimaryKey: attr.IsPrimaryKey,
+					IsNullable:   attr.IsNullable,
+					IsUnique:     attr.IsUnique,
+					DefaultValue: attr.DefaultValue,
+					Description:  attr.Description,
+				}
+				if err := tx.Create(&attrModel).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		for _, rel := range relations {
+			relID := rel.ID
+			if relID == "" {
+				relID = uuid.New().String()
+			}
+			relModel := model.Relation{
+				ID:             relID,
+				ProjectID:      projectID,
+				SourceEntityID: rel.SourceEntityID,
+				TargetEntityID: rel.TargetEntityID,
+				RelationTypeID: rel.RelationTypeID,
+			}
+			if err := tx.Create(&relModel).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("save er design for project %q: %w", projectID, err)
+	}
+
+	return r.GetByProjectID(ctx, projectID)
+}
+
 func toDomainAttribute(attribute model.Attribute) domain.Attribute {
 	return domain.Attribute{
 		ID:           attribute.ID,
@@ -112,3 +248,4 @@ func toDomainAttribute(attribute model.Attribute) domain.Attribute {
 		Description:  attribute.Description,
 	}
 }
+

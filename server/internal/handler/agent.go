@@ -4,7 +4,6 @@ import (
 	"archcanvas/internal/service"
 	"archcanvas/pkg/response"
 	"archcanvas/request"
-	"io"
 	"net/http"
 	"strings"
 
@@ -12,18 +11,18 @@ import (
 )
 
 type AgentHandler struct {
-	Agent service.AgentService
+	Agent *service.AgentService
 }
 
-func NewAgentHandler(agent service.AgentService) AgentHandler {
+func NewAgentHandler(agent *service.AgentService) AgentHandler {
 	return AgentHandler{
 		Agent: agent,
 	}
 }
 
-func (a *AgentHandler) AnalyzeRequirement(c *gin.Context) {
+func (a *AgentHandler) Chat(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.AnalyzeRequirementReq
+	var req request.ChatReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -35,33 +34,17 @@ func (a *AgentHandler) AnalyzeRequirement(c *gin.Context) {
 		return
 	}
 
-	result, err := a.Agent.AnalyzeRequirement(ctx, req.ProjectID, input)
-	if err != nil {
-		response.Fail(c, http.StatusBadGateway, err.Error(), nil)
-		return
-	}
-
-	response.Success(c, result)
-}
-
-func (a *AgentHandler) Chat(c *gin.Context) {
-	ctx := c.Request.Context()
-	var req request.GetChatReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, 400, err.Error(), nil)
-		return
-	}
-	stream, err := a.Agent.Run(ctx, req.Input)
+	req.Input = input
+	eventCh, err := a.Agent.Chat(ctx, req)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
-	defer stream.Close()
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-
 	c.Status(http.StatusOK)
 
 	flusher, _ := c.Writer.(http.Flusher)
@@ -70,27 +53,10 @@ func (a *AgentHandler) Chat(c *gin.Context) {
 			flusher.Flush()
 		}
 	}
+	flush()
 
-	for {
-		msg, err := stream.Recv()
-
-		if err == io.EOF {
-			c.SSEvent("done", gin.H{"ok": true})
-			flush()
-			break
-		}
-
-		if err != nil {
-			c.SSEvent("error", gin.H{"message": err.Error()})
-			flush()
-			return
-		}
-
-		if msg.Content == "" {
-			continue
-		}
-
-		c.SSEvent("message", gin.H{"content": msg.Content})
+	for event := range eventCh {
+		c.SSEvent(string(event.Type), event.Data)
 		flush()
 	}
 }

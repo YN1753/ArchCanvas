@@ -12,43 +12,29 @@ import (
 	"gorm.io/gorm"
 )
 
-// Initialize 打开 SQLite 数据库并执行当前应用模型的自动迁移。
-func Initialize(cfg config.Database) (*gorm.DB, error) {
+// InitSQLite 初始化并打开 SQLite 数据库，自动确保存储目录存在并执行所有数据表模型迁移。
+func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 	if cfg.Path == "" {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	if err := ensureDatabaseDirectory(cfg.Path); err != nil {
-		return nil, err
+	// 自动确保目录存在
+	if cfg.Path != ":memory:" && filepath.Dir(cfg.Path) != "." {
+		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
+			return nil, fmt.Errorf("create database directory for %q: %w", cfg.Path, err)
+		}
 	}
 
+	// 打开 SQLite 数据库连接
 	db, err := gorm.Open(sqlite.Open(cfg.Path), &gorm.Config{
-		// 当前数据库模型只通过 ID 建立逻辑关联，不生成数据库级外键。
+		// 当前模型只通过 ID 建立逻辑关联，不生成数据库级强外键
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database %q: %w", cfg.Path, err)
 	}
 
-	if err := autoMigrate(db); err != nil {
-		return nil, err
-	}
-
-	return db, nil
-}
-
-func ensureDatabaseDirectory(path string) error {
-	if path == ":memory:" || filepath.Dir(path) == "." {
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create database directory for %q: %w", path, err)
-	}
-	return nil
-}
-
-func autoMigrate(db *gorm.DB) error {
+	// 执行表结构自动迁移
 	if err := db.AutoMigrate(
 		&model.Project{},
 		&model.Entity{},
@@ -58,7 +44,11 @@ func autoMigrate(db *gorm.DB) error {
 		&model.Conversation{},
 		&model.Message{},
 	); err != nil {
-		return fmt.Errorf("auto migrate database: %w", err)
+		return nil, fmt.Errorf("auto migrate database: %w", err)
 	}
-	return nil
+
+	return db, nil
 }
+
+// Initialize 为保持兼容的别名
+var Initialize = InitSQLite

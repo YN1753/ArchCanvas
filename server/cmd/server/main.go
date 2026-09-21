@@ -14,21 +14,25 @@ import (
 
 func main() {
 	cfg := config.Load("./configs")
-	db, err := database.Initialize(cfg.Database)
+	db, err := database.InitSQLite(cfg.Database)
 	if err != nil {
 		panic(err)
 	}
+
 	erDesignRepo := repository.NewERDesignRepository(db)
+	projectRepo := repository.NewProjectRepository(db)
+
 	ctx := context.Background()
-	modelManager := agent.NewModelManager(ctx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider)
+	modelManager := agent.NewModelManager(ctx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider, "./configs")
 
-	requireAgent := service.NewRequirementAgent(modelManager)
-	agentService := service.NewAgentService(requireAgent, erDesignRepo)
+	projectService := service.NewProjectService(projectRepo, erDesignRepo, modelManager)
+	projectHandler := handler.NewProjectHandler(projectService)
 
+	agentService := service.NewAgentService(modelManager, projectService)
 	agentHandler := handler.NewAgentHandler(agentService)
-	totalHandler := handler.NewTotalHandler(agentHandler)
+
+	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler)
 
 	r := router.InitRouter(totalHandler)
 	r.Run(fmt.Sprintf("%s:%d", cfg.Service.Host, cfg.Service.Port))
-
 }

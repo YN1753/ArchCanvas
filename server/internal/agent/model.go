@@ -9,16 +9,21 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-func NewChatModel(ctx context.Context, cfg config.ModelConfig, modelName string) (model.BaseChatModel, error) {
+func NewChatModel(ctx context.Context, cfg config.ModelConfig, modelName string) (model.ToolCallingChatModel, error) {
 	switch cfg.Type {
 	case "openai":
-		return openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		chatCfg := &openai.ChatModelConfig{
 			APIKey:  cfg.APIKey,
 			BaseURL: cfg.BaseURL,
 			Model:   modelName,
-			//Temperature:         &cfg.Temperature,
-			//MaxCompletionTokens: &cfg.MaxTokens,
-		})
+		}
+		if cfg.Temperature > 0 {
+			chatCfg.Temperature = &cfg.Temperature
+		}
+		if cfg.MaxTokens > 0 {
+			chatCfg.MaxTokens = &cfg.MaxTokens
+		}
+		return openai.NewChatModel(ctx, chatCfg)
 	default:
 		return nil, fmt.Errorf("unknown model type: %s", cfg.Type)
 	}

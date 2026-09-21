@@ -1,4 +1,5 @@
 .idea
+.DS_Store
 server/.air.toml
 server/tmp
 *.log
@@ -6,3 +7,4 @@ node_modules/
 dist/
 server/configs/.env
 server/configs/config.yaml
+server/data/

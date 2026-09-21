@@ -1,11 +1,14 @@
 package handler
 
+// TotalHandler 聚合所有业务模块的 HTTP 控制器
 type TotalHandler struct {
-	Agent AgentHandler
+	Agent   AgentHandler
+	Project ProjectHandler
 }
 
-func NewTotalHandler(agent AgentHandler) TotalHandler {
+func NewTotalHandler(agent AgentHandler, project ProjectHandler) TotalHandler {
 	return TotalHandler{
-		Agent: agent,
+		Agent:   agent,
+		Project: project,
 	}
 }
