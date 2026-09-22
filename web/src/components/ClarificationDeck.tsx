@@ -24,6 +24,7 @@ export default function ClarificationDeck({
   loading = false,
 }: ClarificationDeckProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [isCollapsed, setIsCollapsed] = useState(false)
 
   // 记录每个 cardId 选中的 optionId。如果是自定义，optionId 为 '__custom__'
   const [selections, setSelections] = useState<Record<string, string>>(() => {
@@ -47,6 +48,42 @@ export default function ClarificationDeck({
   const currentCard = cards[currentIndex] || cards[0]
   const currentSelectedId = selections[currentCard.id]
   const isLastQuestion = currentIndex === cards.length - 1
+
+  // 折叠微条形态（防误触与无遮挡浏览画布）
+  if (isCollapsed) {
+    return (
+      <div
+        onClick={() => setIsCollapsed(false)}
+        className="group mb-2.5 flex items-center justify-between rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white px-4 py-2.5 shadow-[3px_3px_0px_#1f1f1f] hover:bg-[#faf7f0] cursor-pointer transition-all animate-in fade-in select-none"
+        title="点击展开架构决策选项卡"
+      >
+        <div className="flex items-center gap-2 text-xs min-w-0">
+          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#1f1f1f] text-[9px] font-bold bg-[#df4e3e] text-white">
+            ?
+          </span>
+          <span className="font-bold text-[#1f1f1f] shrink-0">
+            待确认架构决策
+          </span>
+          <span className="text-[11px] font-mono text-stone-500 tabular-nums shrink-0">
+            (第 {currentIndex + 1}/{cards.length} 题)
+          </span>
+          <span className="text-stone-300 shrink-0">·</span>
+          <span className="truncate max-w-[280px] text-stone-700 font-medium">
+            {currentCard.title}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          <span className="inline-flex items-center gap-1 rounded-lg border border-[#1f1f1f] bg-[#faf7f0] px-2 py-0.5 text-[11px] font-bold text-[#1f1f1f] shadow-[1px_1px_0px_#1f1f1f] group-hover:bg-white transition">
+            <span>展开卡片</span>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+            </svg>
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   // 组装最终答案并提交
   const doSubmit = (overrideSelections?: Record<string, string>, overrideCustom?: Record<string, string>) => {
@@ -155,14 +192,34 @@ export default function ClarificationDeck({
             </button>
           </div>
 
+          {/* 收起折叠按钮 (安全操作，保留全部选择与输入) */}
           <button
             type="button"
-            onClick={onDismiss}
-            className="p-1 rounded text-stone-400 hover:bg-stone-100 hover:text-[#1f1f1f] transition"
-            title="关闭选项卡"
+            onClick={() => setIsCollapsed(true)}
+            className="flex items-center gap-1 rounded-lg border border-stone-300 bg-stone-50 px-2 py-0.5 text-[11px] font-semibold text-stone-700 hover:border-[#1f1f1f] hover:text-[#1f1f1f] hover:bg-white active:translate-x-0.5 active:translate-y-0.5 transition"
+            title="收起卡片（随时可展开，保留当前选择与输入）"
           >
-            ✕
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+            <span>收起</span>
           </button>
+
+          {/* 放弃本次决策 (带防误触确认) */}
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('确定放弃本次架构决策吗？已勾选的选项将被清空。')) {
+                  onDismiss()
+                }
+              }}
+              className="p-1 rounded text-stone-400 hover:bg-red-50 hover:text-[#df4e3e] transition"
+              title="放弃本次决策"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 

@@ -4,17 +4,45 @@ import { useStore } from '../store/erStore'
 import ClarificationDeck from './ClarificationDeck'
 import ModelSelector from './ModelSelector'
 
-// 思考状态微胶囊（纸感黑线风格）
+// 思考状态微胶囊（纸感黑线风格，支持整条折叠与思考链展开）
 function ThinkingStatusPill() {
   const aiRunning = useStore((state) => state.aiRunning)
   const aiStatus = useStore((state) => state.aiStatus)
   const aiThinking = useStore((state) => state.aiThinking)
   const [showDetails, setShowDetails] = useState(false)
+  const [isPillCollapsed, setIsPillCollapsed] = useState(false)
 
   if (!aiRunning && !aiThinking) return null
 
+  // 折叠为极简状态小芯片，彻底不遮挡画板操作视野
+  if (isPillCollapsed) {
+    return (
+      <div className="mb-2 pointer-events-auto flex justify-end select-none">
+        <button
+          type="button"
+          onClick={() => setIsPillCollapsed(false)}
+          className="group inline-flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1 text-[11px] font-bold text-stone-700 shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#faf7f0] active:translate-x-0.5 active:translate-y-0.5 transition"
+          title="点击展开思考过程与状态"
+        >
+          {aiRunning ? (
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#df4e3e] opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#df4e3e]" />
+            </span>
+          ) : (
+            <span className="text-emerald-700 font-bold text-[11px]">✓</span>
+          )}
+          <span>{aiRunning ? (aiStatus || 'AI 正在分析…') : '查看思考过程'}</span>
+          <svg className="w-3 h-3 text-stone-400 group-hover:text-stone-700 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="mb-2 pointer-events-auto">
+    <div className="mb-2 pointer-events-auto select-none">
       <div className="flex items-center justify-between rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white px-4 py-2.5 text-xs shadow-[2px_2px_0px_#1f1f1f] transition">
         <div className="flex items-center gap-2 text-stone-800 font-medium">
           {aiRunning ? (
@@ -30,31 +58,53 @@ function ThinkingStatusPill() {
           </span>
         </div>
 
-        {aiThinking && (
+        <div className="flex items-center gap-2 font-sans">
+          {aiThinking && (
+            <button
+              type="button"
+              onClick={() => setShowDetails(!showDetails)}
+              className="text-[11px] font-semibold text-stone-600 hover:text-[#1f1f1f] hover:underline transition"
+            >
+              {showDetails ? '收起思考详情' : '查看思考过程'}
+            </button>
+          )}
+
+          {/* 收起整个状态条 */}
           <button
             type="button"
-            onClick={() => setShowDetails(!showDetails)}
-            className="text-[11px] font-mono font-medium text-stone-500 hover:text-stone-800 transition"
+            onClick={() => setIsPillCollapsed(true)}
+            className="flex items-center gap-0.5 rounded border border-stone-300 bg-stone-50 px-1.5 py-0.5 text-[10px] font-semibold text-stone-600 hover:border-[#1f1f1f] hover:text-[#1f1f1f] hover:bg-white transition"
+            title="收起为微胶囊"
           >
-            {showDetails ? '收起思考' : '查看思考过程'}
+            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+            <span>收起</span>
           </button>
-        )}
+        </div>
       </div>
 
       {showDetails && aiThinking && (
-        <div className="mt-1.5 max-h-36 overflow-y-auto no-scrollbar rounded-2xl border-[1.5px] border-[#1f1f1f] bg-[#faf7f0] p-3 font-mono text-[11px] leading-relaxed text-stone-700 shadow-inner">
-          {aiThinking}
+        <div className="mt-1.5 max-h-48 overflow-y-auto rounded-2xl border-[1.5px] border-[#1f1f1f] bg-[#faf7f0] p-3 font-mono text-[11px] leading-relaxed text-stone-700 shadow-inner">
+          <div className="whitespace-pre-wrap select-text">{aiThinking}</div>
         </div>
       )}
     </div>
   )
 }
 
-// 极简结果提示条
+// 极简结果提示条（点击收起仅隐藏当前通知，不破坏底层思考状态）
 function ResultToast() {
   const result = useStore((state) => state.aiResult)
   const aiError = useStore((state) => state.aiError)
-  const dismiss = useStore((state) => state.dismissAiResult)
+  const [dismissed, setDismissed] = useState(false)
+
+  // 当有新的结果或错误出现时重新显示
+  useEffect(() => {
+    setDismissed(false)
+  }, [result, aiError])
+
+  if (dismissed) return null
 
   if (aiError) {
     return (
@@ -65,8 +115,9 @@ function ResultToast() {
         </div>
         <button
           type="button"
-          onClick={dismiss}
+          onClick={() => setDismissed(true)}
           className="text-stone-400 hover:text-stone-700 transition text-sm ml-2 font-bold"
+          title="收起提示"
         >
           ✕
         </button>
@@ -89,8 +140,9 @@ function ResultToast() {
       </div>
       <button
         type="button"
-        onClick={dismiss}
+        onClick={() => setDismissed(true)}
         className="text-stone-400 hover:text-stone-700 transition text-sm ml-2 font-bold"
+        title="收起提示"
       >
         ✕
       </button>
