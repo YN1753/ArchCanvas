@@ -10,7 +10,7 @@ import (
 
 	"strings"
 
-	"github.com/google/uuid"
+	"archcanvas/pkg/id"
 	"gorm.io/gorm"
 )
 
@@ -131,10 +131,14 @@ func (r *ERDesignRepository) SaveByProjectID(
 		}
 		oldPosByID := make(map[string][2]*float64, len(oldEntities))
 		oldPosByName := make(map[string][2]*float64, len(oldEntities))
+		oldUUIDByName := make(map[string]string, len(oldEntities))
 		for _, e := range oldEntities {
 			if e.PosX != nil && e.PosY != nil {
 				oldPosByID[e.ID] = [2]*float64{e.PosX, e.PosY}
 				oldPosByName[strings.ToLower(e.Name)] = [2]*float64{e.PosX, e.PosY}
+			}
+			if id.IsValidUUID(e.ID) {
+				oldUUIDByName[strings.ToLower(e.Name)] = e.ID
 			}
 		}
 
@@ -155,11 +159,28 @@ func (r *ERDesignRepository) SaveByProjectID(
 			return err
 		}
 
+		// entityIDMap 映射：oldID / lower(name) -> newUUIDv7
+		entityIDMap := make(map[string]string, len(entities)*3)
+
 		for _, e := range entities {
 			entityID := e.ID
-			if entityID == "" {
-				entityID = uuid.New().String()
+			if id.IsValidUUID(entityID) {
+				// 已是标准有效 UUID，继续保持
+			} else if existingUUID, ok := oldUUIDByName[strings.ToLower(e.Name)]; ok && id.IsValidUUID(existingUUID) {
+				// 按表名匹配到了历史的有效 UUIDv7，维持该 ID 稳定
+				entityID = existingUUID
+			} else {
+				// 英文名 ID、前端本地临时 ID 或空 ID，全部统一定向分配为 RFC 9562 UUIDv7
+				entityID = id.NewUUIDv7()
 			}
+
+			// 记录映射以供关系重连
+			if e.ID != "" {
+				entityIDMap[e.ID] = entityID
+			}
+			entityIDMap[strings.ToLower(e.Name)] = entityID
+			entityIDMap[entityID] = entityID
+
 			var posX, posY *float64
 			if e.Position != nil {
 				x := e.Position.X
@@ -167,6 +188,9 @@ func (r *ERDesignRepository) SaveByProjectID(
 				posX = &x
 				posY = &y
 			} else if oldPos, ok := oldPosByID[entityID]; ok {
+				posX = oldPos[0]
+				posY = oldPos[1]
+			} else if oldPos, ok := oldPosByID[e.ID]; ok {
 				posX = oldPos[0]
 				posY = oldPos[1]
 			} else if oldPos, ok := oldPosByName[strings.ToLower(e.Name)]; ok {
@@ -187,8 +211,8 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 			for _, attr := range e.Attributes {
 				attrID := attr.ID
-				if attrID == "" {
-					attrID = uuid.New().String()
+				if !id.IsValidUUID(attrID) {
+					attrID = id.NewUUIDv7()
 				}
 				attrModel := model.Attribute{
 					ID:           attrID,
@@ -210,14 +234,29 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 		for _, rel := range relations {
 			relID := rel.ID
-			if relID == "" {
-				relID = uuid.New().String()
+			if !id.IsValidUUID(relID) {
+				relID = id.NewUUIDv7()
 			}
+
+			sourceID := rel.SourceEntityID
+			if mapped, ok := entityIDMap[sourceID]; ok {
+				sourceID = mapped
+			} else if mapped, ok := entityIDMap[strings.ToLower(sourceID)]; ok {
+				sourceID = mapped
+			}
+
+			targetID := rel.TargetEntityID
+			if mapped, ok := entityIDMap[targetID]; ok {
+				targetID = mapped
+			} else if mapped, ok := entityIDMap[strings.ToLower(targetID)]; ok {
+				targetID = mapped
+			}
+
 			relModel := model.Relation{
 				ID:             relID,
 				ProjectID:      projectID,
-				SourceEntityID: rel.SourceEntityID,
-				TargetEntityID: rel.TargetEntityID,
+				SourceEntityID: sourceID,
+				TargetEntityID: targetID,
 				RelationTypeID: rel.RelationTypeID,
 			}
 			if err := tx.Create(&relModel).Error; err != nil {

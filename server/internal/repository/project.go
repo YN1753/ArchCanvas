@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"archcanvas/pkg/id"
+
 	"gorm.io/gorm"
 )
 
@@ -46,7 +47,7 @@ func (r *ProjectRepository) Create(ctx context.Context, name, description string
 		return nil, errors.New("project repository database is nil")
 	}
 	project := &model.Project{
-		ID:          uuid.New().String(),
+		ID:          id.NewUUIDv7(),
 		Name:        name,
 		Description: description,
 		CreatedAt:   time.Now(),

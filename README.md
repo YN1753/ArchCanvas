@@ -86,6 +86,17 @@
 - **纯语义化 API 契约**：全站仅使用语义化 `GET` 与 `POST` 动作，入参全部通过强类型结构体（DTO）绑定校验；
 - **9 步事务级联删除**：删除项目时通过数据库事务按拓扑倒序清理关联数据（属性 ➔ 实体 ➔ 关系 ➔ 消息 ➔ 对话 ➔ AI 上下文 ➔ 项目），保证零孤儿数据残留。
 
+### 7. 📦 企业级 Go 工程脚手架一键生成（Production-Grade Scaffold Generator）
+- **Standard Go Layout 大厂规范分层**：基于画布设计的表结构与关联，秒级编译导出独立、开箱即跑的完整 Go Web 后端工程（包含 `cmd/server`、`configs`、`internal/model`、`internal/repository`、`internal/service`、`internal/handler`、`internal/router`、`pkg/response` 等）；
+- **GORM 关联自动推导与显式 DI**：自动识别 1:N 拓扑关系，精准推导生成 Parent 端的 `HasMany` 和 Child 端的 `BelongsTo`，并在 `main.go` 中完成零全局变量、显式构造器装配的依赖注入链（`NewRepo` ➔ `NewService` ➔ `NewHandler`）；
+- **Go 标准库 AST 强力排版校验（`go/format.Source`）**：所有渲染出的 Go 源码统一通过官方 AST 语法解析器排版并校验，确保生成的代码零语法瑕疵；
+- **纯内存流式 ZIP 导出（`archive/zip`）**：模板渲染与压缩全程在内存流中完成，零服务器临时磁盘文件落地，并发安全无残留；
+- **暖纸质感代码工作室（Warm Papercraft Code Studio）**：去 AI 廉价感、无生硬黑框，提供按层级折叠的分组目录树、文件名即时过滤、粘性固定行号与印刷质感墨水语法高亮。
+
+### 8. 🆔 全局主键升级为 RFC 9562 UUIDv7（Time-Sorted Monotonic IDs）
+- **时序单调与 B+ 树友好**：全面采用最新的 RFC 9562 标准 UUIDv7，高 48 位嵌入毫秒级时间戳，解决传统随机 UUIDv4 引起的索引页频繁分裂，具备自增 ID 级别追加写入性能；
+- **跨项目防冲突与入库自愈**：彻底摒弃易导致主键冲突的英文名 ID；后端入库层（`SaveByProjectID`）具备智能重映射与关联自愈机制，自动识别非法或临时占位符，完成外键关系自动重定向。
+
 ---
 
 ## 🏗️ 系统架构设计
@@ -94,18 +105,21 @@
 flowchart TD
     Client["前端 Web (Vite + React 19 + React Flow + Zustand)"] -->|"HTTP / SSE"| Router["Gin Router (/api/v1)"]
     Router --> Middleware["CORS 中间件"]
-    Middleware --> Handler["Handler 控制器层 (ProjectHandler / AgentHandler)"]
+    Middleware --> Handler["Handler 控制器层 (Project / Agent / Generator)"]
     
-    Handler -->|"参数强类型校验 (ShouldBindQuery / ShouldBindJSON)"| DTO["Request DTO 层 (request/*)"]
-    Handler -->|"调度业务用例"| Service["Service 业务层 (ProjectService / AgentService)"]
+    Handler -->|"强类型参数绑定校验 (ShouldBindJSON / DTO)"| DTO["Request DTO 层 (request/*)"]
+    Handler -->|"调度领域业务用例"| Service["Service 业务层 (Project / Agent / Generator)"]
     
     Service -->|"大模型调用 & 模型探测"| AgentMgr["ModelManager (Eino SDK 多厂商驱动 & BaseURL 探测)"]
-    AgentMgr -->|"写入持久化"| Config["Config 持久化 (configs/config.yaml & .env)"]
-    AgentMgr -->|"OpenAI / DeepSeek / Ollama"| LLM["远程大模型接口 (/models)"]
+    AgentMgr -->|"配置双向写回"| Config["Config 持久化 (configs/config.yaml & .env)"]
+    AgentMgr -->|"OpenAI / DeepSeek / Ollama"| LLM["远程大模型端点 (/models)"]
     Service -->|"工具元信息声明"| Tools["Eino Tools (save_er_design / propose_requirement)"]
     
+    Service -->|"工程代码编译 & AST 强排版"| GenEng["Generator 模板引擎 (embed.FS + go/format + archive/zip)"]
+    
     Service -->|"数据存取 & 事务编排"| Repo["Repository 仓储层 (ProjectRepo / ERDesignRepo)"]
-    Repo -->|"GORM 事务 & 坐标继承 & 级联删除"| SQLite[("SQLite 数据库 (archcanvas.db)")]
+    Repo -->|"UUIDv7 规范化 & 关系重映射"| IDPkg["pkg/id (RFC 9562 UUIDv7)"]
+    Repo -->|"GORM 事务 & 坐标记忆 & 级联删除"| SQLite[("SQLite 数据库 (archcanvas.db)")]
 ```
 
 ---
@@ -115,7 +129,7 @@ flowchart TD
 ```text
 archcanvas/
 ├── server/                      # Go 后端工程
-│   ├── cmd/server/main.go       # 系统主入口，依赖容器组装
+│   ├── cmd/server/main.go       # 系统主入口，显式依赖容器组装
 │   ├── configs/                 # 配置文件目录
 │   │   ├── config.yaml          # 全局服务与大模型配置
 │   │   └── .env                 # 环境变量与 API Key（支持热写回）
@@ -124,13 +138,16 @@ archcanvas/
 │   │   ├── config/              # 配置加载、.env 更新与 YAML 双向写回
 │   │   ├── database/            # SQLite 连接初始化与全自动表结构迁移
 │   │   ├── domain/              # 纯领域实体 (ERDesign, BusinessConcept) 与业务枚举
-│   │   ├── handler/             # Gin HTTP 控制器 (参数绑定、SSE 响应)
+│   │   ├── generator/           # Go 工程脚手架生成引擎 (13 类模板、AST 格式化、流式打包)
+│   │   ├── handler/             # Gin HTTP 控制器 (参数绑定、SSE 响应、ZIP 流式下发)
 │   │   ├── middleware/          # CORS 跨域控制
 │   │   ├── model/               # GORM 物理数据模型映射
-│   │   ├── repository/          # SQLite 数据仓储实现 (事务级联删除、坐标继承)
+│   │   ├── repository/          # 数据仓储实现 (事务级联删除、坐标记忆、UUIDv7 自动重映射)
 │   │   ├── router/              # 语义化 API 路由注册 (/api/v1)
 │   │   └── service/             # 核心服务 (ProjectService, AgentService 两阶段编排)
-│   ├── pkg/response/            # 统一 API 响应格式封装
+│   ├── pkg/
+│   │   ├── id/                  # RFC 9562 UUIDv7 有序唯一标识生成与校验
+│   │   └── response/            # 统一 API 响应格式封装
 │   ├── request/                 # 强类型请求入参 DTO 定义
 │   └── go.mod                   # Go 依赖清单
 │
@@ -145,10 +162,11 @@ archcanvas/
     │   │   ├── Inspector.tsx    # 右侧属性检查器与 DDL 即时预览
     │   │   ├── ModelSelector.tsx# 暖纸感模型即时探测下拉选择器
     │   │   ├── ProjectMenu.tsx  # 项目管理菜单 (新建/切换/重命名/删除)
+    │   │   ├── ScaffoldDialog.tsx # 暖纸新野兽派代码树与代码预览工作台
     │   │   ├── Select.tsx       # 纯手工定制新野兽派下拉组件
     │   │   ├── TableNode.tsx    # 自定义 React Flow 数据库表节点
     │   │   ├── RelationEdge.tsx # 自定义 React Flow 关系连线
-    │   │   └── Toolbar.tsx      # 顶部控制栏
+    │   │   └── Toolbar.tsx      # 顶部控制栏 (含脚手架一键导出)
     │   ├── export/              # SQL DDL 导出/逆向解析器、Mermaid 转换器
     │   ├── flow/                # React Flow 适配器与 Dagre 自动排版算法
     │   ├── store/erStore.ts     # Zustand 全局领域状态管理与防抖自动保存
@@ -211,15 +229,17 @@ npm run dev
 | HTTP 方法 | 接口路径 | 功能说明 | 入参类型 |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/api/v1/projects/list` | 获取所有项目列表 | 无 |
-| `POST` | `/api/v1/projects/create` | 创建新项目 | JSON Body (`name`, `description`) |
+| `POST` | `/api/v1/projects/create` | 创建新项目（分配 UUIDv7） | JSON Body (`name`, `description`) |
 | `POST` | `/api/v1/projects/delete` | 事务级联删除项目 | JSON Body (`project_id`) |
 | `POST` | `/api/v1/projects/update` | 更新项目名称或描述 | JSON Body (`project_id`, `name`, `description`) |
 | `GET` | `/api/v1/projects/detail` | 获取项目元信息与设计图 | Query (`?id=xxx`) |
 | `GET` | `/api/v1/projects/get-er-design` | 拉取项目完整 ER 设计 | Query (`?id=xxx`) |
-| `POST` | `/api/v1/projects/save-er-design` | 保存画板设计（带坐标记忆） | JSON Body (`project_id`, `entities`, `relations`) |
+| `POST` | `/api/v1/projects/save-er-design` | 保存画板设计（UUIDv7 重映射与坐标记忆） | JSON Body (`project_id`, `entities`, `relations`) |
 | `GET` | `/api/v1/models/list` | 获取/动态探测可用模型列表 | Query (`?base_url=...&api_key=...&provider=...`) |
 | `POST` | `/api/v1/models/save` | 保存并热切换模型配置 | JSON Body (`provider, model, base_url, api_key, set_as_default`) |
 | `POST` | `/api/v1/agent/chat` | AI 两阶段架构推导（SSE 流式） | JSON Body (`project_id, input, model_provider, model_name`) |
+| `POST` | `/api/v1/generator/preview` | 预览生成的工程代码与文件树 | JSON Body (`project_id, module_name, port, db_driver, ...`) |
+| `POST` | `/api/v1/generator/download` | 纯内存流式导出工程 ZIP 压缩包 | JSON Body (`project_id, module_name, port, db_driver, ...`) |
 
 ---
 
@@ -229,7 +249,7 @@ npm run dev
   - **核心框架**：React 19, TypeScript
   - **构建工具**：Vite 8
   - **画板引擎**：`@xyflow/react` (React Flow 12) + `dagre` (有向无环图自动层次布局)
-  - **样式体系**：Tailwind CSS v4
+  - **样式体系**：Tailwind CSS v4 (暖色纸质感新野兽派排版)
   - **状态管理**：Zustand 5 (纯内存领域模型驱动 + 防抖调度落库)
   - **运行时校验**：Zod 4 (前端 ER DSL 镜像校验)
 - **后端技术栈**：
@@ -237,6 +257,8 @@ npm run dev
   - **Web 框架**：Gin (`github.com/gin-gonic/gin`)
   - **ORM 框架**：GORM (`gorm.io/gorm`, `gorm.io/driver/sqlite`)
   - **AI Agent 框架**：CloudWeGo Eino SDK (`github.com/cloudwego/eino`)
+  - **代码生成与语法校验**：Go 标准库 `go/format` (AST 强排版)、`embed.FS` (模板内嵌)、`archive/zip` (纯内存流式压缩)
+  - **分布式唯一主键**：RFC 9562 UUIDv7 (`github.com/google/uuid` v1.6.0)
   - **配置中心**：Viper + Go-YAML (`github.com/goccy/go-yaml`)
   - **数据存储**：SQLite (开箱即用无外置服务依赖)
 

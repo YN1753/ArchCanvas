@@ -189,7 +189,28 @@ export const useStore = create<Store>((set, get) => {
           ...e,
           position: e.position ?? currentPositions.get(e.id) ?? posByName.get(e.name.toLowerCase()),
         }))
-        recompute(ensureLayout({ ...result.design, entities: mergedEntities }))
+
+        // 如果用户当前选中的实体 ID 被后端分配了新 UUIDv7，按名称平滑迁移选中态
+        const currentSel = get().selection
+        let nextSelection = currentSel
+        if (currentSel?.kind === 'entity') {
+          const stillValid = mergedEntities.some((e) => e.id === currentSel.id)
+          if (!stillValid) {
+            const oldEntity = get().design.entities.find((e) => e.id === currentSel.id)
+            if (oldEntity) {
+              const matched = mergedEntities.find(
+                (e) => e.name.toLowerCase() === oldEntity.name.toLowerCase()
+              )
+              if (matched) {
+                nextSelection = { kind: 'entity', id: matched.id }
+              }
+            }
+          }
+        }
+
+        recompute(ensureLayout({ ...result.design, entities: mergedEntities }), {
+          selection: nextSelection,
+        })
       }
     } catch (error) {
       set({ saveState: 'error', saveError: errorMessage(error) })

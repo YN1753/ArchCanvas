@@ -121,12 +121,21 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 	for _, ent := range design.Entities {
 		eData := buildEntityData(ent)
 		entityMap[ent.ID] = eData
+		if ent.Name != "" {
+			entityMap[strings.ToLower(ent.Name)] = eData
+		}
 	}
 
 	// 匹配与推导关联关系 (1:N 映射)
 	for _, rel := range design.Relations {
 		sourceEnt, okSource := entityMap[rel.SourceEntityID]
+		if !okSource {
+			sourceEnt, okSource = entityMap[strings.ToLower(rel.SourceEntityID)]
+		}
 		targetEnt, okTarget := entityMap[rel.TargetEntityID]
+		if !okTarget {
+			targetEnt, okTarget = entityMap[strings.ToLower(rel.TargetEntityID)]
+		}
 		if !okSource || !okTarget {
 			continue
 		}
@@ -159,6 +168,12 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 
 		entityMap[rel.SourceEntityID] = sourceEnt
 		entityMap[rel.TargetEntityID] = targetEnt
+		if sourceEnt.TableName != "" {
+			entityMap[strings.ToLower(sourceEnt.TableName)] = sourceEnt
+		}
+		if targetEnt.TableName != "" {
+			entityMap[strings.ToLower(targetEnt.TableName)] = targetEnt
+		}
 	}
 
 	for _, ent := range design.Entities {

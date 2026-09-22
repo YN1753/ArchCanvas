@@ -335,7 +335,7 @@ func (a *AgentService) buildSchemaDesignMessages(input SchemaDesignInput) []*sch
 	prompt.WriteString("   - enum -> VARCHAR(32) (code_type: string)\n")
 	prompt.WriteString("   - media -> VARCHAR(512) (code_type: string)\n")
 	prompt.WriteString("3. 根据业务关联关系（one_to_many, many_to_many）建立合理的外键字段（如 user_id BIGINT）和 Relation 连线；\n")
-	prompt.WriteString("4. 表的 ID 请使用简洁英文小写复数（如 users, orders, order_items），字段 ID 请使用蛇形命名（如 user_id, order_no）。\n\n")
+	prompt.WriteString("4. 表名（name）必须使用简洁规范的英文小写复数（如 users, orders, order_items），字段名（name）请使用标准蛇形命名（如 user_id, order_no）。关于表和字段的 ID，可填入表名作为临时标识或留空，服务端会自动分配全局有序且无冲突的 RFC 9562 UUIDv7 主键。\n\n")
 
 	if input.Requirement != nil {
 		reqJSON, err := json.Marshal(input.Requirement)
