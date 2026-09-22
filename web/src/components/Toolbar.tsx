@@ -130,6 +130,10 @@ export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
   const toggleInspector = useStore((state) => state.toggleInspector)
+  const canUndo = useStore((state) => state.canUndo)
+  const canRedo = useStore((state) => state.canRedo)
+  const undo = useStore((state) => state.undo)
+  const redo = useStore((state) => state.redo)
 
   return (
     <header className="flex items-center justify-between border-b border-[#e5ded0] bg-[#faf7f0] px-4 py-2.5 select-none shadow-2xs">
@@ -180,8 +184,35 @@ export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
         <ProjectMenu />
       </div>
 
-      {/* 右侧：未保存虚线胶囊、红色新建主按钮、更多按钮 */}
+      {/* 右侧：撤销/重做、未保存虚线胶囊、红色新建主按钮、更多按钮 */}
       <div className="flex items-center gap-2.5">
+        {/* 撤销 / 重做 */}
+        <div className="flex items-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-700 hover:bg-stone-100 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition"
+            title="撤销 (⌘Z / Ctrl+Z)"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+            </svg>
+          </button>
+          <div className="h-3.5 w-px bg-stone-200" />
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-700 hover:bg-stone-100 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition"
+            title="重做 (⇧⌘Z / Ctrl+Y)"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m15 15 6-6m0 0-6-6m6 6H9a6 6 0 0 0 0 12h3" />
+            </svg>
+          </button>
+        </div>
+
         <SavePill />
 
         {/* 红色新建实体主按钮 */}

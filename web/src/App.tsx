@@ -21,12 +21,44 @@ export default function App() {
     void bootstrap()
   }, [bootstrap])
 
-  // ⌘/Ctrl + S 立即保存
+  // 全局快捷键：⌘/Ctrl + S (保存)、⌘/Ctrl + Z (撤销)、⇧⌘Z / Ctrl+Shift+Z / Ctrl+Y (重做)
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      const isMod = (event.metaKey || event.ctrlKey) && !event.altKey
+      const key = event.key.toLowerCase()
+
+      // ⌘/Ctrl + S 立即保存
+      if (isMod && key === 's') {
         event.preventDefault()
         void useStore.getState().saveNow()
+        return
+      }
+
+      // 如果当前焦点处于输入框/文本域内部，则放行原生文本编辑撤销/重做
+      const target = event.target as HTMLElement | null
+      const isInput =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable
+      if (isInput) {
+        return
+      }
+
+      // 撤销：⌘Z / Ctrl+Z
+      if (isMod && !event.shiftKey && key === 'z') {
+        event.preventDefault()
+        useStore.getState().undo()
+        return
+      }
+
+      // 重做：⇧⌘Z / Ctrl+Shift+Z / Ctrl+Y
+      const isRedo =
+        (isMod && event.shiftKey && key === 'z') ||
+        (event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && key === 'y')
+      if (isRedo) {
+        event.preventDefault()
+        useStore.getState().redo()
+        return
       }
     }
     window.addEventListener('keydown', onKeyDown)

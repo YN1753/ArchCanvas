@@ -69,6 +69,8 @@ interface StoreState {
   inspectorOpen: boolean
   dataDialogOpen: boolean
   dataDialogTab: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
+  canUndo: boolean
+  canRedo: boolean
 }
 
 interface StoreActions {
@@ -78,6 +80,9 @@ interface StoreActions {
   deleteProject: (id: string) => Promise<void>
   updateProject: (id: string, name: string, description?: string) => Promise<void>
   reload: () => Promise<void>
+
+  undo: () => void
+  redo: () => void
 
   fetchModels: (params?: GetModelsParams) => Promise<AvailableModelsResponse | null>
   selectModel: (provider: string, model: string, base_url?: string) => void
@@ -197,15 +202,56 @@ export const useStore = create<Store>((set, get) => {
     }
   }
 
-  function mutate(next: ERDesign) {
+  const MAX_HISTORY = 50
+  let pastStack: ERDesign[] = []
+  let futureStack: ERDesign[] = []
+  let lastSnapshotTime = 0
+  let lastDebounceKey: string | null = null
+
+  function recordSnapshot(debounceKey?: string) {
+    const now = Date.now()
+    if (debounceKey && lastDebounceKey === debounceKey && now - lastSnapshotTime < 600) {
+      lastSnapshotTime = now
+      return
+    }
+
+    lastSnapshotTime = now
+    lastDebounceKey = debounceKey ?? null
+
+    const { design } = get()
+    const snapshot: ERDesign = JSON.parse(JSON.stringify(design))
+    pastStack.push(snapshot)
+    if (pastStack.length > MAX_HISTORY) {
+      pastStack.shift()
+    }
+    futureStack = []
+    set({
+      canUndo: pastStack.length > 0,
+      canRedo: false,
+    })
+  }
+
+  function resetHistory() {
+    pastStack = []
+    futureStack = []
+    lastSnapshotTime = 0
+    lastDebounceKey = null
+    set({
+      canUndo: false,
+      canRedo: false,
+    })
+  }
+
+  function mutate(next: ERDesign, debounceKey?: string) {
+    recordSnapshot(debounceKey)
     mutationCount += 1
     recompute(next)
     scheduleSave()
   }
 
-  function withEntities(updater: (entities: Entity[]) => Entity[]) {
+  function withEntities(updater: (entities: Entity[]) => Entity[], debounceKey?: string) {
     const { design } = get()
-    mutate({ ...design, entities: updater(design.entities) })
+    mutate({ ...design, entities: updater(design.entities) }, debounceKey)
   }
 
   return {
@@ -234,6 +280,8 @@ export const useStore = create<Store>((set, get) => {
     inspectorOpen: false,
     dataDialogOpen: false,
     dataDialogTab: 'export-sql',
+    canUndo: false,
+    canRedo: false,
 
     async fetchModels(params?: GetModelsParams) {
       set({ modelsLoading: true, modelsError: null })
@@ -329,6 +377,52 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
+    undo() {
+      if (pastStack.length === 0) return
+      const current: ERDesign = JSON.parse(JSON.stringify(get().design))
+      const previous = pastStack.pop()!
+      futureStack.push(current)
+      lastDebounceKey = null
+      lastSnapshotTime = 0
+      mutationCount += 1
+      const currentSelection = get().selection
+      const validEntity =
+        currentSelection?.kind === 'entity' && previous.entities.some((e) => e.id === currentSelection.id)
+      const validRelation =
+        currentSelection?.kind === 'relation' && previous.relations.some((r) => r.id === currentSelection.id)
+      recompute(previous, {
+        selection: validEntity || validRelation ? currentSelection : null,
+      })
+      scheduleSave()
+      set({
+        canUndo: pastStack.length > 0,
+        canRedo: true,
+      })
+    },
+
+    redo() {
+      if (futureStack.length === 0) return
+      const current: ERDesign = JSON.parse(JSON.stringify(get().design))
+      const next = futureStack.pop()!
+      pastStack.push(current)
+      lastDebounceKey = null
+      lastSnapshotTime = 0
+      mutationCount += 1
+      const currentSelection = get().selection
+      const validEntity =
+        currentSelection?.kind === 'entity' && next.entities.some((e) => e.id === currentSelection.id)
+      const validRelation =
+        currentSelection?.kind === 'relation' && next.relations.some((r) => r.id === currentSelection.id)
+      recompute(next, {
+        selection: validEntity || validRelation ? currentSelection : null,
+      })
+      scheduleSave()
+      set({
+        canUndo: true,
+        canRedo: futureStack.length > 0,
+      })
+    },
+
     async bootstrap() {
       if (isBootstrapping || get().ready) {
         return
@@ -344,6 +438,7 @@ export const useStore = create<Store>((set, get) => {
         const project = projects[0]
         const detail = await api.getProject(project.id)
         const design = await api.getERDesign(project.id)
+        resetHistory()
         set({
           ready: true,
           bootError: null,
@@ -363,6 +458,7 @@ export const useStore = create<Store>((set, get) => {
     async selectProject(id) {
       try {
         const [detail, design] = await Promise.all([api.getProject(id), api.getERDesign(id)])
+        resetHistory()
         set({
           project: detail,
           selection: null,
@@ -382,6 +478,7 @@ export const useStore = create<Store>((set, get) => {
       try {
         const project = await api.createProject(name, description)
         const projects = await api.listProjects()
+        resetHistory()
         set({ projects, project, selection: null, inspectorOpen: false, aiResult: null })
         recompute({ entities: [], relations: [] })
         mutationCount = 0
@@ -493,6 +590,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     addEntity(customPosition) {
+      recordSnapshot()
       const { design } = get()
       const name = uniqueEntityName(design, 'new_table')
       const entity: Entity = {
@@ -530,12 +628,14 @@ export const useStore = create<Store>((set, get) => {
     },
 
     renameEntity(id, name) {
-      withEntities((entities) =>
-        entities.map((entity) => (entity.id === id ? { ...entity, name } : entity)),
+      withEntities(
+        (entities) => entities.map((entity) => (entity.id === id ? { ...entity, name } : entity)),
+        `rename_${id}`,
       )
     },
 
     deleteEntity(id) {
+      recordSnapshot()
       const { design, selection } = get()
       const next: ERDesign = {
         entities: design.entities.filter((entity) => entity.id !== id),
@@ -585,29 +685,31 @@ export const useStore = create<Store>((set, get) => {
     },
 
     updateAttribute(entityID, attributeID, patch) {
-      withEntities((entities) =>
-        entities.map((entity) => {
-          if (entity.id !== entityID) {
-            return entity
-          }
-          return {
-            ...entity,
-            attributes: entity.attributes.map((attribute) => {
-              if (attribute.id !== attributeID) {
-                return attribute
-              }
-              const next = { ...attribute, ...patch }
-              // 改了数据库类型但没显式改 Go 类型时，同步推导，避免两者长期漂移。
-              if (patch.db_type !== undefined && patch.code_type === undefined) {
-                next.code_type = defaultCodeType(patch.db_type)
-              }
-              if (next.is_primary_key) {
-                next.is_nullable = false
-              }
-              return next
-            }),
-          }
-        }),
+      withEntities(
+        (entities) =>
+          entities.map((entity) => {
+            if (entity.id !== entityID) {
+              return entity
+            }
+            return {
+              ...entity,
+              attributes: entity.attributes.map((attribute) => {
+                if (attribute.id !== attributeID) {
+                  return attribute
+                }
+                const next = { ...attribute, ...patch }
+                // 改了数据库类型但没显式改 Go 类型时，同步推导，避免两者长期漂移。
+                if (patch.db_type !== undefined && patch.code_type === undefined) {
+                  next.code_type = defaultCodeType(patch.db_type)
+                }
+                if (next.is_primary_key) {
+                  next.is_nullable = false
+                }
+                return next
+              }),
+            }
+          }),
+        `attr_${entityID}_${attributeID}`,
       )
     },
 
@@ -658,6 +760,7 @@ export const useStore = create<Store>((set, get) => {
         return
       }
 
+      recordSnapshot()
       const relation: Relation = {
         id: localID('rel'),
         source_entity_id: sourceEntityID,
@@ -673,6 +776,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     updateRelation(id, patch) {
+      recordSnapshot()
       const { design } = get()
       mutationCount += 1
       recompute({
@@ -685,6 +789,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     deleteRelation(id) {
+      recordSnapshot()
       const { design, selection } = get()
       mutationCount += 1
       recompute(
@@ -698,6 +803,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     autoLayout() {
+      recordSnapshot()
       const { design } = get()
       mutationCount += 1
       recompute(layoutDesign(design))
@@ -705,6 +811,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     importDesign(design) {
+      recordSnapshot()
       mutationCount += 1
       recompute(ensureLayout(design), { selection: null, aiResult: null, aiError: null })
       scheduleSave()
@@ -759,6 +866,7 @@ export const useStore = create<Store>((set, get) => {
               set({ aiRunning: false, aiStatus: '' })
 
               if (finalDesign) {
+                recordSnapshot()
                 const currentEntities = get().design.entities
                 const posByID = new Map(currentEntities.map((entity) => [entity.id, entity.position]))
                 const posByName = new Map(currentEntities.map((entity) => [entity.name.toLowerCase(), entity.position]))
