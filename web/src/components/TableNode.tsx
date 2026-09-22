@@ -37,7 +37,41 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
   const entity = data.entity
   const fkAttrNames = data.foreignKeyAttrNames ?? []
   const addAttribute = useStore((state) => state.addAttribute)
+  const storeSelection = useStore((state) => state.selection)
+  const design = useStore((state) => state.design)
   const chineseName = getEntityChineseName(entity.name)
+
+  // 检查当前表是否有字段正参与用户选中的关联关系连线
+  const activeRelation =
+    storeSelection?.kind === 'relation'
+      ? design.relations.find((r) => r.id === storeSelection.id)
+      : null
+
+  const isSourceOfActive = activeRelation?.source_entity_id === entity.id
+  const isTargetOfActive = activeRelation?.target_entity_id === entity.id
+
+  let highlightedAttrId: string | null = null
+  if (isSourceOfActive) {
+    const pk = entity.attributes.find((a) => a.is_primary_key) ?? entity.attributes[0]
+    if (pk) highlightedAttrId = pk.id
+  } else if (isTargetOfActive && activeRelation) {
+    const srcEnt = design.entities.find((e) => e.id === activeRelation.source_entity_id)
+    if (srcEnt) {
+      const srcName = srcEnt.name.toLowerCase()
+      const srcSingular = srcName.endsWith('s') ? srcName.slice(0, -1) : srcName
+      const match = entity.attributes.find((a) => {
+        if (a.is_primary_key) return false
+        const name = a.name.toLowerCase()
+        return (
+          name === `${srcName}_id` ||
+          name === `${srcSingular}_id` ||
+          name === `${srcName}id` ||
+          name.endsWith('_id')
+        )
+      })
+      if (match) highlightedAttrId = match.id
+    }
+  }
 
   return (
     <div
@@ -48,18 +82,18 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
       }`}
       style={{ width: NODE_WIDTH, height: nodeHeight(entity) }}
     >
-      {/* 4 方向连线锚点 */}
+      {/* 表级兜底连接锚点（上下与兼容旧连线） */}
       <Handle
         type="target"
         position={Position.Left}
-        id="left"
-        className="!-left-[6px] !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all"
+        id="tbl-tgt"
+        className="!-left-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
       />
       <Handle
         type="source"
         position={Position.Right}
-        id="right"
-        className="!-right-[6px] !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all"
+        id="tbl-src"
+        className="!-right-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
       />
       <Handle
         type="target"
@@ -111,18 +145,38 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
         </span>
       </div>
 
-      {/* 字段列表区 */}
+      {/* 字段列表区（方案 A：字段行级独立锚点嵌入） */}
       <div className="divide-y divide-stone-100 bg-white">
         {entity.attributes.map((attribute) => {
           const isFk = fkAttrNames.includes(attribute.name)
+          const isRowHighlighted = highlightedAttrId === attribute.id
+
           return (
             <div
               key={attribute.id}
-              className={`flex items-center justify-between gap-1 px-3.5 text-xs transition-colors hover:bg-[#faf7f0] ${
-                attribute.is_primary_key ? 'bg-amber-50/20' : ''
+              className={`relative flex items-center justify-between gap-1 px-3.5 text-xs transition-colors hover:bg-[#faf7f0] ${
+                isRowHighlighted
+                  ? '!bg-[#fdf0ee] !text-[#df4e3e] font-semibold'
+                  : attribute.is_primary_key
+                  ? 'bg-amber-50/20'
+                  : ''
               }`}
               style={{ height: NODE_ROW_HEIGHT }}
             >
+              {/* 字段入边连接锚点 (Target Handle) */}
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={`field-tgt-${attribute.id}`}
+                className={`!-left-[5px] !w-2.5 !h-2.5 !border-2 !border-white transition-all ${
+                  isRowHighlighted
+                    ? '!bg-[#df4e3e] !scale-125 !opacity-100'
+                    : isFk
+                    ? '!bg-[#1f1f1f] group-hover:!bg-[#df4e3e] !opacity-90 hover:!scale-150 hover:!opacity-100'
+                    : '!bg-[#1f1f1f] !opacity-0 hover:!opacity-90 hover:!scale-150'
+                }`}
+              />
+
               {/* 左侧：主键/外键标记与字段名 */}
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 {attribute.is_primary_key ? (
@@ -145,7 +199,11 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
 
                 <span
                   className={`ident truncate ${
-                    attribute.is_primary_key ? 'font-bold text-[#1f1f1f]' : 'text-stone-700'
+                    isRowHighlighted
+                      ? 'font-bold text-[#df4e3e]'
+                      : attribute.is_primary_key
+                      ? 'font-bold text-[#1f1f1f]'
+                      : 'text-stone-700'
                   }`}
                   title={attribute.description || attribute.name}
                 >
@@ -170,6 +228,20 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
               >
                 {attribute.db_type}
               </span>
+
+              {/* 字段出边连接锚点 (Source Handle) */}
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={`field-src-${attribute.id}`}
+                className={`!-right-[5px] !w-2.5 !h-2.5 !border-2 !border-white transition-all ${
+                  isRowHighlighted
+                    ? '!bg-[#df4e3e] !scale-125 !opacity-100'
+                    : attribute.is_primary_key
+                    ? '!bg-[#1f1f1f] group-hover:!bg-[#df4e3e] !opacity-90 hover:!scale-150 hover:!opacity-100'
+                    : '!bg-[#1f1f1f] !opacity-0 hover:!opacity-90 hover:!scale-150'
+                }`}
+              />
             </div>
           )
         })}

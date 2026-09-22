@@ -51,6 +51,8 @@ interface StoreState {
 
   design: ERDesign
   selection: Selection
+  hoveredEntityId: string | null
+  hoveredRelationId: string | null
   report: ValidationReport
   serverWarnings: string[]
 
@@ -89,6 +91,8 @@ interface StoreActions {
   saveAndSwitchModel: (params: SaveModelParams) => Promise<boolean>
 
   select: (selection: Selection) => void
+  setHoveredEntityId: (id: string | null) => void
+  setHoveredRelationId: (id: string | null) => void
   setInspectorOpen: (open: boolean) => void
   toggleInspector: () => void
   openDataDialog: (tab?: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json') => void
@@ -287,6 +291,8 @@ export const useStore = create<Store>((set, get) => {
     modelsError: null,
     design: { entities: [], relations: [] },
     selection: null,
+    hoveredEntityId: null,
+    hoveredRelationId: null,
     report: { errors: [], warnings: [] },
     serverWarnings: [],
     saveState: 'idle',
@@ -563,6 +569,14 @@ export const useStore = create<Store>((set, get) => {
         selection,
         inspectorOpen: selection !== null,
       })
+    },
+
+    setHoveredEntityId(id) {
+      set({ hoveredEntityId: id })
+    },
+
+    setHoveredRelationId(id) {
+      set({ hoveredRelationId: id })
     },
 
     setInspectorOpen(open) {

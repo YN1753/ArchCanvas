@@ -34,6 +34,8 @@ export default function Canvas() {
   const openDataDialog = useStore((state) => state.openDataDialog)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
+  const setHoveredEntityId = useStore((state) => state.setHoveredEntityId)
+  const setHoveredRelationId = useStore((state) => state.setHoveredRelationId)
 
   const [nodes, setNodes] = useState<TableNode[]>([])
   const [edges, setEdges] = useState<RelationEdge[]>([])
@@ -199,8 +201,16 @@ export default function Canvas() {
           }
         }}
         onNodeClick={(_, node) => select({ kind: 'entity', id: node.id })}
+        onNodeMouseEnter={(_, node) => setHoveredEntityId(node.id)}
+        onNodeMouseLeave={() => setHoveredEntityId(null)}
         onEdgeClick={(_, edge) => select({ kind: 'relation', id: edge.id })}
-        onPaneClick={() => select(null)}
+        onEdgeMouseEnter={(_, edge) => setHoveredRelationId(edge.id)}
+        onEdgeMouseLeave={() => setHoveredRelationId(null)}
+        onPaneClick={() => {
+          select(null)
+          setHoveredEntityId(null)
+          setHoveredRelationId(null)
+        }}
         onMoveEnd={(_, viewport) => {
           setZoomLevel(Math.round(viewport.zoom * 100))
         }}

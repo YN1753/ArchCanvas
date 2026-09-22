@@ -63,13 +63,5 @@ body {
 }
 
 .react-flow__edge-path {
-  stroke: #262626;
-  stroke-width: 1.75px;
-  transition: stroke 160ms ease, stroke-width 160ms ease;
-}
-
-.react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:hover .react-flow__edge-path {
-  stroke: #df4e3e;
-  stroke-width: 2.25px;
+  transition: stroke 200ms ease, stroke-width 200ms ease, opacity 200ms ease;
 }

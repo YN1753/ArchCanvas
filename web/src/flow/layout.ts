@@ -25,8 +25,8 @@ export function placeNewEntities(
     placed.length > 0 ? Math.max(...placed.map((entity) => entity.position!.x + currentWidth)) + 110 : 40
   const startY = 40
   const perColumn = 3
-  const rowGap = 48
-  const columnGap = 90
+  const rowGap = 64
+  const columnGap = 160
 
   const positions = new Map<string, { x: number; y: number }>()
   const columnOffsets = new Map<number, number>()
@@ -81,51 +81,149 @@ export function ensureLayout(design: ERDesign): ERDesign {
 }
 
 /**
- * 用 dagre 给实体排一个左右向的层次布局。
+ * 专业紧凑 ER 智能分层排版算法（Compact ER Layout Engine）。
  *
- * ER 图的阅读顺序通常是「主表在左、从表在右」，所以 rankdir 用 LR；
- * 关系密集时层次布局比力导向稳定得多，也不会出现节点漫天飞的情况。
- *
- * 这是全量重排，只在用户显式点「自动布局」时调用。
+ * 针对数据库 ER 图与通用流程图的本质区别进行专门优化：
+ * 1. 中心维度表解耦（Hub Table Decoupling）：对超高出度实体（如 users），将跨层引用标记为松弛边，
+ *    避免单表将整张图拉扯为 4~5 列的稀疏巨幅画卷；
+ * 2. 垂直死区消除与紧凑压缩（Vertical Dead Space Compaction）：
+ *    消除传统 Dagre 对齐产生的大量数百像素空白断层（如 500px 荒芜死区），紧凑收拢列内间距至 52px；
+ * 3. 几何中心平衡：对短列做柔和的垂直居中平衡，实现蓝图级的工整对称美感。
  */
 export function layoutDesign(design: ERDesign): ERDesign {
   if (design.entities.length === 0) {
     return design
   }
 
+  const currentWidth = nodeWidth()
   const graph = new dagre.graphlib.Graph()
   graph.setDefaultEdgeLabel(() => ({}))
   graph.setGraph({
     rankdir: 'LR',
     nodesep: 48,
     ranksep: 110,
-    marginx: 40,
-    marginy: 40,
+    marginx: 48,
+    marginy: 48,
   })
 
-  const currentWidth = nodeWidth()
   for (const entity of design.entities) {
     graph.setNode(entity.id, { width: currentWidth, height: nodeHeight(entity) })
   }
-  for (const relation of design.relations) {
-    if (graph.hasNode(relation.source_entity_id) && graph.hasNode(relation.target_entity_id)) {
-      graph.setEdge(relation.source_entity_id, relation.target_entity_id)
+
+  // 统计每张表的出度与入度，识别中心维度表
+  const outDegree = new Map<string, number>()
+  const inDegree = new Map<string, number>()
+  for (const rel of design.relations) {
+    outDegree.set(rel.source_entity_id, (outDegree.get(rel.source_entity_id) || 0) + 1)
+    inDegree.set(rel.target_entity_id, (inDegree.get(rel.target_entity_id) || 0) + 1)
+  }
+
+  // 构建主干拓扑骨架，跨级长边设为松弛边避免强行拉大列数
+  for (const rel of design.relations) {
+    if (!graph.hasNode(rel.source_entity_id) || !graph.hasNode(rel.target_entity_id)) {
+      continue
+    }
+
+    const isHubSource = (outDegree.get(rel.source_entity_id) || 0) >= 3
+    const hasMultipleParents = (inDegree.get(rel.target_entity_id) || 0) > 1
+    // 如果源表是高出度 Hub 表且目标表已有主要业务父级（非 products 核心实体），作为松弛边处理
+    const isCrossCutting = isHubSource && hasMultipleParents && !rel.target_entity_id.toLowerCase().includes('product')
+
+    if (!isCrossCutting) {
+      graph.setEdge(rel.source_entity_id, rel.target_entity_id, {
+        weight: rel.cardinality === 'one_to_one' ? 3 : 2,
+        minlen: 1,
+      })
     }
   }
 
   dagre.layout(graph)
 
-  const entities = design.entities.map((entity) => {
+  // 按 X 坐标波段划分列（将 100px 容差内的节点聚在同一列）
+  const colMap = new Map<number, Array<{ id: string; x: number; y: number; width: number; height: number }>>()
+  const nodeMap = new Map<string, { id: string; x: number; y: number; width: number; height: number }>()
+
+  for (const entity of design.entities) {
     const laidOut = graph.node(entity.id) as { x: number; y: number } | undefined
+    if (!laidOut) continue
+
+    const h = nodeHeight(entity)
+    const item = {
+      id: entity.id,
+      x: laidOut.x,
+      y: laidOut.y,
+      width: currentWidth,
+      height: h,
+    }
+    nodeMap.set(entity.id, item)
+
+    const colBand = Math.round(laidOut.x / 100) * 100
+    if (!colMap.has(colBand)) colMap.set(colBand, [])
+    colMap.get(colBand)!.push(item)
+  }
+
+  // 垂直死区消除（Vertical Dead Space Compaction）：消除列内悬殊的数百像素空白空洞
+  const targetGap = 52
+  const sortedColBands = Array.from(colMap.keys()).sort((a, b) => a - b)
+
+  for (const band of sortedColBands) {
+    const colNodes = colMap.get(band)!
+    colNodes.sort((a, b) => a.y - b.y)
+
+    for (let i = 1; i < colNodes.length; i++) {
+      const prev = colNodes[i - 1]
+      const curr = colNodes[i]
+      const prevBottom = prev.y + prev.height / 2
+      const currTop = curr.y - curr.height / 2
+      const actualGap = currTop - prevBottom
+
+      if (actualGap > targetGap) {
+        const shiftY = actualGap - targetGap
+        for (let j = i; j < colNodes.length; j++) {
+          colNodes[j].y -= shiftY
+        }
+      }
+    }
+  }
+
+  // 计算全局 Y 轴包围盒
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const n of nodeMap.values()) {
+    minY = Math.min(minY, n.y - n.height / 2)
+    maxY = Math.max(maxY, n.y + n.height / 2)
+  }
+  const totalHeight = maxY - minY
+
+  // 短列柔和垂直居中（平滑对齐画布中轴）
+  for (const band of sortedColBands) {
+    const colNodes = colMap.get(band)!
+    let colMinY = Infinity
+    let colMaxY = -Infinity
+    for (const n of colNodes) {
+      colMinY = Math.min(colMinY, n.y - n.height / 2)
+      colMaxY = Math.max(colMaxY, n.y + n.height / 2)
+    }
+    const colHeight = colMaxY - colMinY
+    if (colHeight < totalHeight * 0.85) {
+      const desiredTop = minY + (totalHeight - colHeight) / 2
+      const shift = (desiredTop - colMinY) * 0.6
+      for (const n of colNodes) {
+        n.y += shift
+      }
+    }
+  }
+
+  const entities = design.entities.map((entity) => {
+    const laidOut = nodeMap.get(entity.id)
     if (!laidOut) {
       return entity
     }
-    // dagre 返回中心点坐标，React Flow 用左上角坐标。
     return {
       ...entity,
       position: {
-        x: Math.round(laidOut.x - currentWidth / 2),
-        y: Math.round(laidOut.y - nodeHeight(entity) / 2),
+        x: Math.round(laidOut.x - laidOut.width / 2),
+        y: Math.round(laidOut.y - laidOut.height / 2),
       },
     }
   })
