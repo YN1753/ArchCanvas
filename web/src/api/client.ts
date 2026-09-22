@@ -343,5 +343,58 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(params),
     }),
+
+  /**
+   * 预览生成的 Go 脚手架文件树与代码
+   */
+  previewScaffold: (params: GenerateRequest) =>
+    request<GeneratedFile[]>('/generator/preview', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  /**
+   * 触发下载 Go 工程脚手架 ZIP 压缩包
+   */
+  downloadScaffold: async (params: GenerateRequest) => {
+    const res = await fetch(`${BASE}/generator/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`下载脚手架失败: ${text}`)
+    }
+    const blob = await res.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    let filename = `${params.module_name || 'archcanvas-app'}.zip`
+    if (filename.includes('/')) {
+      filename = filename.substring(filename.lastIndexOf('/') + 1)
+    }
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  },
+}
+
+export interface GenerateRequest {
+  project_id: string
+  module_name: string
+  port?: string
+  db_driver?: string
+  enable_redis?: boolean
+  enable_docker?: boolean
+  enable_soft_delete?: boolean
+}
+
+export interface GeneratedFile {
+  path: string
+  content: string
+  size: number
 }
 

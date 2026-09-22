@@ -1,0 +1,33 @@
+package router
+
+import (
+	"{{ .ModuleName }}/internal/handler"
+	"github.com/gin-gonic/gin"
+)
+
+type Handlers struct {
+	{{- range .Entities }}
+	{{ .StructName }} *handler.{{ .StructName }}Handler
+	{{- end }}
+}
+
+// SetupRouter 初始化 Gin 路由引擎与中间件
+func SetupRouter(handlers Handlers) *gin.Engine {
+	r := gin.Default()
+
+	api := r.Group("/api/v1")
+	{
+		{{- range .Entities }}
+		{{ .VarName }}Group := api.Group("/{{ .TableName }}")
+		{
+			{{ .VarName }}Group.POST("", handlers.{{ .StructName }}.Create)
+			{{ .VarName }}Group.GET("/:id", handlers.{{ .StructName }}.GetDetail)
+			{{ .VarName }}Group.GET("", handlers.{{ .StructName }}.List)
+			{{ .VarName }}Group.PUT("", handlers.{{ .StructName }}.Update)
+			{{ .VarName }}Group.DELETE("/:id", handlers.{{ .StructName }}.Delete)
+		}
+		{{- end }}
+	}
+
+	return r
+}

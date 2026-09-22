@@ -37,5 +37,11 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 		agent.POST("chat", handlers.Agent.Chat)
 	}
 
+	generator := route.Group("generator")
+	{
+		generator.POST("preview", handlers.Generator.Preview)
+		generator.POST("download", handlers.Generator.Download)
+	}
+
 	return r
 }

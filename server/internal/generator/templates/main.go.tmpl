@@ -1,0 +1,63 @@
+package main
+
+import (
+	"fmt"
+	"log"
+
+	{{- if .EnableRedis }}
+	"{{ .ModuleName }}/internal/cache"
+	{{- end }}
+	"{{ .ModuleName }}/internal/config"
+	"{{ .ModuleName }}/internal/database"
+	"{{ .ModuleName }}/internal/handler"
+	"{{ .ModuleName }}/internal/repository"
+	"{{ .ModuleName }}/internal/router"
+	"{{ .ModuleName }}/internal/service"
+)
+
+func main() {
+	// 1. 加载配置
+	cfg, err := config.Load("configs/config.yaml")
+	if err != nil {
+		log.Printf("未找到 configs/config.yaml，尝试加载 configs/config.example.yaml: %v", err)
+		cfg, err = config.Load("configs/config.example.yaml")
+		if err != nil {
+			log.Fatalf("加载配置文件失败: %v", err)
+		}
+	}
+
+	// 2. 初始化数据库连接池与 AutoMigrate 建表
+	db, err := database.InitDB(cfg.Database)
+	if err != nil {
+		log.Fatalf("初始化数据库连接失败: %v", err)
+	}
+
+	{{- if .EnableRedis }}
+	// 3. (可选) 初始化 Redis 连接
+	_, err = cache.InitRedis(cfg.Redis)
+	if err != nil {
+		log.Printf("警告: Redis 连接失败: %v", err)
+	}
+	{{- end }}
+
+	// 4. 显式构造器依赖装配 (Explicit Constructor Dependency Injection)
+	{{- range .Entities }}
+	{{ .VarName }}Repo := repository.New{{ .StructName }}Repository(db)
+	{{ .VarName }}Svc := service.New{{ .StructName }}Service({{ .VarName }}Repo)
+	{{ .VarName }}Handler := handler.New{{ .StructName }}Handler({{ .VarName }}Svc)
+	{{- end }}
+
+	handlers := router.Handlers{
+		{{- range .Entities }}
+		{{ .StructName }}: {{ .VarName }}Handler,
+		{{- end }}
+	}
+
+	// 5. 挂载路由并启动 Web 监听
+	r := router.SetupRouter(handlers)
+	addr := cfg.Server.Port
+	fmt.Printf("🚀 服务启动成功，监听地址: %s\n", addr)
+	if err := r.Run(addr); err != nil {
+		log.Fatalf("服务退出异常: %v", err)
+	}
+}

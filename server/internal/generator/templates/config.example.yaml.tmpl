@@ -1,0 +1,27 @@
+server:
+  port: "{{ .Port }}"
+  mode: "debug" # debug | release
+
+database:
+  driver: "{{ .DBDriver }}" # mysql | postgres | sqlite
+  {{- if eq .DBDriver "mysql" }}
+  dsn: "root:123456@tcp(127.0.0.1:3306)/{{ .ModuleName }}?charset=utf8mb4&parseTime=True&loc=Local"
+  {{- else if eq .DBDriver "postgres" }}
+  dsn: "host=localhost user=postgres password=postgres dbname={{ .ModuleName }} port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+  {{- else }}
+  dsn: "data.db"
+  {{- end }}
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: "1h"
+
+{{- if .EnableRedis }}
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  pool_size: 50
+{{- end }}
+
+log:
+  level: "info"

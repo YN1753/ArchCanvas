@@ -1,10 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 
 import AiPanel from './components/AiPanel'
 import Canvas from './components/Canvas'
 import DataDialog from './components/DataDialog'
 import Inspector from './components/Inspector'
+import ScaffoldDialog from './components/ScaffoldDialog'
 import Toast from './components/Toast'
 import Toolbar from './components/Toolbar'
 import { useStore } from './store/erStore'
@@ -16,6 +17,7 @@ export default function App() {
   const dataDialogOpen = useStore((state) => state.dataDialogOpen)
   const openDataDialog = useStore((state) => state.openDataDialog)
   const closeDataDialog = useStore((state) => state.closeDataDialog)
+  const [scaffoldDialogOpen, setScaffoldDialogOpen] = useState(false)
 
   useEffect(() => {
     void bootstrap()
@@ -99,7 +101,10 @@ export default function App() {
   return (
     <ReactFlowProvider>
       <div className="flex h-full flex-col bg-[#faf7f0] text-[#1f1f1f]">
-        <Toolbar onOpenData={() => openDataDialog('export-sql')} />
+        <Toolbar
+          onOpenData={() => openDataDialog('export-sql')}
+          onOpenScaffold={() => setScaffoldDialogOpen(true)}
+        />
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {/* 左侧主要工作区（全尺寸画布 + 底部悬浮 AI 智能胶囊） */}
@@ -114,6 +119,7 @@ export default function App() {
       </div>
 
       {dataDialogOpen ? <DataDialog onClose={closeDataDialog} /> : null}
+      {scaffoldDialogOpen ? <ScaffoldDialog onClose={() => setScaffoldDialogOpen(false)} /> : null}
       <Toast />
     </ReactFlowProvider>
   )

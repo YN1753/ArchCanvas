@@ -4,6 +4,7 @@ import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/config"
 	"archcanvas/internal/database"
+	"archcanvas/internal/generator"
 	"archcanvas/internal/handler"
 	"archcanvas/internal/repository"
 	"archcanvas/internal/router"
@@ -31,7 +32,13 @@ func main() {
 	agentService := service.NewAgentService(modelManager, projectService)
 	agentHandler := handler.NewAgentHandler(agentService)
 
-	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler)
+	generatorService, err := generator.NewGeneratorService(projectService)
+	if err != nil {
+		panic(err)
+	}
+	generatorHandler := handler.NewGeneratorHandler(generatorService)
+
+	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler, generatorHandler)
 
 	r := router.InitRouter(totalHandler)
 	r.Run(fmt.Sprintf("%s:%d", cfg.Service.Host, cfg.Service.Port))

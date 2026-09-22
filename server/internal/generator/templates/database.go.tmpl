@@ -1,0 +1,75 @@
+package database
+
+import (
+	"fmt"
+	"time"
+
+	"{{ .ModuleName }}/internal/config"
+	"{{ .ModuleName }}/internal/model"
+
+	{{- if eq .DBDriver "mysql" }}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DBDriver "postgres" }}
+	"gorm.io/driver/postgres"
+	{{- else }}
+	"gorm.io/driver/sqlite"
+	{{- end }}
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// InitDB 初始化数据库连接池并自动同步表结构 (AutoMigrate)
+func InitDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
+	var dialector gorm.Dialector
+
+	switch cfg.Driver {
+	{{- if eq .DBDriver "mysql" }}
+	case "mysql":
+		dialector = mysql.Open(cfg.DSN)
+	{{- else if eq .DBDriver "postgres" }}
+	case "postgres":
+		dialector = postgres.Open(cfg.DSN)
+	{{- else }}
+	case "sqlite":
+		dialector = sqlite.Open(cfg.DSN)
+	{{- end }}
+	default:
+		return nil, fmt.Errorf("unsupported db driver: %s", cfg.Driver)
+	}
+
+	db, err := gorm.Open(dialector, &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect database: %w", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+	if cfg.ConnMaxLifetime > 0 {
+		sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	} else {
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
+
+	// 自动执行表结构迁移
+	err = db.AutoMigrate(
+		{{- range .Entities }}
+		&model.{{ .StructName }}{},
+		{{- end }}
+	)
+	if err != nil {
+		return nil, fmt.Errorf("auto migrate failed: %w", err)
+	}
+
+	return db, nil
+}

@@ -1,0 +1,61 @@
+package service
+
+import (
+	"context"
+
+	"{{ .ModuleName }}/internal/model"
+	"{{ .ModuleName }}/internal/repository"
+)
+
+type {{ .Entity.StructName }}Service interface {
+	Create(ctx context.Context, item *model.{{ .Entity.StructName }}) error
+	GetDetail(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) (*model.{{ .Entity.StructName }}, error)
+	GetList(ctx context.Context, page, size int) ([]*model.{{ .Entity.StructName }}, int64, error)
+	Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error
+	Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error
+}
+
+type {{ .Entity.VarName }}Service struct {
+	repo repository.{{ .Entity.StructName }}Repository
+}
+
+func New{{ .Entity.StructName }}Service(repo repository.{{ .Entity.StructName }}Repository) {{ .Entity.StructName }}Service {
+	return &{{ .Entity.VarName }}Service{repo: repo}
+}
+
+func (s *{{ .Entity.VarName }}Service) Create(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
+	// TODO: 1. 补充前置业务校验逻辑 (例如字段合法性、唯一性防重等)
+
+	// TODO: 2. 执行数据持久化
+	if err := s.repo.Create(ctx, item); err != nil {
+		return err
+	}
+
+	// TODO: 3. 补充后续业务联动 (如异步通知、缓存写入等)
+	return nil
+}
+
+func (s *{{ .Entity.VarName }}Service) GetDetail(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) (*model.{{ .Entity.StructName }}, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
+func (s *{{ .Entity.VarName }}Service) GetList(ctx context.Context, page, size int) ([]*model.{{ .Entity.StructName }}, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 10
+	}
+	offset := (page - 1) * size
+	return s.repo.List(ctx, offset, size)
+}
+
+func (s *{{ .Entity.VarName }}Service) Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
+	// TODO: 补充业务更新前置检查与数据变更逻辑
+	return s.repo.Update(ctx, item)
+}
+
+func (s *{{ .Entity.VarName }}Service) Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error {
+	// TODO: 补充业务删除约束检查 (如关联级联校验)
+	return s.repo.Delete(ctx, id)
+}

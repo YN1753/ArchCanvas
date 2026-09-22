@@ -1,0 +1,107 @@
+package handler
+
+import (
+	"strconv"
+
+	"{{ .ModuleName }}/internal/model"
+	"{{ .ModuleName }}/internal/service"
+	"{{ .ModuleName }}/pkg/response"
+	"github.com/gin-gonic/gin"
+)
+
+type {{ .Entity.StructName }}Handler struct {
+	svc service.{{ .Entity.StructName }}Service
+}
+
+func New{{ .Entity.StructName }}Handler(svc service.{{ .Entity.StructName }}Service) *{{ .Entity.StructName }}Handler {
+	return &{{ .Entity.StructName }}Handler{svc: svc}
+}
+
+func (h *{{ .Entity.StructName }}Handler) Create(c *gin.Context) {
+	var item model.{{ .Entity.StructName }}
+	if err := c.ShouldBindJSON(&item); err != nil {
+		response.Fail(c, 400, "参数格式错误: "+err.Error())
+		return
+	}
+	if err := h.svc.Create(c.Request.Context(), &item); err != nil {
+		response.Fail(c, 500, "创建失败: "+err.Error())
+		return
+	}
+	response.Success(c, item)
+}
+
+func (h *{{ .Entity.StructName }}Handler) GetDetail(c *gin.Context) {
+	idStr := c.Param("id")
+	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") }}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return
+	}
+	item, err := h.svc.GetDetail(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
+	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") }}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return
+	}
+	item, err := h.svc.GetDetail(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
+	{{- else }}
+	item, err := h.svc.GetDetail(c.Request.Context(), idStr)
+	{{- end }}
+	if err != nil {
+		response.Fail(c, 404, "记录不存在")
+		return
+	}
+	response.Success(c, item)
+}
+
+func (h *{{ .Entity.StructName }}Handler) List(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+	list, total, err := h.svc.GetList(c.Request.Context(), page, size)
+	if err != nil {
+		response.Fail(c, 500, "查询列表失败: "+err.Error())
+		return
+	}
+	response.PageSuccess(c, list, total, page, size)
+}
+
+func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
+	var item model.{{ .Entity.StructName }}
+	if err := c.ShouldBindJSON(&item); err != nil {
+		response.Fail(c, 400, "参数格式错误: "+err.Error())
+		return
+	}
+	if err := h.svc.Update(c.Request.Context(), &item); err != nil {
+		response.Fail(c, 500, "更新失败: "+err.Error())
+		return
+	}
+	response.Success(c, item)
+}
+
+func (h *{{ .Entity.StructName }}Handler) Delete(c *gin.Context) {
+	idStr := c.Param("id")
+	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") }}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return
+	}
+	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
+	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") }}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return
+	}
+	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
+	{{- else }}
+	err = h.svc.Delete(c.Request.Context(), idStr)
+	{{- end }}
+	if err != nil {
+		response.Fail(c, 500, "删除失败: "+err.Error())
+		return
+	}
+	response.Success(c, true)
+}

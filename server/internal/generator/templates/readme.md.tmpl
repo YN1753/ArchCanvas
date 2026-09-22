@@ -1,0 +1,38 @@
+# {{ .ModuleName }}
+
+基于 [ArchCanvas](https://github.com/starry/archcanvas) 架构画板自动生成的企业级 Go Web 后端工程。
+
+## 目录结构
+
+```text
+├── cmd/server/main.go        # 服务入口，显式依赖注入
+├── configs/                  # 配置文件目录
+├── internal/
+│   ├── config/               # 配置模型
+│   ├── database/             # GORM 初始化与 AutoMigrate
+│   {{- if .EnableRedis }}
+│   ├── cache/                # Redis 客户端
+│   {{- end }}
+│   ├── model/                # 业务数据表模型
+│   ├── repository/           # 仓储数据访问层
+│   ├── service/              # 业务逻辑层（预留扩展 TODO）
+│   ├── handler/              # HTTP 接口控制器
+│   └── router/               # Gin 路由定义
+├── pkg/response/             # 统一响应封装
+└── go.mod
+```
+
+## 快速开始
+
+### 1. 准备配置
+复制配置文件样例并根据实际环境填写数据库连接信息：
+```bash
+cp configs/config.example.yaml configs/config.yaml
+```
+
+### 2. 启动服务
+```bash
+go mod tidy
+go run cmd/server/main.go
+```
+服务默认监听在 `{{ .Port }}`，启动时将自动执行 GORM `AutoMigrate` 完成物理建表！

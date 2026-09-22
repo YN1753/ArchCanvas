@@ -1,0 +1,61 @@
+package repository
+
+import (
+	"context"
+
+	"{{ .ModuleName }}/internal/model"
+	"gorm.io/gorm"
+)
+
+type {{ .Entity.StructName }}Repository interface {
+	Create(ctx context.Context, item *model.{{ .Entity.StructName }}) error
+	GetByID(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) (*model.{{ .Entity.StructName }}, error)
+	List(ctx context.Context, offset, limit int) ([]*model.{{ .Entity.StructName }}, int64, error)
+	Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error
+	Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error
+}
+
+type {{ .Entity.VarName }}Repository struct {
+	db *gorm.DB
+}
+
+func New{{ .Entity.StructName }}Repository(db *gorm.DB) {{ .Entity.StructName }}Repository {
+	return &{{ .Entity.VarName }}Repository{db: db}
+}
+
+func (r *{{ .Entity.VarName }}Repository) Create(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
+	return r.db.WithContext(ctx).Create(item).Error
+}
+
+func (r *{{ .Entity.VarName }}Repository) GetByID(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) (*model.{{ .Entity.StructName }}, error) {
+	var item model.{{ .Entity.StructName }}
+	err := r.db.WithContext(ctx).First(&item, "{{ .Entity.PrimaryKey.Name }} = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *{{ .Entity.VarName }}Repository) List(ctx context.Context, offset, limit int) ([]*model.{{ .Entity.StructName }}, int64, error) {
+	var items []*model.{{ .Entity.StructName }}
+	var total int64
+	db := r.db.WithContext(ctx).Model(&model.{{ .Entity.StructName }}{})
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if limit > 0 {
+		db = db.Offset(offset).Limit(limit)
+	}
+	if err := db.Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *{{ .Entity.VarName }}Repository) Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
+	return r.db.WithContext(ctx).Save(item).Error
+}
+
+func (r *{{ .Entity.VarName }}Repository) Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error {
+	return r.db.WithContext(ctx).Delete(&model.{{ .Entity.StructName }}{}, "{{ .Entity.PrimaryKey.Name }} = ?", id).Error
+}

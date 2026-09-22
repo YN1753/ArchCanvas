@@ -42,10 +42,12 @@ function SavePill() {
 function MoreActionsMenu({
   autoLayout,
   onOpenData,
+  onOpenScaffold,
   reload,
 }: {
   autoLayout: () => void
   onOpenData: () => void
+  onOpenScaffold: () => void
   reload: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -78,6 +80,17 @@ function MoreActionsMenu({
 
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-44 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-lg z-50 animate-in fade-in zoom-in-95 duration-100">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenScaffold()
+              setOpen(false)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-bold text-[#df4e3e] transition"
+          >
+            <span className="text-xs">⚡</span>
+            <span>导出 Go 脚手架</span>
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -123,7 +136,13 @@ function MoreActionsMenu({
   )
 }
 
-export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
+export default function Toolbar({
+  onOpenData,
+  onOpenScaffold,
+}: {
+  onOpenData: () => void
+  onOpenScaffold: () => void
+}) {
   const addEntity = useStore((state) => state.addEntity)
   const autoLayout = useStore((state) => state.autoLayout)
   const reload = useStore((state) => state.reload)
@@ -184,7 +203,7 @@ export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
         <ProjectMenu />
       </div>
 
-      {/* 右侧：撤销/重做、未保存虚线胶囊、红色新建主按钮、更多按钮 */}
+      {/* 右侧：撤销/重做、未保存虚线胶囊、导出Go脚手架、红色新建主按钮、更多按钮 */}
       <div className="flex items-center gap-2.5">
         {/* 撤销 / 重做 */}
         <div className="flex items-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs">
@@ -215,6 +234,17 @@ export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
 
         <SavePill />
 
+        {/* 导出 Go 脚手架按钮 */}
+        <button
+          type="button"
+          onClick={onOpenScaffold}
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-800 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none"
+          title="将当前 ER 模型一键导出为完整可运行的 Go Web 工程脚手架"
+        >
+          <span className="text-xs">⚡</span>
+          <span>导出 Go 脚手架</span>
+        </button>
+
         {/* 红色新建实体主按钮 */}
         <button
           type="button"
@@ -226,7 +256,12 @@ export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
         </button>
 
         {/* 更多动作 */}
-        <MoreActionsMenu autoLayout={autoLayout} onOpenData={onOpenData} reload={reload} />
+        <MoreActionsMenu
+          autoLayout={autoLayout}
+          onOpenData={onOpenData}
+          onOpenScaffold={onOpenScaffold}
+          reload={reload}
+        />
 
         {/* 帮助 / 诊断按钮 */}
         <button

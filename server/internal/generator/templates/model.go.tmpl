@@ -1,0 +1,22 @@
+package model
+
+import (
+	{{- if .HasTime }}
+	"time"
+	{{- end }}
+)
+
+// {{ .Entity.StructName }} 映射数据库表「{{ .Entity.TableName }}」
+type {{ .Entity.StructName }} struct {
+	{{- range .Entity.Attributes }}
+	{{ .FieldName }} {{ .GoType }} `{{ .GormTag }} {{ .JsonTag }}`{{ if .Description }} // {{ .Description }}{{ end }}
+	{{- end }}
+	{{- range .Entity.Associations }}
+	{{ .FieldName }} {{ .FieldType }} `{{ .GormTag }} {{ .JsonTag }}`
+	{{- end }}
+	BaseModel
+}
+
+func ({{ .Entity.StructName }}) TableName() string {
+	return "{{ .Entity.TableName }}"
+}
