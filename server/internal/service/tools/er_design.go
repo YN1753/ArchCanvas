@@ -17,13 +17,14 @@ const (
 
 // ProposeRequirementArgs 阶段一：需求分析算子输出的结构体参数
 type ProposeRequirementArgs struct {
-	Summary             string                   `json:"summary" jsonschema:"description=需求理解与概念模型设计的业务摘要"`
-	Concepts            []domain.BusinessConcept `json:"concepts" jsonschema:"description=梳理出的业务概念模型列表"`
-	Relations           []domain.ConceptRelation `json:"relations" jsonschema:"description=概念之间的关联关系"`
-	Assumptions         []string                 `json:"assumptions,omitempty" jsonschema:"description=推断出的业务假设"`
-	NegativeConstraints []string                 `json:"negative_constraints,omitempty" jsonschema:"description=识别出的明确业务边界与非需求"`
-	NeedClarification   bool                     `json:"need_clarification" jsonschema:"description=需求是否存在重大歧义导致无法确定设计"`
-	Questions           []string                 `json:"questions,omitempty" jsonschema:"description=需要用户进一步澄清确认的问题"`
+	Summary             string                     `json:"summary" jsonschema:"description=需求理解与概念模型设计的业务摘要"`
+	Concepts            []domain.BusinessConcept   `json:"concepts" jsonschema:"description=梳理出的业务概念模型列表"`
+	Relations           []domain.ConceptRelation   `json:"relations" jsonschema:"description=概念之间的关联关系"`
+	Assumptions         []string                   `json:"assumptions,omitempty" jsonschema:"description=推断出的业务假设"`
+	NegativeConstraints []string                   `json:"negative_constraints,omitempty" jsonschema:"description=识别出的明确业务边界与非需求"`
+	NeedClarification   bool                       `json:"need_clarification" jsonschema:"description=需求是否存在重大歧义导致无法确定设计"`
+	ClarificationCards  []domain.ClarificationCard `json:"clarification_cards,omitempty" jsonschema:"description=宏观广泛需求下按逻辑递进排列的澄清确认卡片组"`
+	Questions           []string                   `json:"questions,omitempty" jsonschema:"description=需要用户进一步澄清确认的问题"`
 }
 
 // ProposeSchemaDesignArgs 阶段二：物理建模算子输出的结构体参数

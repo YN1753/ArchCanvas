@@ -56,3 +56,19 @@ type ConceptRelation struct {
 	Cardinality   ConceptCardinality `json:"cardinality" jsonschema:"enum=one_to_one,enum=one_to_many,enum=many_to_many,description=关联对应关系"`
 	Description   string             `json:"description" jsonschema:"description=业务关联场景说明，如一个用户可以拥有多笔订单"`
 }
+
+// ClarificationOption 澄清确认卡片中的单项预设选项（类似 MiMo 编排选项）
+type ClarificationOption struct {
+	ID          string `json:"id" jsonschema:"description=选项唯一标识，如 express_delivery"`
+	Label       string `json:"label" jsonschema:"description=选项主标题标签，如：支持校内面交与宿舍自提"`
+	Description string `json:"description,omitempty" jsonschema:"description=选项副标题说明，简述对设计与架构的影响，如：增加提货码字段，支持离线核销"`
+	IsDefault   bool   `json:"is_default" jsonschema:"description=是否为官方推荐选项（卡片中有且仅有一个推荐项）"`
+}
+
+// ClarificationCard 编排模式下的单项决策确认卡片（一个业务维度的确认）
+type ClarificationCard struct {
+	ID          string                `json:"id" jsonschema:"description=决策项唯一标识，如 delivery_mode"`
+	Title       string                `json:"title" jsonschema:"description=决策问题标题，如：交易与交付模式"`
+	Description string                `json:"description,omitempty" jsonschema:"description=该决策对数据模型的影响简述"`
+	Options     []ClarificationOption `json:"options" jsonschema:"description=预置的2-3个高频可选方案列表"`
+}

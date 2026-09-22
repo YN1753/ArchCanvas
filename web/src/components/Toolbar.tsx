@@ -1,131 +1,124 @@
-import { useEffect, useRef, useState } from 'react'
-
-import { api } from '../api/client'
+import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../store/erStore'
-import ModelSelector from './ModelSelector'
-import Select from './Select'
+import ProjectMenu from './ProjectMenu'
 
-function SaveIndicator() {
+function SavePill() {
   const saveState = useStore((state) => state.saveState)
   const saveError = useStore((state) => state.saveError)
+  const saveNow = useStore((state) => state.saveNow)
 
-  const text =
+  const statusDot =
+    saveState === 'saving'
+      ? 'bg-[#df4e3e] animate-ping'
+      : saveState === 'saved'
+        ? 'bg-emerald-600'
+        : saveState === 'error'
+          ? 'bg-rose-600'
+          : 'bg-stone-400'
+
+  const label =
     saveState === 'saving'
       ? '保存中…'
       : saveState === 'saved'
-        ? '已同步云端'
+        ? '已保存'
         : saveState === 'error'
           ? '保存失败'
-          : '无未保存改动'
+          : '未保存'
 
   return (
-    <div
-      className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium"
+    <button
+      type="button"
+      onClick={() => void saveNow()}
+      className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-dashed border-[#b3a898] bg-[#f4ede2]/90 px-3 py-1.5 text-xs font-mono text-[#574c43] hover:bg-[#ede3d5] transition shadow-2xs active:scale-98"
       title={saveError ? `错误原因: ${saveError}` : '按 ⌘/Ctrl + S 可立即手动落库保存'}
     >
-      {saveState === 'saving' ? (
-        <span className="h-2 w-2 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
-      ) : saveState === 'saved' ? (
-        <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-400" />
-      ) : saveState === 'error' ? (
-        <span className="h-2 w-2 rounded-full bg-rose-500 shadow-sm shadow-rose-400" />
-      ) : (
-        <span className="h-2 w-2 rounded-full bg-slate-300" />
-      )}
-      <span
-        className={`text-[11px] ${
-          saveState === 'error'
-            ? 'text-rose-600 font-semibold'
-            : saveState === 'saved'
-              ? 'text-emerald-700 font-medium'
-              : 'text-slate-500'
-        }`}
-      >
-        {text}
-      </span>
-    </div>
+      <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+      <span className="font-semibold text-[11px]">{label}</span>
+      <span className="text-[10px] text-stone-400 font-mono">⌘S</span>
+    </button>
   )
 }
 
-function ProjectSelector() {
-  const projects = useStore((state) => state.projects)
-  const project = useStore((state) => state.project)
-  const selectProject = useStore((state) => state.selectProject)
-  const [creating, setCreating] = useState(false)
-  const [draft, setDraft] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+function MoreActionsMenu({
+  autoLayout,
+  onOpenData,
+  reload,
+}: {
+  autoLayout: () => void
+  onOpenData: () => void
+  reload: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (creating) {
-      inputRef.current?.focus()
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
     }
-  }, [creating])
-
-  async function submit() {
-    const name = draft.trim()
-    setCreating(false)
-    setDraft('')
-    if (!name) {
-      return
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside)
     }
-    const created = await api.createProject(name)
-    useStore.setState((state) => ({ projects: [...state.projects, created] }))
-    await selectProject(created.id)
-  }
-
-  if (creating) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <input
-          ref={inputRef}
-          value={draft}
-          placeholder="输入新项目名称"
-          className="w-36 rounded-lg border border-indigo-400 bg-white px-2.5 py-1 text-xs outline-none ring-2 ring-indigo-100 shadow-sm"
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              void submit()
-            }
-            if (event.key === 'Escape') {
-              setCreating(false)
-              setDraft('')
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-sm"
-          onClick={() => void submit()}
-        >
-          确定
-        </button>
-      </div>
-    )
-  }
-
-  const options = projects.map((item) => ({
-    value: item.id,
-    label: item.name,
-    sublabel: item.description || undefined,
-  }))
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [open])
 
   return (
-    <div className="flex items-center gap-1.5">
-      <Select
-        className="w-[170px]"
-        value={project?.id ?? ''}
-        onChange={(val) => void selectProject(val)}
-        options={options}
-        placeholder="选择当前项目..."
-      />
+    <div className="relative" ref={menuRef}>
       <button
         type="button"
-        title="新建一个独立的 ER 数据模型项目"
-        className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-800 hover:bg-slate-50 shadow-2xs"
-        onClick={() => setCreating(true)}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex h-8 w-8 items-center justify-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white text-stone-700 shadow-2xs hover:bg-stone-50 transition active:scale-95"
+        title="更多操作"
       >
-        + 新建
+        <span className="font-mono text-sm leading-none font-bold tracking-tight">···</span>
       </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 w-44 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-lg z-50 animate-in fade-in zoom-in-95 duration-100">
+          <button
+            type="button"
+            onClick={() => {
+              autoLayout()
+              setOpen(false)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
+          >
+            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16m-7 6h7" />
+            </svg>
+            <span>整理排版布局</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onOpenData()
+              setOpen(false)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
+          >
+            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+            </svg>
+            <span>导入 / 导出结构</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void reload()
+              setOpen(false)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
+          >
+            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>重新拉取服务端数据</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -133,120 +126,85 @@ function ProjectSelector() {
 export default function Toolbar({ onOpenData }: { onOpenData: () => void }) {
   const addEntity = useStore((state) => state.addEntity)
   const autoLayout = useStore((state) => state.autoLayout)
-  const saveNow = useStore((state) => state.saveNow)
   const reload = useStore((state) => state.reload)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
+  const toggleInspector = useStore((state) => state.toggleInspector)
 
   return (
-    <header className="flex items-center gap-3 border-b border-slate-200/90 bg-white px-4 py-2.5 shadow-2xs select-none">
-      {/* Brand & Project Breadcrumb */}
+    <header className="flex items-center justify-between border-b border-[#e5ded0] bg-[#faf7f0] px-4 py-2.5 select-none shadow-2xs">
+      {/* 左侧：Logo、分段开关、项目选择 */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-600 to-slate-900 text-xs font-black text-white shadow-sm">
-            AC
-          </div>
-          <span className="text-sm font-bold tracking-tight text-slate-800">
-            ArchCanvas <span className="text-[10px] text-indigo-600 font-semibold uppercase tracking-wider bg-indigo-50 border border-indigo-100 rounded px-1 py-0.2 ml-0.5">Studio</span>
-          </span>
+        {/* AC 红色圆形 Logo */}
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#df4e3e] text-white font-extrabold text-xs border-[1.5px] border-[#1f1f1f] shadow-xs shrink-0">
+          AC
         </div>
 
-        <span className="text-slate-300 text-sm font-light">/</span>
+        {/* 黑色双线圆角分段开关 */}
+        <div className="flex items-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setDslView('canvas')}
+            className={`flex items-center gap-1.5 px-3.5 py-1 text-xs font-bold rounded-lg transition ${
+              dslView === 'canvas'
+                ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
+                : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            <span>画布</span>
+          </button>
 
-        <ProjectSelector />
+          <button
+            type="button"
+            onClick={() => setDslView('code')}
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition ${
+              dslView === 'code'
+                ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
+                : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
+            }`}
+          >
+            <span className="font-mono text-xs">‹›</span>
+            <span>DSL 源码</span>
+          </button>
+        </div>
+
+        <span className="text-stone-300 text-sm font-light">/</span>
+
+        {/* 项目管理器 */}
+        <ProjectMenu />
       </div>
 
-      <div className="h-4 w-px bg-slate-200" />
+      {/* 右侧：未保存虚线胶囊、红色新建主按钮、更多按钮 */}
+      <div className="flex items-center gap-2.5">
+        <SavePill />
 
-      {/* Model & BaseURL Selector */}
-      <ModelSelector />
-
-      <div className="h-4 w-px bg-slate-200" />
-
-      {/* 画布 / 源码 切换分段器 */}
-      <div className="flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80">
-        <button
-          type="button"
-          onClick={() => setDslView('canvas')}
-          className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition ${
-            dslView === 'canvas'
-              ? 'bg-white text-indigo-700 font-semibold shadow-xs'
-              : 'text-slate-500 hover:text-slate-800 font-medium'
-          }`}
-        >
-          <span>📊</span>
-          <span>画布</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setDslView('code')}
-          className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition ${
-            dslView === 'code'
-              ? 'bg-white text-indigo-700 font-semibold shadow-xs'
-              : 'text-slate-500 hover:text-slate-800 font-medium'
-          }`}
-        >
-          <span>💻</span>
-          <span>DSL 源码</span>
-        </button>
-      </div>
-
-      {/* 右侧核心动作条 */}
-      <div className="ml-auto flex items-center gap-2">
-        <SaveIndicator />
-
-        <div className="h-4 w-px bg-slate-200" />
-
-        {/* 主按钮：新建实体 */}
+        {/* 红色新建实体主按钮 */}
         <button
           type="button"
           onClick={() => addEntity()}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700 shadow-sm"
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-4 py-1.5 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition select-none"
         >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
+          <span className="text-sm font-bold leading-none">+</span>
           <span>新建实体</span>
         </button>
 
-        {/* 次级操作组 */}
-        <button
-          type="button"
-          onClick={autoLayout}
-          className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 shadow-2xs"
-          title="自动对齐所有实体表节点"
-        >
-          <span>自动布局</span>
-        </button>
+        {/* 更多动作 */}
+        <MoreActionsMenu autoLayout={autoLayout} onOpenData={onOpenData} reload={reload} />
 
+        {/* 帮助 / 诊断按钮 */}
         <button
           type="button"
-          onClick={onOpenData}
-          className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 shadow-2xs"
-          title="导出或导入 JSON/Mermaid 结构"
+          onClick={toggleInspector}
+          className="flex h-8 w-8 items-center justify-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white text-stone-700 font-mono text-xs font-bold shadow-2xs hover:bg-stone-50 transition active:scale-95"
+          title="设计诊断与帮助"
         >
-          <span>导入 / 导出</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => void saveNow()}
-          className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 shadow-2xs"
-          title="快捷键: ⌘/Ctrl + S"
-        >
-          <span>立即保存</span>
-          <span className="text-[10px] text-slate-400 font-mono">⌘S</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => void reload()}
-          className="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:text-slate-800 hover:bg-slate-50 shadow-2xs"
-          title="从服务端重新拉取最新数据"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
+          ?
         </button>
       </div>
     </header>

@@ -16,8 +16,8 @@ body,
 
 body {
   font-family: var(--font-sans);
-  background: var(--color-slate-100);
-  color: var(--color-slate-800);
+  background: #faf7f0;
+  color: #1f1f1f;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -27,31 +27,27 @@ body {
   font-size: 12px;
 }
 
-/* 玻璃拟态效果 */
-.glass {
-  background-color: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* 隐藏下拉菜单等组件中多余的滚动条，同时保留平滑滚动体验 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-.glass-dark {
-  background-color: rgba(15, 23, 42, 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-/* React Flow 细节调优，让表结构与架构线成为视觉核心 */
+/* React Flow 细节调优：温暖图纸发丝线风格 */
 .react-flow__attribution {
   display: none;
 }
 
 .react-flow__handle {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 9999px;
-  background: #94a3b8;
-  border: 2px solid #ffffff;
-  opacity: 0.2;
+  background: #1f1f1f;
+  border: 1.5px solid #ffffff;
+  opacity: 0.3;
   transition: all 160ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -60,45 +56,20 @@ body {
 .react-flow__handle.connecting,
 .react-flow__handle.valid {
   opacity: 1;
-  background: #6366f1;
-  transform: scale(1.15);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  background: #df4e3e;
+  border-color: #1f1f1f;
+  transform: scale(1.25);
+  box-shadow: 0 0 0 2px rgba(223, 78, 62, 0.25);
 }
 
 .react-flow__edge-path {
+  stroke: #262626;
+  stroke-width: 1.75px;
   transition: stroke 160ms ease, stroke-width 160ms ease;
 }
 
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:hover .react-flow__edge-path {
-  stroke: #6366f1;
-  stroke-width: 2.2px;
-}
-
-.react-flow__controls {
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
-}
-
-.react-flow__controls-button {
-  border-bottom: 1px solid #f1f5f9;
-  background: #ffffff;
-  color: #64748b;
-  transition: all 120ms ease;
-}
-
-.react-flow__controls-button:hover {
-  background: #f8fafc;
-  color: #334155;
-}
-
-/* 隐藏下拉菜单等组件中多余的滚动条，同时保留平滑滚动体验 */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+  stroke: #df4e3e;
+  stroke-width: 2.25px;
 }

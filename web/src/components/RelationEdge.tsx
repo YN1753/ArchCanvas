@@ -100,7 +100,7 @@ export default function RelationEdge({
   const cardinality = data?.relation.cardinality ?? 'one_to_many'
   const { sourceMany, targetMany } = endsOf(cardinality)
 
-  const stroke = selected ? '#4f46e5' : '#94a3b8'
+  const stroke = selected ? '#df4e3e' : '#262626'
 
   return (
     <>
@@ -109,7 +109,7 @@ export default function RelationEdge({
         markerEnd={markerEnd}
         style={{
           stroke,
-          strokeWidth: selected ? 2.2 : 1.5,
+          strokeWidth: selected ? 2.5 : 1.75,
           transition: 'stroke 0.15s, stroke-width 0.15s',
         }}
       />
@@ -137,10 +137,10 @@ export default function RelationEdge({
             e.stopPropagation()
             select({ kind: 'relation', id })
           }}
-          className={`group flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-all shadow-xs cursor-pointer ${
+          className={`group flex items-center gap-1.5 rounded-xl border-[1.5px] px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer select-none ${
             selected
-              ? 'border-indigo-500 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-400/30'
-              : 'border-slate-200/90 bg-white/95 text-slate-600 hover:border-indigo-300 hover:text-indigo-600 backdrop-blur-xs'
+              ? 'border-[#df4e3e] bg-[#fdf0ee] text-[#df4e3e] shadow-[2px_2px_0px_#df4e3e]'
+              : 'border-[#1f1f1f] bg-white text-[#1f1f1f] shadow-[2px_2px_0px_#1f1f1f] hover:border-[#df4e3e]'
           }`}
           style={{
             position: 'absolute',
@@ -157,7 +157,7 @@ export default function RelationEdge({
                 e.stopPropagation()
                 deleteRelation(id)
               }}
-              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-slate-400 hover:bg-rose-100 hover:text-rose-600 transition"
+              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-[#df4e3e] hover:bg-red-100 transition font-bold"
             >
               ×
             </button>

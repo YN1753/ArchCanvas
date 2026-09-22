@@ -21,8 +21,8 @@ export default function Toast() {
   return (
     <div className="pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2">
       <div
-        className={`pointer-events-auto flex max-w-[560px] items-start gap-3 rounded-lg px-4 py-2.5 shadow-lg ${
-          toast.kind === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white'
+        className={`pointer-events-auto flex max-w-[560px] items-start gap-3 rounded-lg border-[1.5px] border-[#1f1f1f] px-4 py-2.5 shadow-[4px_4px_0px_#1f1f1f] ${
+          toast.kind === 'error' ? 'bg-[#df4e3e] text-white' : 'bg-[#1f1f1f] text-white'
         }`}
       >
         <span className="text-xs leading-relaxed">{toast.text}</span>

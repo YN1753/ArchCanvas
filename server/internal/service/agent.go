@@ -167,6 +167,7 @@ func (a *AgentService) AnalyzeRequirement(
 						Assumptions:         args.Assumptions,
 						NegativeConstraints: args.NegativeConstraints,
 						NeedClarification:   args.NeedClarification,
+						ClarificationCards:  args.ClarificationCards,
 						Questions:           args.Questions,
 					}, nil
 				}
@@ -297,10 +298,20 @@ func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schem
 		}
 	}
 
+	prompt.WriteString("【澄清选项卡触发与生成规则（至关重要）】：\n")
+	prompt.WriteString("1. 【精准具体小需求（静默直通）】：若用户的输入已经足够明确、指向具体单表/特定字段修改（例如“在users表加个phone字段”、“把status改成枚举”），严禁多事提问！必须将 need_clarification 设为 false，clarification_cards 留空，直接提议业务概念并放行物理建模！\n")
+	prompt.WriteString("2. 【宏观庞大粗粒度需求（编排门禁触发）】：若用户的输入是宏观系统级需求（例如“帮我做一个校园二手交易平台”、“做一个社区团购系统”），存在多种核心业务落地路径时，必须将 need_clarification 设为 true，并生成 2 到 3 张【逻辑递进、前后连贯】的决策卡片（clarification_cards）：\n")
+	prompt.WriteString("   - 卡片需按照业务主线递进（如：卡片1 核心业务交付模式 -> 卡片2 准入与认证体系 -> 卡片3 互动或结算方式）；\n")
+	prompt.WriteString("   - 每张卡片提供 2 到 4 个代表性预设选项（options）：\n")
+	prompt.WriteString("     * label: 选项主标题（简短明了，如“校内寝室自提与面交”）；\n")
+	prompt.WriteString("     * description: 选项副标题说明（一句话说明对架构表结构的影响与业务理由，如“支持离线提货码核销与楼栋定位，架构轻量”）；\n")
+	prompt.WriteString("     * is_default: 必须且只能将其中最符合通用场景的最佳实践选项标记为 true；\n")
+	prompt.WriteString("   - 【切勿生成自定义/其他选项】：大模型无需自己添加“其他”或“自定义”，前端交互层会自动在每张卡片尾部固定注入自定义输入框！\n\n")
+
 	prompt.WriteString("【输出要求】：\n")
 	prompt.WriteString("1. 请先用自然语言简要阐述你的业务分析思考与推导（这会流式展示给用户）；\n")
-	prompt.WriteString("2. 若需求存在重大模糊或关键矛盾，将 need_clarification 设为 true 并在 questions 中列出追问问题；\n")
-	prompt.WriteString("3. 最终通过调用 `propose_requirement` 工具提交结构化的业务概念模型。\n")
+	prompt.WriteString("2. 若需求存在重大模糊或关键矛盾，将 need_clarification 设为 true，并在 clarification_cards 中生成上述递进卡片，在 questions 中列出对应的自然语言追问；\n")
+	prompt.WriteString("3. 最终通过调用 `propose_requirement` 工具提交结构化的业务概念模型与决策卡片。\n")
 
 	return []*schema.Message{
 		schema.SystemMessage(prompt.String()),

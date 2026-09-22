@@ -35,6 +35,8 @@ export interface Toast {
   text: string
 }
 
+export type DataDialogTab = 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
+
 interface StoreState {
   ready: boolean
   bootError: string | null
@@ -64,12 +66,17 @@ interface StoreState {
   toast: Toast | null
 
   dslView: 'canvas' | 'code'
+  inspectorOpen: boolean
+  dataDialogOpen: boolean
+  dataDialogTab: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
 }
 
 interface StoreActions {
   bootstrap: () => Promise<void>
   selectProject: (id: string) => Promise<void>
-  createProject: (name: string) => Promise<void>
+  createProject: (name: string, description?: string) => Promise<void>
+  deleteProject: (id: string) => Promise<void>
+  updateProject: (id: string, name: string, description?: string) => Promise<void>
   reload: () => Promise<void>
 
   fetchModels: (params?: GetModelsParams) => Promise<AvailableModelsResponse | null>
@@ -77,6 +84,10 @@ interface StoreActions {
   saveAndSwitchModel: (params: SaveModelParams) => Promise<boolean>
 
   select: (selection: Selection) => void
+  setInspectorOpen: (open: boolean) => void
+  toggleInspector: () => void
+  openDataDialog: (tab?: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json') => void
+  closeDataDialog: () => void
   dismissToast: () => void
   dismissAiResult: () => void
 
@@ -112,6 +123,7 @@ let mutationCount = 0
 let saveTimer: number | null = null
 let saveInFlight = false
 let savePending = false
+let isBootstrapping = false
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -219,6 +231,9 @@ export const useStore = create<Store>((set, get) => {
     aiResult: null,
     toast: null,
     dslView: 'canvas',
+    inspectorOpen: false,
+    dataDialogOpen: false,
+    dataDialogTab: 'export-sql',
 
     async fetchModels(params?: GetModelsParams) {
       set({ modelsLoading: true, modelsError: null })
@@ -315,11 +330,15 @@ export const useStore = create<Store>((set, get) => {
     },
 
     async bootstrap() {
+      if (isBootstrapping || get().ready) {
+        return
+      }
+      isBootstrapping = true
       try {
         void get().fetchModels()
         let projects = await api.listProjects()
         if (projects.length === 0) {
-          await api.createProject('未命名项目', '由前端首次启动自动创建')
+          await api.createProject('新项目', '默认 ER 设计项目')
           projects = await api.listProjects()
         }
         const project = projects[0]
@@ -331,17 +350,27 @@ export const useStore = create<Store>((set, get) => {
           projects,
           project: detail,
           selection: null,
+          inspectorOpen: false,
         })
         recompute(ensureLayout(design))
       } catch (error) {
         set({ ready: true, bootError: errorMessage(error) })
+      } finally {
+        isBootstrapping = false
       }
     },
 
     async selectProject(id) {
       try {
         const [detail, design] = await Promise.all([api.getProject(id), api.getERDesign(id)])
-        set({ project: detail, selection: null, serverWarnings: [], aiResult: null, aiError: null })
+        set({
+          project: detail,
+          selection: null,
+          inspectorOpen: false,
+          serverWarnings: [],
+          aiResult: null,
+          aiError: null,
+        })
         recompute(ensureLayout(design))
         mutationCount = 0
       } catch (error) {
@@ -349,15 +378,50 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
-    async createProject(name) {
+    async createProject(name, description = '') {
       try {
-        const project = await api.createProject(name)
+        const project = await api.createProject(name, description)
         const projects = await api.listProjects()
-        set({ projects, project, selection: null, aiResult: null })
+        set({ projects, project, selection: null, inspectorOpen: false, aiResult: null })
         recompute({ entities: [], relations: [] })
         mutationCount = 0
+        set({ toast: { kind: 'info', text: `已成功创建项目「${name}」` } })
       } catch (error) {
         set({ toast: { kind: 'error', text: errorMessage(error) } })
+      }
+    },
+
+    async deleteProject(id) {
+      try {
+        await api.deleteProject(id)
+        let projects = await api.listProjects()
+        if (projects.length === 0) {
+          const created = await api.createProject('新项目')
+          projects = [created]
+        }
+        const current = get().project
+        const nextProject = projects.find((p) => p.id !== id) || projects[0]
+        set({ projects })
+        if (!current || current.id === id) {
+          await get().selectProject(nextProject.id)
+        }
+        set({ toast: { kind: 'info', text: '项目已成功删除' } })
+      } catch (error) {
+        set({ toast: { kind: 'error', text: `删除项目失败: ${errorMessage(error)}` } })
+      }
+    },
+
+    async updateProject(id, name, description = '') {
+      try {
+        const updated = await api.updateProject(id, name, description)
+        const projects = get().projects.map((p) => (p.id === id ? updated : p))
+        set({ projects })
+        if (get().project?.id === id) {
+          set({ project: updated })
+        }
+        set({ toast: { kind: 'info', text: `项目已更名为「${name}」` } })
+      } catch (error) {
+        set({ toast: { kind: 'error', text: `更新项目失败: ${errorMessage(error)}` } })
       }
     },
 
@@ -377,7 +441,26 @@ export const useStore = create<Store>((set, get) => {
     },
 
     select(selection) {
-      set({ selection })
+      set({
+        selection,
+        inspectorOpen: selection !== null,
+      })
+    },
+
+    setInspectorOpen(open) {
+      set({ inspectorOpen: open })
+    },
+
+    toggleInspector() {
+      set((state) => ({ inspectorOpen: !state.inspectorOpen }))
+    },
+
+    openDataDialog(tab = 'export-sql') {
+      set({ dataDialogOpen: true, dataDialogTab: tab })
+    },
+
+    closeDataDialog() {
+      set({ dataDialogOpen: false })
     },
 
     dismissToast() {
@@ -641,6 +724,7 @@ export const useStore = create<Store>((set, get) => {
       })
 
       let finalDesign: ERDesign | null = null
+      let rawResult: any = null
 
       try {
         await api.chatStream(
@@ -660,6 +744,7 @@ export const useStore = create<Store>((set, get) => {
               } else if (event.type === 'tool_call') {
                 set({ aiStatus: '已识别数据模型，正在持久化落库…' })
               } else if (event.type === 'result') {
+                rawResult = event.data
                 if (event.data && typeof event.data === 'object' && Array.isArray((event.data as any).entities)) {
                   finalDesign = event.data as ERDesign
                 }
@@ -698,14 +783,33 @@ export const useStore = create<Store>((set, get) => {
                     applied: true,
                     design: finalDesign,
                     requirement: {
-                      summary: '数据模型设计已生成并自动落库',
+                      summary: rawResult?.summary || '数据模型设计已生成并自动落库',
                       explicit_requirements: [],
-                      negative_constraints: [],
-                      assumptions: [],
+                      negative_constraints: rawResult?.negative_constraints || [],
+                      assumptions: rawResult?.assumptions || [],
                       decisions: [],
                       need_clarification: false,
                       questions: [],
                       operation_scope: 'create',
+                    },
+                    execution: null,
+                    review: null,
+                  },
+                })
+              } else if (rawResult && rawResult.need_clarification) {
+                set({
+                  aiResult: {
+                    applied: false,
+                    requirement: {
+                      summary: rawResult.summary || '需求存在疑问，请确认以下业务决策',
+                      explicit_requirements: [],
+                      negative_constraints: rawResult.negative_constraints || [],
+                      assumptions: rawResult.assumptions || [],
+                      decisions: [],
+                      need_clarification: true,
+                      clarification_cards: rawResult.clarification_cards || [],
+                      questions: rawResult.questions || [],
+                      operation_scope: 'clarification',
                     },
                     execution: null,
                     review: null,
@@ -716,13 +820,14 @@ export const useStore = create<Store>((set, get) => {
                   aiResult: {
                     applied: false,
                     requirement: {
-                      summary: '回复完毕',
+                      summary: rawResult?.summary || '回复完毕',
                       explicit_requirements: [],
-                      negative_constraints: [],
-                      assumptions: [],
+                      negative_constraints: rawResult?.negative_constraints || [],
+                      assumptions: rawResult?.assumptions || [],
                       decisions: [],
                       need_clarification: false,
-                      questions: [],
+                      clarification_cards: rawResult?.clarification_cards || [],
+                      questions: rawResult?.questions || [],
                       operation_scope: 'chat',
                     },
                     execution: null,

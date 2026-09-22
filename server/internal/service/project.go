@@ -74,6 +74,24 @@ func (s *ProjectService) CreateProject(ctx context.Context, name, description st
 	}, nil
 }
 
+func (s *ProjectService) DeleteProject(ctx context.Context, id string) error {
+	return s.ProjectRepo.Delete(ctx, id)
+}
+
+func (s *ProjectService) UpdateProject(ctx context.Context, id, name, description string) (*ProjectDetail, error) {
+	p, err := s.ProjectRepo.Update(ctx, id, name, description)
+	if err != nil {
+		return nil, err
+	}
+	return &ProjectDetail{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:   p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}, nil
+}
+
 func (s *ProjectService) GetProject(ctx context.Context, id string) (*ProjectDetail, error) {
 	p, err := s.ProjectRepo.GetByID(ctx, id)
 	if err != nil {

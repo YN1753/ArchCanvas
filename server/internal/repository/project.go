@@ -57,3 +57,82 @@ func (r *ProjectRepository) Create(ctx context.Context, name, description string
 	}
 	return project, nil
 }
+
+func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
+	if r == nil || r.db == nil {
+		return errors.New("project repository database is nil")
+	}
+	if id == "" {
+		return errors.New("project id is required")
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var entityIDs []string
+		if err := tx.Model(&model.Entity{}).Where("project_id = ?", id).Pluck("id", &entityIDs).Error; err != nil {
+			return fmt.Errorf("find entity IDs: %w", err)
+		}
+
+		if len(entityIDs) > 0 {
+			if err := tx.Where("entity_id IN ?", entityIDs).Delete(&model.Attribute{}).Error; err != nil {
+				return fmt.Errorf("delete attributes: %w", err)
+			}
+		}
+
+		if err := tx.Where("project_id = ?", id).Delete(&model.Entity{}).Error; err != nil {
+			return fmt.Errorf("delete entities: %w", err)
+		}
+
+		if err := tx.Where("project_id = ?", id).Delete(&model.Relation{}).Error; err != nil {
+			return fmt.Errorf("delete relations: %w", err)
+		}
+
+		var convIDs []string
+		if err := tx.Model(&model.Conversation{}).Where("project_id = ?", id).Pluck("id", &convIDs).Error; err != nil {
+			return fmt.Errorf("find conversation IDs: %w", err)
+		}
+		if len(convIDs) > 0 {
+			if err := tx.Where("conversation_id IN ?", convIDs).Delete(&model.Message{}).Error; err != nil {
+				return fmt.Errorf("delete messages: %w", err)
+			}
+		}
+		if err := tx.Where("project_id = ?", id).Delete(&model.Conversation{}).Error; err != nil {
+			return fmt.Errorf("delete conversations: %w", err)
+		}
+
+		if err := tx.Where("project_id = ?", id).Delete(&model.AIContext{}).Error; err != nil {
+			return fmt.Errorf("delete ai_context: %w", err)
+		}
+
+		if err := tx.Where("id = ?", id).Delete(&model.Project{}).Error; err != nil {
+			return fmt.Errorf("delete project: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func (r *ProjectRepository) Update(ctx context.Context, id, name, description string) (*model.Project, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("project repository database is nil")
+	}
+	if id == "" {
+		return nil, errors.New("project id is required")
+	}
+	var project model.Project
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&project).Error; err != nil {
+		return nil, fmt.Errorf("find project: %w", err)
+	}
+
+	updates := map[string]any{
+		"name":       name,
+		"updated_at": time.Now(),
+	}
+	if description != "" {
+		updates["description"] = description
+	}
+
+	if err := r.db.WithContext(ctx).Model(&project).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("update project: %w", err)
+	}
+	return &project, nil
+}

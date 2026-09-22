@@ -19,6 +19,7 @@ export interface SelectProps<T = string> {
   size?: 'sm' | 'md'
   title?: string
   searchable?: boolean
+  placement?: 'bottom' | 'top'
 }
 
 export default function Select<T extends string = string>({
@@ -32,6 +33,7 @@ export default function Select<T extends string = string>({
   size = 'md',
   title,
   searchable,
+  placement = 'bottom',
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -114,33 +116,33 @@ export default function Select<T extends string = string>({
             if (open) setSearch('')
           }
         }}
-        className={`w-full flex items-center justify-between gap-1.5 rounded border bg-white transition select-none outline-none ${
+        className={`w-full flex items-center justify-between gap-1.5 rounded border-[1.5px] bg-white transition select-none outline-none shadow-[1px_1px_0px_#1f1f1f] ${
           isSmall ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
         } ${
           open
-            ? 'border-indigo-500 ring-2 ring-indigo-100 text-slate-800'
-            : 'border-slate-300 text-slate-700 hover:border-slate-400'
-        } ${disabled ? 'cursor-not-allowed opacity-50 bg-slate-50' : 'cursor-pointer'}`}
+            ? 'border-[#1f1f1f] ring-2 ring-[#df4e3e]/20 text-[#1f1f1f]'
+            : 'border-[#1f1f1f] text-[#1f1f1f] hover:bg-stone-50'
+        } ${disabled ? 'cursor-not-allowed opacity-50 bg-stone-100' : 'cursor-pointer'}`}
       >
         <span className="truncate text-left flex-1">
           {selectedOption ? (
             <span className="flex items-center gap-1.5 truncate">
-              <span className="truncate">{selectedOption.label}</span>
+              <span className="truncate font-medium">{selectedOption.label}</span>
               {selectedOption.badge && (
-                <span className="rounded bg-indigo-50 border border-indigo-100 px-1 py-0.2 text-[9px] font-semibold text-indigo-600 shrink-0">
+                <span className="rounded bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.2 text-[9px] font-bold text-[#df4e3e] shrink-0">
                   {selectedOption.badge}
                 </span>
               )}
             </span>
           ) : (
-            <span className="text-slate-400">{placeholder}</span>
+            <span className="text-stone-400">{placeholder}</span>
           )}
         </span>
 
         {/* 自定义指示箭头 */}
         <svg
-          className={`shrink-0 w-3 h-3 text-slate-400 transition-transform duration-150 ${
-            open ? 'rotate-180 text-indigo-600' : ''
+          className={`shrink-0 w-3 h-3 text-stone-400 transition-transform duration-150 ${
+            open ? 'rotate-180 text-[#df4e3e]' : ''
           }`}
           fill="none"
           viewBox="0 0 24 24"
@@ -154,18 +156,20 @@ export default function Select<T extends string = string>({
       {/* 自定义下拉菜单面板 */}
       {open && (
         <div
-          className={`absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl ring-1 ring-black/5 ${dropdownClassName}`}
+          className={`absolute left-0 z-50 min-w-full overflow-hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white shadow-[3px_3px_0px_#1f1f1f] ${
+            placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'
+          } ${dropdownClassName}`}
         >
           {/* 搜索框 */}
           {enableSearch && (
-            <div className="border-b border-slate-100 p-1.5 bg-slate-50/70">
+            <div className="border-b border-stone-200 p-1.5 bg-[#faf7f0]">
               <input
                 ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索选项..."
-                className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200"
+                className="w-full rounded border-[1.5px] border-[#1f1f1f] bg-white px-2 py-1 text-xs outline-none focus:border-[#df4e3e] focus:ring-1 focus:ring-[#df4e3e]/20"
               />
             </div>
           )}
@@ -173,7 +177,7 @@ export default function Select<T extends string = string>({
           {/* 选项清单（去除多余滚动条，保留顺畅滚动手感） */}
           <div className="max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5">
             {filteredOptions.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-slate-400">
+              <div className="px-3 py-3 text-center text-xs text-stone-400">
                 未找到匹配项
               </div>
             ) : (
@@ -191,23 +195,23 @@ export default function Select<T extends string = string>({
                     }}
                     className={`flex items-center justify-between gap-2 rounded px-2.5 py-1.5 transition select-none text-xs ${
                       opt.disabled
-                        ? 'cursor-not-allowed opacity-40 text-slate-400'
+                        ? 'cursor-not-allowed opacity-40 text-stone-400'
                         : isSelected
-                          ? 'bg-indigo-50/80 font-semibold text-indigo-700 cursor-pointer'
-                          : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900 cursor-pointer'
+                          ? 'bg-[#fdf0ee] font-bold text-[#df4e3e] cursor-pointer'
+                          : 'text-[#1f1f1f] hover:bg-stone-100 cursor-pointer'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 truncate">
                         <span className="truncate">{opt.label}</span>
                         {opt.badge && (
-                          <span className="rounded bg-indigo-100/70 px-1 py-0.2 text-[9px] font-semibold text-indigo-700 shrink-0">
+                          <span className="rounded bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.2 text-[9px] font-bold text-[#df4e3e] shrink-0">
                             {opt.badge}
                           </span>
                         )}
                       </div>
                       {opt.sublabel && (
-                        <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                        <div className="text-[10px] text-stone-400 truncate mt-0.5">
                           {opt.sublabel}
                         </div>
                       )}
@@ -215,7 +219,7 @@ export default function Select<T extends string = string>({
 
                     {isSelected && (
                       <svg
-                        className="w-3.5 h-3.5 text-indigo-600 shrink-0"
+                        className="w-3.5 h-3.5 text-[#df4e3e] shrink-0"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"

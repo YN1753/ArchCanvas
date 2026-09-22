@@ -61,6 +61,20 @@ export interface RequirementDecision {
   source: 'explicit' | 'inferred'
 }
 
+export interface ClarificationOption {
+  id: string
+  label: string
+  description?: string
+  is_default: boolean
+}
+
+export interface ClarificationCard {
+  id: string
+  title: string
+  description?: string
+  options: ClarificationOption[]
+}
+
 export interface RequirementResult {
   operation_scope: string
   summary: string
@@ -69,6 +83,7 @@ export interface RequirementResult {
   assumptions: string[]
   decisions: RequirementDecision[]
   need_clarification: boolean
+  clarification_cards?: ClarificationCard[]
   questions: string[]
 }
 
@@ -263,6 +278,18 @@ export const api = {
     request<Project>('/projects/create', {
       method: 'POST',
       body: JSON.stringify({ name, description }),
+    }),
+
+  deleteProject: (project_id: string) =>
+    request<{ deleted: boolean; id: string }>('/projects/delete', {
+      method: 'POST',
+      body: JSON.stringify({ project_id }),
+    }),
+
+  updateProject: (project_id: string, name: string, description = '') =>
+    request<Project>('/projects/update', {
+      method: 'POST',
+      body: JSON.stringify({ project_id, name, description }),
     }),
 
   getProject: (id: string) =>

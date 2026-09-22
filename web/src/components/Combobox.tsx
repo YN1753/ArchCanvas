@@ -49,10 +49,10 @@ export default function Combobox({
           type="button"
           tabIndex={-1}
           onClick={() => setOpen((prev) => !prev)}
-          className="absolute right-1 text-slate-400 hover:text-slate-600 p-0.5 rounded transition cursor-pointer"
+          className="absolute right-1 text-stone-400 hover:text-[#1f1f1f] p-0.5 rounded transition cursor-pointer"
         >
           <svg
-            className={`w-3 h-3 transition-transform ${open ? 'rotate-180 text-indigo-600' : ''}`}
+            className={`w-3 h-3 transition-transform ${open ? 'rotate-180 text-[#df4e3e]' : ''}`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -64,8 +64,8 @@ export default function Combobox({
       </div>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border border-slate-200 bg-white p-1 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-100">
-          <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 border-b border-slate-100 mb-0.5">
+        <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100">
+          <div className="px-2 py-1 text-[10px] font-bold text-stone-500 border-b border-stone-200 mb-0.5">
             常用数据库类型
           </div>
           {suggestions.map((suggestion) => {
@@ -79,14 +79,14 @@ export default function Combobox({
                 }}
                 className={`flex items-center justify-between rounded px-2 py-1 text-xs font-mono cursor-pointer transition ${
                   isSelected
-                    ? 'bg-indigo-50 font-semibold text-indigo-700'
-                    : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-[#fdf0ee] font-bold text-[#df4e3e]'
+                    : 'text-[#1f1f1f] hover:bg-stone-100'
                 }`}
               >
                 <span>{suggestion}</span>
                 {isSelected && (
                   <svg
-                    className="w-3 h-3 text-indigo-600 shrink-0"
+                    className="w-3 h-3 text-[#df4e3e] shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
