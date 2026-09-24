@@ -1,4 +1,3 @@
-import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../store/erStore'
 import ProjectMenu from './ProjectMenu'
 
@@ -39,103 +38,6 @@ function SavePill() {
   )
 }
 
-function MoreActionsMenu({
-  autoLayout,
-  onOpenData,
-  onOpenScaffold,
-  reload,
-}: {
-  autoLayout: () => void
-  onOpenData: () => void
-  onOpenScaffold: () => void
-  reload: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [open])
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="flex h-8 w-8 items-center justify-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white text-stone-700 shadow-2xs hover:bg-stone-50 transition active:scale-95"
-        title="更多操作"
-      >
-        <span className="font-mono text-sm leading-none font-bold tracking-tight">···</span>
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-44 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-lg z-50 animate-in fade-in zoom-in-95 duration-100">
-          <button
-            type="button"
-            onClick={() => {
-              onOpenScaffold()
-              setOpen(false)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-bold text-[#df4e3e] transition"
-          >
-            <span className="text-xs">⚡</span>
-            <span>导出 Go 脚手架</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              autoLayout()
-              setOpen(false)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
-          >
-            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16m-7 6h7" />
-            </svg>
-            <span>整理排版布局</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onOpenData()
-              setOpen(false)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
-          >
-            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
-            </svg>
-            <span>导入 / 导出结构</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void reload()
-              setOpen(false)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-stone-700 hover:bg-[#fbf8f3] font-medium transition"
-          >
-            <svg className="w-3.5 h-3.5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span>重新拉取服务端数据</span>
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function Toolbar({
   onOpenData,
   onOpenScaffold,
@@ -144,8 +46,6 @@ export default function Toolbar({
   onOpenScaffold: () => void
 }) {
   const addEntity = useStore((state) => state.addEntity)
-  const autoLayout = useStore((state) => state.autoLayout)
-  const reload = useStore((state) => state.reload)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
   const toggleInspector = useStore((state) => state.toggleInspector)
@@ -234,6 +134,19 @@ export default function Toolbar({
 
         <SavePill />
 
+        {/* 导入 / 导出结构 */}
+        <button
+          type="button"
+          onClick={onOpenData}
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-700 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none"
+          title="导入或导出 SQL DDL、Mermaid、JSON 结构"
+        >
+          <svg className="w-3.5 h-3.5 text-stone-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+          </svg>
+          <span>导入/导出</span>
+        </button>
+
         {/* 导出 Go 脚手架按钮 */}
         <button
           type="button"
@@ -254,14 +167,6 @@ export default function Toolbar({
           <span className="text-sm font-bold leading-none">+</span>
           <span>新建实体</span>
         </button>
-
-        {/* 更多动作 */}
-        <MoreActionsMenu
-          autoLayout={autoLayout}
-          onOpenData={onOpenData}
-          onOpenScaffold={onOpenScaffold}
-          reload={reload}
-        />
 
         {/* 帮助 / 诊断按钮 */}
         <button

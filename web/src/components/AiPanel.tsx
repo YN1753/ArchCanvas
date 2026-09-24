@@ -228,17 +228,9 @@ export default function AiPanel() {
 
         {/* 底栏控制条 */}
         <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-stone-100">
-          {/* 左侧：编排模式标记 */}
-          <div className="flex items-center gap-1.5">
-            <span
-              className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-blue-500 bg-blue-50/80 px-2.5 py-1 text-xs font-bold text-blue-700 shadow-2xs"
-              title="已启用智能需求编排模式：遇到业务分支时主动向您确认选项"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-              </svg>
-              <span>编排模式</span>
-            </span>
+          {/* 左侧：输入提示 */}
+          <div className="text-[11px] text-stone-400 select-none pl-1 font-sans">
+            Enter 发送 · Shift + Enter 换行
           </div>
 
           {/* 右侧：内嵌模型选择与红色发送按钮 */}
@@ -265,9 +257,9 @@ export default function AiPanel() {
         </div>
       </div>
 
-      {/* 底部热键提示 (1:1 复刻参考图) */}
+      {/* 底部画布热键提示 */}
       <p className="mt-2 text-center font-mono text-[11px] text-[#8c827a]">
-        Enter 发送 · Shift+Enter 换行 · 双击空白新建实体 · ⌘S 保存
+        双击空白新建实体 · 拖拽端点连线 · ⌘S 立即保存
       </p>
     </div>
   )

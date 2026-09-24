@@ -82,30 +82,18 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
       }`}
       style={{ width: NODE_WIDTH, height: nodeHeight(entity) }}
     >
-      {/* 表级兜底连接锚点（上下与兼容旧连线） */}
+      {/* 表级左右微弱兜底锚点（用于整表直连，平时完全隐藏） */}
       <Handle
         type="target"
         position={Position.Left}
         id="tbl-tgt"
-        className="!-left-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
+        className="!-left-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
       />
       <Handle
         type="source"
         position={Position.Right}
         id="tbl-src"
-        className="!-right-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
-      />
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="top"
-        className="!-top-[6px] !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all"
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="bottom"
-        className="!-bottom-[6px] !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] group-hover:!bg-[#df4e3e] hover:!scale-125 !transition-all"
+        className="!-right-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
       />
 
       {/* 表头 (暖色纸感底色 + 1.5px 黑线) */}
@@ -154,7 +142,7 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
           return (
             <div
               key={attribute.id}
-              className={`relative flex items-center justify-between gap-1 px-3.5 text-xs transition-colors hover:bg-[#faf7f0] ${
+              className={`group/row relative flex items-center justify-between gap-1 px-3.5 text-xs transition-colors hover:bg-[#faf7f0] ${
                 isRowHighlighted
                   ? '!bg-[#fdf0ee] !text-[#df4e3e] font-semibold'
                   : attribute.is_primary_key
@@ -172,7 +160,7 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
                   isRowHighlighted
                     ? '!bg-[#df4e3e] !scale-125 !opacity-100'
                     : isFk
-                    ? '!bg-[#1f1f1f] group-hover:!bg-[#df4e3e] !opacity-90 hover:!scale-150 hover:!opacity-100'
+                    ? '!bg-[#1f1f1f] !opacity-0 group-hover/row:!bg-[#df4e3e] group-hover/row:!opacity-90 group-hover/row:!scale-125 hover:!scale-150 hover:!opacity-100'
                     : '!bg-[#1f1f1f] !opacity-0 hover:!opacity-90 hover:!scale-150'
                 }`}
               />
@@ -238,7 +226,7 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
                   isRowHighlighted
                     ? '!bg-[#df4e3e] !scale-125 !opacity-100'
                     : attribute.is_primary_key
-                    ? '!bg-[#1f1f1f] group-hover:!bg-[#df4e3e] !opacity-90 hover:!scale-150 hover:!opacity-100'
+                    ? '!bg-[#1f1f1f] !opacity-0 group-hover/row:!bg-[#df4e3e] group-hover/row:!opacity-90 group-hover/row:!scale-125 hover:!scale-150 hover:!opacity-100'
                     : '!bg-[#1f1f1f] !opacity-0 hover:!opacity-90 hover:!scale-150'
                 }`}
               />

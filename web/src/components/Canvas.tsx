@@ -31,6 +31,7 @@ export default function Canvas() {
   const deleteRelation = useStore((state) => state.deleteRelation)
   const addRelation = useStore((state) => state.addRelation)
   const addEntity = useStore((state) => state.addEntity)
+  const autoLayout = useStore((state) => state.autoLayout)
   const openDataDialog = useStore((state) => state.openDataDialog)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
@@ -90,6 +91,13 @@ export default function Canvas() {
     if (connection.source && connection.target) {
       addRelation(connection.source, connection.target)
     }
+  }
+
+  const handleAutoLayout = () => {
+    autoLayout()
+    window.setTimeout(() => {
+      void fitView({ padding: 0.18, duration: 300 })
+    }, 60)
   }
 
   // ----------------------------------------------------
@@ -270,6 +278,37 @@ export default function Canvas() {
             </svg>
           </button>
 
+          <div className="w-full border-t border-dashed border-stone-200 my-0.5" />
+
+          {/* 整理排版布局 */}
+          <button
+            type="button"
+            onClick={handleAutoLayout}
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition"
+            title="整理排版布局 (自动紧凑对齐)"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="3" width="7" height="6" rx="1.5" />
+              <rect x="14" y="3" width="7" height="6" rx="1.5" />
+              <rect x="8.5" y="15" width="7" height="6" rx="1.5" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 9v3h11V9M12 12v3" />
+            </svg>
+          </button>
+
+          {/* 适应视口 */}
+          <button
+            type="button"
+            onClick={() => void fitView({ padding: 0.2, duration: 300 })}
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition"
+            title="适应视口"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+
+          <div className="w-full border-t border-dashed border-stone-200 my-0.5" />
+
           {/* 放大 */}
           <button
             type="button"
@@ -291,18 +330,6 @@ export default function Canvas() {
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
-            </svg>
-          </button>
-
-          {/* 适应视口 */}
-          <button
-            type="button"
-            onClick={() => void fitView({ padding: 0.2, duration: 300 })}
-            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 transition"
-            title="适应视口"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
           </button>
 

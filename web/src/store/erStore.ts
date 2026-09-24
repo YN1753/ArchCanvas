@@ -81,7 +81,6 @@ interface StoreActions {
   createProject: (name: string, description?: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
   updateProject: (id: string, name: string, description?: string) => Promise<void>
-  reload: () => Promise<void>
 
   undo: () => void
   redo: () => void
@@ -546,21 +545,6 @@ export const useStore = create<Store>((set, get) => {
         set({ toast: { kind: 'info', text: `项目已更名为「${name}」` } })
       } catch (error) {
         set({ toast: { kind: 'error', text: `更新项目失败: ${errorMessage(error)}` } })
-      }
-    },
-
-    async reload() {
-      const { project } = get()
-      if (!project) {
-        return
-      }
-      try {
-        const design = await api.getERDesign(project.id)
-        recompute(ensureLayout(design))
-        set({ aiResult: null, aiError: null })
-        mutationCount = 0
-      } catch (error) {
-        set({ toast: { kind: 'error', text: errorMessage(error) } })
       }
     },
 

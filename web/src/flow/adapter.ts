@@ -15,16 +15,9 @@ export const NODE_HEADER_HEIGHT = 38
 export const NODE_ROW_HEIGHT = 28
 export const NODE_FOOTER_PADDING = 8
 
-export interface HandlePort {
-  id: string
-  topPercent: number
-}
-
 export interface TableNodeData extends Record<string, unknown> {
   entity: Entity
   foreignKeyAttrNames?: string[]
-  sourceHandles?: HandlePort[]
-  targetHandles?: HandlePort[]
 }
 
 export interface RelationEdgeData extends Record<string, unknown> {

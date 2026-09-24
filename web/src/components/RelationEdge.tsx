@@ -42,11 +42,7 @@ function CrowFoot({
       // 源节点在左侧，边从左向右伸出：在 (x + depth, y) 处分叉，紧贴 (x, y ± spread)
       d = `M ${x} ${y - spread} L ${x + depth} ${y} L ${x} ${y + spread}`
       break
-    case Position.Top:
-      d = `M ${x - spread} ${y} L ${x} ${y - depth} L ${x + spread} ${y}`
-      break
-    case Position.Bottom:
-      d = `M ${x - spread} ${y} L ${x} ${y + depth} L ${x + spread} ${y}`
+    default:
       break
   }
 
@@ -89,7 +85,7 @@ export default function RelationEdge({
   const laneIndex = data?.laneIndex ?? 0
   const curvature = 0.3 + (laneIndex % 3) * 0.05
 
-  const [path, labelX, labelY] = getBezierPath({
+  const [path, defaultLabelX, defaultLabelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -128,6 +124,34 @@ export default function RelationEdge({
   )
 
   const isFocused = isSelected || isNodeSelected || isHovered || isNodeHovered
+
+  // 自适应计算关系徽标坐标：
+  // 1. 对于相邻两列连线（|dx| <= 360）：使用默认贝塞尔曲线中点（t = 0.5），自然居中在两表之间的通道正中；
+  // 2. 对于跨列长连线（|dx| > 360，如 users ➔ reviews 跨越多列）：
+  //    若使用全长百分比（如 50% 或 78%），极易砸在中间途经的表格腹部或边框上（如之前的 remark 字段碰撞）。
+  //    因此将徽标稳定安置在进门前的平滑走廊中（距离目标端点 55px 处）：
+  //    - 不贴死在锚点上（保留 55px 宽敞距离，不拥挤）；
+  //    - 绝对处在列间纯净通道中（与两边表框均有 35px+ 留白，绝不撞表）；
+  //    - 且稳稳浮现在该外键字段入边的水平引导线上。
+  const dx = targetX - sourceX
+  let labelX = defaultLabelX
+  let labelY = defaultLabelY
+
+  if (Math.abs(dx) > 360) {
+    const isSourceFocus =
+      (hoveredEntityId && relation && hoveredEntityId === relation.source_entity_id) ||
+      (selection?.kind === 'entity' && selection.id === relation?.source_entity_id)
+
+    if (isSourceFocus) {
+      // 聚焦源表时，徽标舒展在出表后 55px 的平滑走廊上
+      labelX = dx > 0 ? sourceX + 55 : sourceX - 55
+      labelY = sourceY
+    } else {
+      // 默认及聚焦目标表时，徽标平滑浮现在进表前 55px 的平滑走廊上
+      labelX = dx > 0 ? targetX - 55 : targetX + 55
+      labelY = targetY
+    }
+  }
 
   // 样式三态分级：
   // State 1: 无焦点交互（常驻素雅态）—— 柔和 1.25px 浅灰线，隐藏 1:N 徽标，还画板以干净呼吸感
@@ -226,7 +250,7 @@ export default function RelationEdge({
           onMouseLeave={() => setHoveredRelationId(null)}
           className={`group flex items-center gap-1.5 rounded-full border-[1.5px] px-2.5 py-0.5 text-[10px] font-bold transition-all duration-200 cursor-pointer select-none shadow-[2px_2px_0px_#1f1f1f] ${
             showBadge
-              ? 'opacity-100 scale-100 pointer-events-auto'
+              ? 'opacity-100 scale-100 pointer-events-auto z-40'
               : 'opacity-0 scale-90 pointer-events-none'
           } ${
             isSelected
