@@ -115,13 +115,33 @@ const ENTITY_DICTIONARY: Record<string, string> = {
   project: '项目',
   projects: '项目',
   task: '任务',
-  tasks: '任务',
+  // 文件、媒体与存储
+  media: '媒体',
+  medias: '媒体',
+  media_resource: '媒体资源',
+  media_resources: '媒体资源',
+  asset: '资产',
+  assets: '资产',
+  resource: '资源',
+  resources: '资源',
+  upload: '上传',
+  uploads: '上传文件',
+  storage: '存储',
+  storages: '存储',
   file: '文件',
   files: '文件',
+  folder: '文件夹',
+  folders: '文件夹',
   attachment: '附件',
   attachments: '附件',
   image: '图片',
   images: '图片',
+  video: '视频',
+  videos: '视频',
+  audio: '音频',
+  audios: '音频',
+  document: '文档',
+  documents: '文档',
   log: '日志',
   logs: '日志',
   config: '系统配置',
@@ -132,71 +152,94 @@ const ENTITY_DICTIONARY: Record<string, string> = {
 
 const ATTRIBUTE_DICTIONARY: Record<string, string> = {
   id: '编号',
-  uuid: '唯一标识',
+  uuid: '编号',
   code: '编码',
   number: '序号',
   no: '编号',
 
   username: '用户名',
-  account: '登录账号',
+  account: '账号',
   password: '密码',
-  password_hash: '密码哈希',
-  salt: '安全盐值',
+  password_hash: '密码',
+  salt: '盐值',
   name: '名称',
   real_name: '真实姓名',
-  nickname: '用户昵称',
+  nickname: '昵称',
   gender: '性别',
   sex: '性别',
   age: '年龄',
-  birthday: '出生日期',
-  email: '电子邮箱',
-  mail: '电子邮箱',
-  phone: '手机号码',
-  mobile: '手机号码',
-  telephone: '联系电话',
-  avatar: '用户头像',
+  birthday: '生日',
+  email: '邮箱',
+  mail: '邮箱',
+  phone: '手机',
+  mobile: '手机',
+  telephone: '电话',
+  avatar: '头像',
+  avatar_url: '头像',
   icon: '图标',
-  logo: '标识图',
+  logo: '徽标',
   picture: '图片',
   image: '图片',
   image_url: '图片链接',
-  cover: '封面图',
+  cover: '封面',
+  cover_url: '封面',
 
   title: '标题',
   subtitle: '副标题',
-  content: '详细内容',
-  summary: '摘要简介',
-  intro: '简介说明',
-  description: '业务描述',
-  remark: '备注信息',
-  note: '便签说明',
+  content: '内容',
+  body: '正文',
+  summary: '摘要',
+  intro: '简介',
+  description: '描述',
+  desc: '描述',
+  remark: '备注',
+  note: '便签',
   memo: '备忘',
+  slug: '别名',
+  author: '作者',
 
-  price: '销售价格',
-  cost_price: '成本价格',
-  original_price: '原始价格',
-  amount: '结算金额',
+  // 媒体与资源
+  url: '访问地址',
+  file_url: '文件地址',
+  file_path: '存储路径',
+  path: '路径',
+  size: '文件大小',
+  file_size: '文件大小',
+  mime_type: '文件类型',
+  file_type: '文件类型',
+  extension: '扩展名',
+  ext: '扩展名',
+  width: '宽度',
+  height: '高度',
+  duration: '时长',
+
+  // 社交与评论
+  website: '个人网站',
+  site_url: '网站',
+  ip: 'IP地址',
+  user_agent: '客户端',
+  source: '来源渠道',
+
+  price: '价格',
+  cost_price: '成本价',
+  original_price: '原价',
+  amount: '金额',
   total_amount: '总金额',
   pay_amount: '实付金额',
-  discount: '优惠折扣',
-  quantity: '购买数量',
+  discount: '折扣',
+  quantity: '数量',
   count: '数量',
-  stock: '库存总量',
+  stock: '库存',
   num: '数值',
 
-  status: '业务状态',
-  state: '当前状态',
-  type: '类型分类',
+  status: '状态',
+  state: '状态',
+  type: '类型',
   kind: '种类',
-  level: '级别档位',
-  sort: '排序权重',
+  level: '级别',
+  sort: '排序',
   sort_order: '排序序号',
-  order_num: '显示顺序',
-
-  ip: 'IP地址',
-  user_agent: '客户端标识',
-  source: '来源渠道',
-  url: '链接地址',
+  order_num: '顺序',
 
   is_deleted: '删除标记',
   deleted: '删除标记',
@@ -214,18 +257,20 @@ const ATTRIBUTE_DICTIONARY: Record<string, string> = {
   end_time: '结束时间',
   expire_time: '过期时间',
   pay_time: '支付时间',
+  published_at: '发布时间',
+  publish_time: '发布时间',
 
   created_by: '创建人',
   creator: '创建人',
   updated_by: '更新人',
   updater: '更新人',
 
-  user_id: '关联用户ID',
-  order_id: '关联订单ID',
-  product_id: '关联商品ID',
-  category_id: '所属分类ID',
-  role_id: '关联角色ID',
-  parent_id: '父级节点ID',
+  user_id: '用户编号',
+  order_id: '订单编号',
+  product_id: '商品编号',
+  category_id: '分类编号',
+  role_id: '角色编号',
+  parent_id: '父级编号',
 }
 
 const CHINESE_REGEX = /[\u4e00-\u9fa5]/
@@ -238,81 +283,128 @@ export function hasChinese(text: string): boolean {
 }
 
 /**
- * 清理长文本描述，提取精简的中文属性名（如 "用户注册手机号" → "手机号"）
+ * 清理长文本描述，提取精简纯粹的核心名词（2~4字，过滤任何标点符号及“唯一”、“非空”等约束词）
  */
 function cleanChineseDescription(desc: string): string {
   const trimmed = desc.trim()
   if (!trimmed) return ''
-  // 去除常见前后缀如 "用户的"、"表示"、"存储"
-  const cleaned = trimmed
-    .replace(/^(用户的|记录|表示|存储|当前|该)/g, '')
-    .replace(/(字段|信息|属性|列表)$/g, '')
+
+  // 1. 取第一个标点符号或括号之前的主词
+  const firstChunk = trimmed.split(/[,，;；(（:：\s]/)[0]?.trim() ?? ''
+
+  // 2. 剥离无意义的前后缀与约束词
+  const cleaned = firstChunk
+    .replace(/^(用户的|文章的|媒体的|标签的|评论的|记录|表示|存储|当前|该|登录|注册)/g, '')
+    .replace(/(唯一标识|主键标识|外键标识|唯一|主键|外键|非空|自增|必填|代码生成|全局唯一)/g, '')
+    .replace(/(字段|信息|属性|列表|标识)$/g, '')
     .trim()
-  if (cleaned.length > 0 && cleaned.length <= 10) {
+
+  if (cleaned.length >= 2 && cleaned.length <= 6) {
     return cleaned
   }
-  return trimmed.slice(0, 8)
+  return ''
 }
 
 /**
  * 获取实体的中文业务概念名称
  */
 export function getEntityChineseName(name: string, description?: string): string {
-  if (description && hasChinese(description)) {
-    return cleanChineseDescription(description)
-  }
-  if (hasChinese(name)) {
-    return name
-  }
-
   const normalized = name.trim().toLowerCase()
   if (ENTITY_DICTIONARY[normalized]) {
     return ENTITY_DICTIONARY[normalized]
   }
 
-  // 尝试复合拆词（如 order_items -> 订单详情）
+  if (hasChinese(name)) {
+    return name
+  }
+
+  // 尝试单复数归一化转换（如 medias -> media, categories -> category）
+  if (normalized.endsWith('ies')) {
+    const singular = normalized.slice(0, -3) + 'y'
+    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
+  }
+  if (normalized.endsWith('es')) {
+    const singular = normalized.slice(0, -2)
+    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
+  }
+  if (normalized.endsWith('s')) {
+    const singular = normalized.slice(0, -1)
+    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
+  }
+
+  // 尝试复合拆词（如 order_items -> 订单详情, media_files -> 媒体文件）
   const parts = normalized.split(/[-_]/).filter(Boolean)
   if (parts.length > 1) {
-    const translatedParts = parts.map((p) => ENTITY_DICTIONARY[p] ?? p)
+    const translatedParts = parts.map((p) => {
+      if (ENTITY_DICTIONARY[p]) return ENTITY_DICTIONARY[p]
+      const pSingular = p.endsWith('s') ? p.slice(0, -1) : p
+      return ENTITY_DICTIONARY[pSingular] ?? p
+    })
     if (translatedParts.some((p) => hasChinese(p))) {
       return translatedParts.join('')
     }
   }
 
-  return name
+  if (description && hasChinese(description)) {
+    const cleaned = cleanChineseDescription(description)
+    if (cleaned) return cleaned
+  }
+
+  // 若仍无中文，强制生成符合概念图规范的中文概念名
+  return `${name}概念`
 }
 
 /**
- * 获取属性的中文业务名称
+ * 获取属性的极简中文业务名称（专为陈氏标准图设计：纯净名词，严禁长句与约束字样）
  */
 export function getAttributeChineseName(
   name: string,
   description?: string,
   isPrimaryKey?: boolean,
 ): string {
-  if (description && hasChinese(description)) {
-    return cleanChineseDescription(description)
-  }
-  if (hasChinese(name)) {
-    return name
-  }
-
   const normalized = name.trim().toLowerCase()
-  if (isPrimaryKey && (normalized === 'id' || normalized === 'pk')) {
-    return '主键编号'
+
+  // 1. 主键优先级最高：纯净主键命名
+  if (isPrimaryKey) {
+    if (normalized === 'id' || normalized === 'pk') {
+      return '编号'
+    }
+    if (normalized.endsWith('_id')) {
+      const base = normalized.slice(0, -3)
+      const baseName = ENTITY_DICTIONARY[base] ?? base
+      return `${baseName}编号`
+    }
+    return '编号'
   }
 
+  // 2. 核心字典精确匹配（最标准干净的名词）
   if (ATTRIBUTE_DICTIONARY[normalized]) {
     return ATTRIBUTE_DICTIONARY[normalized]
   }
 
-  // 尝试带有 _id 结尾的外键识别（如 user_id -> 用户ID）
-  if (normalized.endsWith('_id')) {
-    const base = normalized.slice(0, -3)
-    const baseChinese = ENTITY_DICTIONARY[base] ?? base
-    return `${baseChinese}ID`
+  // 3. 常见下划线复合匹配（如 tag_name -> 标签名, file_size -> 文件大小）
+  if (normalized.includes('_')) {
+    const parts = normalized.split('_').filter(Boolean)
+    const translated = parts.map((p) => ATTRIBUTE_DICTIONARY[p] ?? ENTITY_DICTIONARY[p] ?? '')
+    if (translated.every((t) => t.length > 0)) {
+      return translated.join('')
+    }
   }
 
+  // 4. 若 name 本身就是简短中文
+  if (hasChinese(name) && name.length <= 6) {
+    return name.replace(/(字段|信息|属性)$/, '')
+  }
+
+  // 5. 从 description 中提取最简核心名词（仅在有效提取且不带标点时生效）
+  if (description && hasChinese(description)) {
+    const fromDesc = cleanChineseDescription(description)
+    if (fromDesc) {
+      return fromDesc
+    }
+  }
+
+  // 6. 兜底返回英文字段名
   return name
 }
 

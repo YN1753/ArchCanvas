@@ -48,6 +48,8 @@ export default function Toolbar({
   const addEntity = useStore((state) => state.addEntity)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
+  const canvasViewMode = useStore((state) => state.canvasViewMode)
+  const setCanvasViewMode = useStore((state) => state.setCanvasViewMode)
   const toggleInspector = useStore((state) => state.toggleInspector)
   const aiSidebarOpen = useStore((state) => state.aiSidebarOpen)
   const toggleAiSidebar = useStore((state) => state.toggleAiSidebar)
@@ -65,36 +67,63 @@ export default function Toolbar({
           AC
         </div>
 
-        {/* 黑色双线圆角分段开关 */}
+        {/* 黑色双线圆角分段开关：概念(陈氏 ER) / 物理(关系表) / 源码(DSL) */}
         <div className="flex items-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs">
+          {/* 概念 (陈氏 ER) */}
           <button
             type="button"
-            onClick={() => setDslView('canvas')}
-            className={`flex items-center gap-1.5 px-3.5 py-1 text-xs font-bold rounded-lg transition ${
-              dslView === 'canvas'
+            onClick={() => {
+              setDslView('canvas')
+              setCanvasViewMode('chen')
+            }}
+            title="概念视图：以标准陈氏 ER 模型展示实体（矩形）、联系（菱形）、属性（椭圆）与基数"
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition ${
+              dslView === 'canvas' && canvasViewMode === 'chen'
                 ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
                 : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
             }`}
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              <rect x="2" y="6" width="7" height="6" rx="1" />
+              <polygon points="18,3 22,9 18,15 14,9" />
+              <ellipse cx="6" cy="18" rx="4" ry="2.5" />
             </svg>
-            <span>画布</span>
+            <span>概念 (陈氏)</span>
           </button>
 
+          {/* 物理 (数据表) */}
+          <button
+            type="button"
+            onClick={() => {
+              setDslView('canvas')
+              setCanvasViewMode('relational')
+            }}
+            title="物理视图：以真实数据库物理表展示字段类型、主外键约束与中间表"
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition ${
+              dslView === 'canvas' && canvasViewMode === 'relational'
+                ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
+                : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M3 9h18M3 15h18M9 9v12" />
+            </svg>
+            <span>物理 (数据表)</span>
+          </button>
+
+          {/* 源码 (DSL) */}
           <button
             type="button"
             onClick={() => setDslView('code')}
+            title="源码视图：查看或导出底层的 JSON 领域模型规范"
             className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition ${
               dslView === 'code'
                 ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
                 : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
             }`}
           >
-            <span className="font-mono text-xs">‹›</span>
+            <span className="font-mono text-xs font-black">‹›</span>
             <span>DSL 源码</span>
           </button>
         </div>

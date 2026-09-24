@@ -12,13 +12,26 @@ import {
   type OnConnect,
 } from '@xyflow/react'
 
-import { toFlowEdges, toFlowNodes, type RelationEdge, type TableNode } from '../flow/adapter'
+import { toFlowEdges, toFlowNodes } from '../flow/adapter'
+import { toChenFlowElements } from '../flow/chenAdapter'
 import { useStore } from '../store/erStore'
 import RelationEdgeView from './RelationEdge'
 import TableNodeView from './TableNode'
+import ChenEntityNode from './chen/ChenEntityNode'
+import ChenRelationNode from './chen/ChenRelationNode'
+import ChenAttributeNode from './chen/ChenAttributeNode'
+import ChenEdge from './chen/ChenEdge'
 
-const nodeTypes = { table: TableNodeView }
-const edgeTypes = { relation: RelationEdgeView }
+const nodeTypes = {
+  table: TableNodeView,
+  chenEntity: ChenEntityNode,
+  chenRelation: ChenRelationNode,
+  chenAttribute: ChenAttributeNode,
+}
+const edgeTypes = {
+  relation: RelationEdgeView,
+  chenEdge: ChenEdge,
+}
 
 export default function Canvas() {
   const design = useStore((state) => state.design)
@@ -39,9 +52,10 @@ export default function Canvas() {
   const setHoveredEntityId = useStore((state) => state.setHoveredEntityId)
   const setHoveredRelationId = useStore((state) => state.setHoveredRelationId)
   const focusedEntityId = useStore((state) => state.focusedEntityId)
+  const canvasViewMode = useStore((state) => state.canvasViewMode)
 
-  const [nodes, setNodes] = useState<TableNode[]>([])
-  const [edges, setEdges] = useState<RelationEdge[]>([])
+  const [nodes, setNodes] = useState<any[]>([])
+  const [edges, setEdges] = useState<any[]>([])
   const [copied, setCopied] = useState(false)
   const [zoomLevel, setZoomLevel] = useState(100)
   const [toolMode, setToolMode] = useState<'select' | 'pan'>('select')
@@ -100,12 +114,18 @@ export default function Canvas() {
   }, [])
 
   useEffect(() => {
-    setNodes(toFlowNodes(design, selectedEntityID))
-  }, [design, selectedEntityID])
-
-  useEffect(() => {
-    setEdges(toFlowEdges(design, selectedRelationID))
-  }, [design, selectedRelationID])
+    if (canvasViewMode === 'chen') {
+      const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
+        design,
+        selectedEntityID ?? selectedRelationID,
+      )
+      setNodes(chenNodes)
+      setEdges(chenEdges)
+    } else {
+      setNodes(toFlowNodes(design, selectedEntityID))
+      setEdges(toFlowEdges(design, selectedRelationID))
+    }
+  }, [design, selectedEntityID, selectedRelationID, canvasViewMode])
 
   useEffect(() => {
     if (!projectID || design.entities.length === 0) {
@@ -115,9 +135,13 @@ export default function Canvas() {
       void fitView({ padding: 0.18, maxZoom: 1 })
     }, 120)
     return () => window.clearTimeout(timer)
-  }, [projectID, design.entities.length, fitView])
+  }, [projectID, design.entities.length, canvasViewMode, fitView])
 
-  const handleNodesChange = (changes: NodeChange<TableNode>[]) => {
+  const handleNodesChange = (changes: NodeChange<any>[]) => {
+    if (canvasViewMode === 'chen') {
+      setNodes((current) => applyNodeChanges(changes, current))
+      return
+    }
     for (const change of changes) {
       if (change.type === 'remove') {
         deleteEntity(change.id)
@@ -129,7 +153,10 @@ export default function Canvas() {
     }
   }
 
-  const handleEdgesChange = (changes: EdgeChange<RelationEdge>[]) => {
+  const handleEdgesChange = (changes: EdgeChange<any>[]) => {
+    if (canvasViewMode === 'chen') {
+      return
+    }
     for (const change of changes) {
       if (change.type === 'remove') {
         deleteRelation(change.id)
@@ -138,13 +165,23 @@ export default function Canvas() {
   }
 
   const handleConnect: OnConnect = (connection) => {
+    if (canvasViewMode === 'chen') return
     if (connection.source && connection.target) {
       addRelation(connection.source, connection.target)
     }
   }
 
   const handleAutoLayout = () => {
-    autoLayout()
+    if (canvasViewMode === 'chen') {
+      const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
+        design,
+        selectedEntityID ?? selectedRelationID,
+      )
+      setNodes(chenNodes)
+      setEdges(chenEdges)
+    } else {
+      autoLayout()
+    }
     window.setTimeout(() => {
       void fitView({ padding: 0.18, duration: 300 })
     }, 60)
@@ -219,6 +256,7 @@ export default function Canvas() {
         isSpacePressed || toolMode === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
       onDoubleClick={(event) => {
+        if (canvasViewMode === 'chen') return
         const target = event.target as HTMLElement
         if (
           target.classList.contains('react-flow__pane') ||
@@ -249,6 +287,7 @@ export default function Canvas() {
         panOnDrag={toolMode === 'pan' || isSpacePressed ? true : [1]}
         panActivationKeyCode="Space"
         onNodeDragStop={(_, _node, draggedNodes) => {
+          if (canvasViewMode === 'chen') return
           if (draggedNodes && draggedNodes.length > 0) {
             moveEntities(
               draggedNodes.map((n) => ({

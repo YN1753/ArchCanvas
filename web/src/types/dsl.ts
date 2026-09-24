@@ -17,6 +17,9 @@ export const CARDINALITY_LABEL: Record<Cardinality, string> = {
   many_to_many: 'N:M',
 }
 
+/** 概念视图（陈氏 ER）与物理视图（关系表）切换模式 */
+export type CanvasViewMode = 'chen' | 'relational'
+
 /** 常用数据库类型，供 Inspector 的下拉建议使用；允许自由输入。 */
 export const DB_TYPE_SUGGESTIONS = [
   'BIGINT',

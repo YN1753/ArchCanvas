@@ -17,6 +17,7 @@ import {
   defaultCodeType,
   localID,
   type Attribute,
+  type CanvasViewMode,
   type Cardinality,
   type Entity,
   type ERDesign,
@@ -73,6 +74,7 @@ interface StoreState {
   messagesLoading: boolean
   aiSidebarOpen: boolean
 
+  canvasViewMode: CanvasViewMode
   dslView: 'canvas' | 'code'
   inspectorOpen: boolean
   dataDialogOpen: boolean
@@ -111,6 +113,7 @@ interface StoreActions {
   dismissToast: () => void
   dismissAiResult: () => void
 
+  setCanvasViewMode: (mode: CanvasViewMode) => void
   setDslView: (view: 'canvas' | 'code') => void
 
   moveEntity: (id: string, position: { x: number; y: number }) => void
@@ -318,6 +321,7 @@ export const useStore = create<Store>((set, get) => {
     messages: [],
     messagesLoading: false,
     aiSidebarOpen: true,
+    canvasViewMode: 'chen',
     dslView: 'canvas',
     inspectorOpen: false,
     dataDialogOpen: false,
@@ -660,6 +664,10 @@ export const useStore = create<Store>((set, get) => {
 
     dismissAiResult() {
       set({ aiResult: null, aiError: null, aiThinking: '', aiStatus: '' })
+    },
+
+    setCanvasViewMode(mode) {
+      set({ canvasViewMode: mode })
     },
 
     setDslView(view) {
