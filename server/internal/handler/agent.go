@@ -55,8 +55,16 @@ func (a *AgentHandler) Chat(c *gin.Context) {
 	}
 	flush()
 
-	for event := range eventCh {
-		c.SSEvent(string(event.Type), event.Data)
-		flush()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-eventCh:
+			if !ok {
+				return
+			}
+			c.SSEvent(string(event.Type), event.Data)
+			flush()
+		}
 	}
 }

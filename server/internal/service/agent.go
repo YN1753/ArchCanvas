@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -39,6 +40,16 @@ func (a *AgentService) Chat(
 
 	go func() {
 		defer close(outCh)
+
+		// sendEvent 安全推送事件至通道；若 ctx 已被取消（如客户端断开连接），立即返回 false 避免协程永久阻塞挂起
+		sendEvent := func(evt StreamEvent) bool {
+			select {
+			case outCh <- evt:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 
 		var thinkingBuffer strings.Builder
 		var currentDesign *domain.ERDesign
@@ -74,12 +85,16 @@ func (a *AgentService) Chat(
 			if convID != "" && a.ProjectService != nil && a.ProjectService.MessageRepo != nil {
 				dataBytes, err := json.Marshal(payload)
 				if err == nil {
-					_, _ = a.ProjectService.MessageRepo.CreateMessage(ctx, convID, "assistant", string(dataBytes))
+					saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, _ = a.ProjectService.MessageRepo.CreateMessage(saveCtx, convID, "assistant", string(dataBytes))
 				}
 			}
 		}
 
-		outCh <- StreamEvent{Type: EventStatus, Data: "AI 需求分析师正在梳理业务概念与边界…"}
+		if !sendEvent(StreamEvent{Type: EventStatus, Data: "AI 需求分析师正在梳理业务概念与边界…"}) {
+			return
+		}
 		reqOutput, err := a.AnalyzeRequirement(ctx, RequirementInput{
 			ProjectID:       req.ProjectID,
 			Message:         req.Input,
@@ -89,10 +104,13 @@ func (a *AgentService) Chat(
 			ModelName:       req.ModelName,
 		}, func(chunk string) {
 			thinkingBuffer.WriteString(chunk)
-			outCh <- StreamEvent{Type: EventThinking, Data: chunk}
+			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
 		})
 		if err != nil {
-			outCh <- StreamEvent{Type: EventError, Data: err.Error()}
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
 			saveAssistantMsg(map[string]interface{}{
 				"summary":  "业务分析遇到异常",
 				"thinking": thinkingBuffer.String(),
@@ -103,9 +121,13 @@ func (a *AgentService) Chat(
 		}
 
 		if reqOutput.NeedClarification {
-			outCh <- StreamEvent{Type: EventStatus, Data: "检测到需求存在疑问，需要进一步确认"}
-			outCh <- StreamEvent{Type: EventResult, Data: reqOutput}
-			outCh <- StreamEvent{Type: EventDone, Data: true}
+			if !sendEvent(StreamEvent{Type: EventStatus, Data: "检测到需求存在疑问，需要进一步确认"}) {
+				return
+			}
+			if !sendEvent(StreamEvent{Type: EventResult, Data: reqOutput}) {
+				return
+			}
+			sendEvent(StreamEvent{Type: EventDone, Data: true})
 
 			saveAssistantMsg(map[string]interface{}{
 				"summary":             reqOutput.Summary,
@@ -118,7 +140,9 @@ func (a *AgentService) Chat(
 			return
 		}
 
-		outCh <- StreamEvent{Type: EventStatus, Data: "业务概念已明确，架构师正在设计物理表结构与字段类型…"}
+		if !sendEvent(StreamEvent{Type: EventStatus, Data: "业务概念已明确，架构师正在设计物理表结构与字段类型…"}) {
+			return
+		}
 
 		erDesign, err := a.DesignSchema(ctx, SchemaDesignInput{
 			Requirement:     reqOutput,
@@ -127,10 +151,13 @@ func (a *AgentService) Chat(
 			ModelName:       req.ModelName,
 		}, func(chunk string) {
 			thinkingBuffer.WriteString(chunk)
-			outCh <- StreamEvent{Type: EventThinking, Data: chunk}
+			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
 		})
 		if err != nil {
-			outCh <- StreamEvent{Type: EventError, Data: err.Error()}
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
 			saveAssistantMsg(map[string]interface{}{
 				"summary":  "物理表结构设计遇到异常",
 				"thinking": thinkingBuffer.String(),
@@ -140,13 +167,17 @@ func (a *AgentService) Chat(
 			return
 		}
 
-		outCh <- StreamEvent{Type: EventStatus, Data: "数据模型设计完成，正在持久化落库…"}
-		outCh <- StreamEvent{Type: EventToolCall, Data: erDesign}
+		if !sendEvent(StreamEvent{Type: EventStatus, Data: "数据模型设计完成，正在持久化落库…"}) {
+			return
+		}
+		if !sendEvent(StreamEvent{Type: EventToolCall, Data: erDesign}) {
+			return
+		}
 
 		if a.ProjectService != nil && req.ProjectID != "" {
 			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, *erDesign)
 			if err != nil {
-				outCh <- StreamEvent{Type: EventError, Data: "落库失败: " + err.Error()}
+				sendEvent(StreamEvent{Type: EventError, Data: "落库失败: " + err.Error()})
 				saveAssistantMsg(map[string]interface{}{
 					"summary":  "数据模型持久化落库失败",
 					"thinking": thinkingBuffer.String(),
@@ -155,9 +186,13 @@ func (a *AgentService) Chat(
 				})
 				return
 			}
-			outCh <- StreamEvent{Type: EventResult, Data: savedResult.Design}
+			if !sendEvent(StreamEvent{Type: EventResult, Data: savedResult.Design}) {
+				return
+			}
 		} else {
-			outCh <- StreamEvent{Type: EventResult, Data: *erDesign}
+			if !sendEvent(StreamEvent{Type: EventResult, Data: *erDesign}) {
+				return
+			}
 		}
 
 		var entityNames []string
@@ -175,7 +210,7 @@ func (a *AgentService) Chat(
 			"applied_entities":        entityNames,
 		})
 
-		outCh <- StreamEvent{Type: EventDone, Data: true}
+		sendEvent(StreamEvent{Type: EventDone, Data: true})
 	}()
 
 	return outCh, nil
