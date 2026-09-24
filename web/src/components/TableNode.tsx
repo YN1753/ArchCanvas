@@ -38,8 +38,11 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
   const fkAttrNames = data.foreignKeyAttrNames ?? []
   const addAttribute = useStore((state) => state.addAttribute)
   const storeSelection = useStore((state) => state.selection)
+  const focusedEntityId = useStore((state) => state.focusedEntityId)
   const design = useStore((state) => state.design)
   const chineseName = getEntityChineseName(entity.name)
+
+  const isFocused = focusedEntityId === entity.id
 
   // 检查当前表是否有字段正参与用户选中的关联关系连线
   const activeRelation =
@@ -76,9 +79,11 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
   return (
     <div
       className={`group relative overflow-hidden rounded-2xl border-[1.5px] bg-white select-none transition-all duration-150 cursor-grab active:cursor-grabbing ${
-        selected
-          ? 'border-[#df4e3e] shadow-[4px_4px_0px_#df4e3e] scale-[1.01] z-30'
-          : 'border-[#1f1f1f] shadow-[3px_3px_0px_#1f1f1f] hover:shadow-[4px_4px_0px_#1f1f1f]'
+        isFocused
+          ? 'border-[#df4e3e] shadow-[6px_6px_0px_#df4e3e] ring-4 ring-[#df4e3e]/30 scale-[1.03] z-40 animate-pulse'
+          : selected
+            ? 'border-[#df4e3e] shadow-[4px_4px_0px_#df4e3e] scale-[1.01] z-30'
+            : 'border-[#1f1f1f] shadow-[3px_3px_0px_#1f1f1f] hover:shadow-[4px_4px_0px_#1f1f1f]'
       }`}
       style={{ width: NODE_WIDTH, height: nodeHeight(entity) }}
     >

@@ -170,7 +170,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface ChatEvent<T = any> {
-  type: 'thinking' | 'status' | 'tool_call' | 'result' | 'error' | 'done'
+  type: 'thinking' | 'status' | 'tool_call' | 'result' | 'error' | 'done' | 'message'
   data: T
 }
 
@@ -226,6 +226,30 @@ export async function chatStream(
 
   const decoder = new TextDecoder()
   let buffer = ''
+  let currentEvent = 'message'
+  let dataLines: string[] = []
+
+  const dispatchEvent = () => {
+    if (dataLines.length === 0) {
+      currentEvent = 'message'
+      return
+    }
+    const rawData = dataLines.join('\n')
+    dataLines = []
+    const eventType = currentEvent
+    currentEvent = 'message'
+
+    let parsedData: any = rawData
+    try {
+      parsedData = JSON.parse(rawData)
+    } catch {
+      parsedData = rawData
+    }
+    callbacks.onEvent({
+      type: eventType as any,
+      data: parsedData,
+    })
+  }
 
   try {
     while (true) {
@@ -233,33 +257,35 @@ export async function chatStream(
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
+      const lines = buffer.split(/\r\n|\r|\n/)
       buffer = lines.pop() ?? ''
 
-      let currentEvent = 'message'
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) {
-          currentEvent = 'message'
+        if (!line.trim()) {
+          dispatchEvent()
           continue
         }
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.slice(6).trim()
-        } else if (trimmed.startsWith('data:')) {
-          const rawData = trimmed.slice(5).trim()
-          let parsedData: any = rawData
-          try {
-            parsedData = JSON.parse(rawData)
-          } catch {
-            parsedData = rawData
-          }
-          callbacks.onEvent({
-            type: currentEvent as any,
-            data: parsedData,
-          })
+        if (line.startsWith(':')) {
+          continue
+        }
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+          const content = line.startsWith('data: ') ? line.slice(6) : line.slice(5)
+          dataLines.push(content)
         }
       }
     }
+
+    if (buffer.trim()) {
+      if (buffer.startsWith('event:')) {
+        currentEvent = buffer.slice(6).trim()
+      } else if (buffer.startsWith('data:')) {
+        const content = buffer.startsWith('data: ') ? buffer.slice(6) : buffer.slice(5)
+        dataLines.push(content)
+      }
+    }
+    dispatchEvent()
   } catch (err: any) {
     if (err.name === 'AbortError') {
       return

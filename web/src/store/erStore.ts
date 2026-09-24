@@ -54,6 +54,7 @@ interface StoreState {
   selection: Selection
   hoveredEntityId: string | null
   hoveredRelationId: string | null
+  focusedEntityId: string | null
   report: ValidationReport
   serverWarnings: string[]
 
@@ -100,6 +101,7 @@ interface StoreActions {
   clearProjectMessages: () => Promise<void>
 
   select: (selection: Selection) => void
+  focusEntity: (idOrName: string) => void
   setHoveredEntityId: (id: string | null) => void
   setHoveredRelationId: (id: string | null) => void
   setInspectorOpen: (open: boolean) => void
@@ -302,6 +304,7 @@ export const useStore = create<Store>((set, get) => {
     selection: null,
     hoveredEntityId: null,
     hoveredRelationId: null,
+    focusedEntityId: null,
     report: { errors: [], warnings: [] },
     serverWarnings: [],
     saveState: 'idle',
@@ -607,6 +610,24 @@ export const useStore = create<Store>((set, get) => {
         selection,
         inspectorOpen: selection !== null,
       })
+    },
+
+    focusEntity(idOrName) {
+      const { design } = get()
+      const target = design.entities.find(
+        (e) => e.id === idOrName || e.name.toLowerCase() === idOrName.toLowerCase()
+      )
+      if (!target) return
+      set({
+        selection: { kind: 'entity', id: target.id },
+        focusedEntityId: target.id,
+        inspectorOpen: true,
+      })
+      window.setTimeout(() => {
+        if (get().focusedEntityId === target.id) {
+          set({ focusedEntityId: null })
+        }
+      }, 1800)
     },
 
     setHoveredEntityId(id) {
@@ -934,7 +955,10 @@ export const useStore = create<Store>((set, get) => {
                 set({ aiStatus: String(event.data) })
               } else if (event.type === 'tool_call') {
                 set({ aiStatus: '已识别数据模型，正在持久化落库…' })
-              } else if (event.type === 'result') {
+                if (event.data && typeof event.data === 'object' && Array.isArray((event.data as any).entities)) {
+                  finalDesign = event.data as ERDesign
+                }
+              } else if (event.type === 'result' || event.type === 'message') {
                 rawResult = event.data
                 if (event.data && typeof event.data === 'object' && Array.isArray((event.data as any).entities)) {
                   finalDesign = event.data as ERDesign
@@ -947,35 +971,72 @@ export const useStore = create<Store>((set, get) => {
               set({ aiRunning: false, aiError: errorMessage(err) })
               void get().fetchProjectMessages(project.id)
             },
-            onDone: () => {
+            onDone: async () => {
               set({ aiRunning: false, aiStatus: '' })
               void get().fetchProjectMessages(project.id)
 
-              if (finalDesign) {
+              let designToApply = finalDesign
+              // 兜底保障：若未从 SSE 流中解析出设计（如断网或网络丢包），直接拉取后端数据库已保存的物理设计
+              if (!designToApply) {
+                try {
+                  const serverDesign = await api.getERDesign(project.id)
+                  if (serverDesign && Array.isArray(serverDesign.entities) && serverDesign.entities.length > 0) {
+                    designToApply = serverDesign
+                  }
+                } catch (e) {
+                  console.warn('拉取服务端 ER 设计兜底失败:', e)
+                }
+              }
+
+              if (designToApply && Array.isArray(designToApply.entities) && designToApply.entities.length > 0) {
                 recordSnapshot()
                 const currentEntities = get().design.entities
+                const isInitiallyEmpty = currentEntities.length === 0
+
                 const posByID = new Map(currentEntities.map((entity) => [entity.id, entity.position]))
                 const posByName = new Map(currentEntities.map((entity) => [entity.name.toLowerCase(), entity.position]))
 
                 const before = new Set(currentEntities.map((entity) => entity.id))
-                const added = finalDesign.entities
+                const added = designToApply.entities
                   .filter((entity) => !before.has(entity.id))
                   .map((entity) => entity.id)
 
-                const mergedEntities = finalDesign.entities.map((entity) => ({
-                  ...entity,
-                  position: entity.position ?? posByID.get(entity.id) ?? posByName.get(entity.name.toLowerCase()),
-                }))
-                const designWithPos = { ...finalDesign, entities: mergedEntities }
+                // 彻底过滤掉表内自引用关系 (如 comments -> comments，避免回环遮挡字段)
+                const cleanedRelations = (designToApply.relations ?? []).filter(
+                  (r) => r.source_entity_id !== r.target_entity_id,
+                )
+
+                let nextDesign: ERDesign
+                if (isInitiallyEmpty) {
+                  // 用户明确要求：更新实体到画布时如果初始画布是空白的，默认调用一次全量自动整理（Compact ER Layout）
+                  // 忽略大模型可能随意给出的粗糙坐标，以自动整理算法为准生成蓝图级对齐排版
+                  const freshDesign = {
+                    ...designToApply,
+                    entities: designToApply.entities.map((e) => ({
+                      ...e,
+                      attributes: e.attributes ?? [],
+                      position: undefined,
+                    })),
+                    relations: cleanedRelations,
+                  }
+                  nextDesign = layoutDesign(freshDesign)
+                } else {
+                  const mergedEntities = designToApply.entities.map((entity) => ({
+                    ...entity,
+                    attributes: entity.attributes ?? [],
+                    position: entity.position ?? posByID.get(entity.id) ?? posByName.get(entity.name.toLowerCase()),
+                  }))
+                  const designWithPos = { ...designToApply, entities: mergedEntities, relations: cleanedRelations }
+                  nextDesign = ensureLayout(placeNewEntities(designWithPos, added))
+                }
 
                 mutationCount = 0
-                const nextDesign = ensureLayout(placeNewEntities(designWithPos, added))
                 recompute(nextDesign, { serverWarnings: [] })
                 scheduleSave()
                 set({
                   aiResult: {
                     applied: true,
-                    design: finalDesign,
+                    design: designToApply,
                     requirement: {
                       summary: rawResult?.summary || '数据模型设计已生成并自动落库',
                       explicit_requirements: [],

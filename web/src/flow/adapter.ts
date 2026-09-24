@@ -40,7 +40,7 @@ export function nodeWidth(): number {
 
 /** 节点高度必须与 TableNode 的真实渲染一致，否则 dagre 布局会出现重叠。 */
 export function nodeHeight(entity: Entity): number {
-  return NODE_HEADER_HEIGHT + Math.max(entity.attributes.length, 1) * NODE_ROW_HEIGHT + NODE_FOOTER_PADDING
+  return NODE_HEADER_HEIGHT + Math.max(entity.attributes?.length ?? 0, 1) * NODE_ROW_HEIGHT + NODE_FOOTER_PADDING
 }
 
 /** 查找宿端匹配源端的外键属性 */
@@ -52,8 +52,9 @@ function findTargetForeignKeyAttribute(
   const srcName = sourceEntity.name.toLowerCase()
   const srcSingular = srcName.endsWith('s') ? srcName.slice(0, -1) : srcName
 
+  const targetAttrs = targetEntity.attributes ?? []
   // 1. 优先精确匹配以源实体名开头的外键字段（如 user_id, users_id, product_id）
-  const exactCandidates = targetEntity.attributes.filter((attr) => {
+  const exactCandidates = targetAttrs.filter((attr) => {
     if (attr.is_primary_key || usedAttrIds.has(attr.id)) return false
     const name = attr.name.toLowerCase()
     return (
@@ -68,7 +69,7 @@ function findTargetForeignKeyAttribute(
   }
 
   // 2. 角色语义外键（如 seller_id, buyer_id, reviewer_id, participant_a_id 等）
-  const fkCandidates = targetEntity.attributes.filter((attr) => {
+  const fkCandidates = targetAttrs.filter((attr) => {
     if (attr.is_primary_key || usedAttrIds.has(attr.id)) return false
     const name = attr.name.toLowerCase()
     return name.endsWith('_id') || name.endsWith('id')
@@ -78,7 +79,7 @@ function findTargetForeignKeyAttribute(
   }
 
   // 3. 兜底返回第一个非主键字段
-  return targetEntity.attributes.find((attr) => !attr.is_primary_key && !usedAttrIds.has(attr.id))
+  return targetAttrs.find((attr) => !attr.is_primary_key && !usedAttrIds.has(attr.id))
 }
 
 export function toFlowNodes(
@@ -94,7 +95,7 @@ export function toFlowNodes(
     const tgt = entityMap.get(rel.target_entity_id)
     if (src && tgt) {
       const prefix = src.name.toLowerCase()
-      for (const attr of tgt.attributes) {
+      for (const attr of tgt.attributes ?? []) {
         const attrLower = attr.name.toLowerCase()
         if (
           !attr.is_primary_key &&
@@ -111,7 +112,7 @@ export function toFlowNodes(
 
   return design.entities.map((entity) => {
     const fkSet = fkNamesByEntity.get(entity.id) ?? new Set<string>()
-    for (const attr of entity.attributes) {
+    for (const attr of entity.attributes ?? []) {
       if (
         !attr.is_primary_key &&
         attr.name.toLowerCase().endsWith('_id') &&
@@ -154,7 +155,9 @@ export function toFlowEdges(
   return design.relations
     .filter(
       (relation) =>
-        nameByID.has(relation.source_entity_id) && nameByID.has(relation.target_entity_id),
+        relation.source_entity_id !== relation.target_entity_id &&
+        nameByID.has(relation.source_entity_id) &&
+        nameByID.has(relation.target_entity_id),
     )
     .map((relation) => {
       const srcEnt = entityMap.get(relation.source_entity_id)
@@ -164,7 +167,7 @@ export function toFlowEdges(
       outCountByEntity.set(relation.source_entity_id, laneIndex + 1)
 
       // 方案 A：精准解析源主键属性与目标外键属性
-      const sourceAttr = srcEnt?.attributes.find((a) => a.is_primary_key) ?? srcEnt?.attributes[0]
+      const sourceAttr = srcEnt?.attributes?.find((a) => a.is_primary_key) ?? srcEnt?.attributes?.[0]
 
       if (!usedFkByEntity.has(relation.target_entity_id)) {
         usedFkByEntity.set(relation.target_entity_id, new Set())

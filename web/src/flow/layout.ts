@@ -67,15 +67,20 @@ export function ensureLayout(design: ERDesign): ERDesign {
   if (design.entities.length === 0) {
     return design
   }
-  const missing = design.entities.filter((entity) => !entity.position)
+  const cleanRelations = (design.relations ?? []).filter(
+    (r) => r.source_entity_id !== r.target_entity_id,
+  )
+  const cleanedDesign = { ...design, relations: cleanRelations }
+
+  const missing = cleanedDesign.entities.filter((entity) => !entity.position)
   if (missing.length === 0) {
-    return design
+    return cleanedDesign
   }
-  if (missing.length === design.entities.length) {
-    return layoutDesign(design)
+  if (missing.length === cleanedDesign.entities.length) {
+    return layoutDesign(cleanedDesign)
   }
   return placeNewEntities(
-    design,
+    cleanedDesign,
     missing.map((entity) => entity.id),
   )
 }
@@ -114,13 +119,18 @@ export function layoutDesign(design: ERDesign): ERDesign {
   const outDegree = new Map<string, number>()
   const inDegree = new Map<string, number>()
   for (const rel of design.relations) {
+    if (rel.source_entity_id === rel.target_entity_id) continue
     outDegree.set(rel.source_entity_id, (outDegree.get(rel.source_entity_id) || 0) + 1)
     inDegree.set(rel.target_entity_id, (inDegree.get(rel.target_entity_id) || 0) + 1)
   }
 
   // 构建主干拓扑骨架，跨级长边设为松弛边避免强行拉大列数
   for (const rel of design.relations) {
-    if (!graph.hasNode(rel.source_entity_id) || !graph.hasNode(rel.target_entity_id)) {
+    if (
+      rel.source_entity_id === rel.target_entity_id ||
+      !graph.hasNode(rel.source_entity_id) ||
+      !graph.hasNode(rel.target_entity_id)
+    ) {
       continue
     }
 

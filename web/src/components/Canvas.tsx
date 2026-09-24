@@ -38,17 +38,66 @@ export default function Canvas() {
   const setDslView = useStore((state) => state.setDslView)
   const setHoveredEntityId = useStore((state) => state.setHoveredEntityId)
   const setHoveredRelationId = useStore((state) => state.setHoveredRelationId)
+  const focusedEntityId = useStore((state) => state.focusedEntityId)
 
   const [nodes, setNodes] = useState<TableNode[]>([])
   const [edges, setEdges] = useState<RelationEdge[]>([])
   const [copied, setCopied] = useState(false)
   const [zoomLevel, setZoomLevel] = useState(100)
   const [toolMode, setToolMode] = useState<'select' | 'pan'>('select')
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
 
   const { fitView, screenToFlowPosition, zoomIn, zoomOut } = useReactFlow()
 
   const selectedEntityID = selection?.kind === 'entity' ? selection.id : null
   const selectedRelationID = selection?.kind === 'relation' ? selection.id : null
+
+  // 当 AI 侧栏点击实体标签或手动触发 focusEntity 时，镜头平滑飞至目标表
+  useEffect(() => {
+    if (!focusedEntityId) return
+    void fitView({
+      nodes: [{ id: focusedEntityId }],
+      duration: 500,
+      padding: 0.6,
+      maxZoom: 1.1,
+    })
+  }, [focusedEntityId, fitView])
+
+  // 空格键临时抓手平移支持 (Figma / Whiteboard 标准交互)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        const target = e.target as HTMLElement | null
+        if (target) {
+          const tag = target.tagName.toLowerCase()
+          if (tag === 'input' || tag === 'textarea' || target.isContentEditable) {
+            return
+          }
+        }
+        e.preventDefault()
+        setIsSpacePressed(true)
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false)
+      }
+    }
+
+    const handleBlur = () => {
+      setIsSpacePressed(false)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
 
   useEffect(() => {
     setNodes(toFlowNodes(design, selectedEntityID))
@@ -166,7 +215,9 @@ export default function Canvas() {
   // ----------------------------------------------------
   return (
     <div
-      className="relative h-full w-full bg-[#faf7f0]"
+      className={`relative h-full w-full bg-[#faf7f0] ${
+        isSpacePressed || toolMode === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
       onDoubleClick={(event) => {
         const target = event.target as HTMLElement
         if (
@@ -195,7 +246,8 @@ export default function Canvas() {
         snapToGrid={true}
         snapGrid={[20, 20]}
         elevateNodesOnSelect={true}
-        panOnDrag={toolMode === 'pan'}
+        panOnDrag={toolMode === 'pan' || isSpacePressed ? true : [1]}
+        panActivationKeyCode="Space"
         onNodeDragStop={(_, _node, draggedNodes) => {
           if (draggedNodes && draggedNodes.length > 0) {
             moveEntities(
@@ -252,7 +304,7 @@ export default function Canvas() {
             type="button"
             onClick={() => setToolMode('select')}
             className={`rounded-xl p-2 transition ${
-              toolMode === 'select'
+              toolMode === 'select' && !isSpacePressed
                 ? 'bg-[#fdf0ee] border border-[#df4e3e] text-[#df4e3e] shadow-2xs'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
@@ -266,13 +318,13 @@ export default function Canvas() {
           {/* 抓手平移 */}
           <button
             type="button"
-            onClick={() => setToolMode('pan')}
+            onClick={() => setToolMode((m) => (m === 'pan' ? 'select' : 'pan'))}
             className={`rounded-xl p-2 transition ${
-              toolMode === 'pan'
+              toolMode === 'pan' || isSpacePressed
                 ? 'bg-[#fdf0ee] border border-[#df4e3e] text-[#df4e3e] shadow-2xs'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
-            title="平移画布模式"
+            title="平移画布模式 (支持按住 Space 空格键临时平移，或鼠标中键拖拽)"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectMessage } from '../api/client'
 import { useStore } from '../store/erStore'
 import ClarificationDeck from './ClarificationDeck'
@@ -13,6 +13,7 @@ interface AssistantPayload {
   questions?: string[]
   applied_entities_count?: number
   applied_relations_count?: number
+  applied_entities?: string[]
   error?: string
 }
 
@@ -104,6 +105,22 @@ function UserBubble({ msg }: { msg: ProjectMessage }) {
 
 function AssistantCard({ msg }: { msg: ProjectMessage }) {
   const payload = parseAssistantContent(msg.content)
+  const focusEntity = useStore((state) => state.focusEntity)
+  const design = useStore((state) => state.design)
+
+  const entityNames = useMemo(() => {
+    if (payload.applied_entities && payload.applied_entities.length > 0) {
+      return payload.applied_entities
+    }
+    // 降级兜底：从当前画布实体名称中提取并在 summary 中匹配
+    if (payload.applied_entities_count && payload.applied_entities_count > 0 && payload.summary) {
+      const summaryLower = payload.summary.toLowerCase()
+      return design.entities
+        .filter((e) => summaryLower.includes(e.name.toLowerCase()))
+        .map((e) => e.name)
+    }
+    return []
+  }, [payload.applied_entities, payload.applied_entities_count, payload.summary, design.entities])
 
   return (
     <div className="flex flex-col items-start gap-1">
@@ -147,15 +164,40 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           </div>
         )}
 
-        {/* 落盘状态徽章 */}
+        {/* 落盘状态徽章与实体一键定位胶囊 */}
         {payload.applied_entities_count !== undefined && payload.applied_entities_count > 0 && (
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1">
-            <svg className="w-3.5 h-3.5 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            <span>
-              已将数据模型同步至画布（实体表: {payload.applied_entities_count}，关系: {payload.applied_relations_count ?? 0}）
-            </span>
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1">
+              <svg className="w-3.5 h-3.5 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>
+                已将数据模型同步至画布（实体表: {payload.applied_entities_count}，关系: {payload.applied_relations_count ?? 0}）
+              </span>
+            </div>
+
+            {entityNames.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5 pl-0.5">
+                <span className="text-[10px] text-stone-400 font-mono select-none">
+                  点击定位:
+                </span>
+                {entityNames.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => focusEntity(name)}
+                    className="group/tag inline-flex items-center gap-1 rounded-md border border-[#1f1f1f] bg-[#faf7f0] px-2 py-0.5 text-[11px] font-mono font-bold text-[#1f1f1f] shadow-[1px_1px_0px_#1f1f1f] hover:bg-white hover:text-[#df4e3e] hover:border-[#df4e3e] hover:shadow-[1.5px_1.5px_0px_#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer"
+                    title={`在画布中居中定位并查看「${name}」表`}
+                  >
+                    <svg className="w-3 h-3 text-stone-400 group-hover/tag:text-[#df4e3e] transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    <span>{name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -183,12 +225,47 @@ export default function AiSidebar() {
   const [input, setInput] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const isNearBottomRef = useRef(true)
+  const [showScrollBottom, setShowScrollBottom] = useState(false)
+  const scrollRafRef = useRef<number | null>(null)
 
   const hasProject = Boolean(project)
 
-  // 自动平滑滚动到底部
+  const scrollToBottom = (smooth = true) => {
+    if (!scrollContainerRef.current) return
+    scrollContainerRef.current.scrollTo({
+      top: scrollContainerRef.current.scrollHeight,
+      behavior: smooth ? 'smooth' : 'instant',
+    })
+  }
+
+  const handleScroll = () => {
+    if (!scrollContainerRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
+    const isNear = scrollHeight - scrollTop - clientHeight < 80
+    isNearBottomRef.current = isNear
+    setShowScrollBottom(!isNear && (aiRunning || messages.length > 2))
+  }
+
+  // 自动平滑滚动到底部（仅在用户处于底部附近时吸附，防抖动）
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!isNearBottomRef.current) return
+
+    if (scrollRafRef.current) {
+      window.cancelAnimationFrame(scrollRafRef.current)
+    }
+
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      // 流式输出 chunk 时使用 instant 滚动，避免平滑滚动动画频繁排队导致页面抖动
+      scrollToBottom(!aiRunning)
+    })
+
+    return () => {
+      if (scrollRafRef.current) {
+        window.cancelAnimationFrame(scrollRafRef.current)
+      }
+    }
   }, [messages, aiRunning, aiThinking, aiResult])
 
   // 输入框自适应高度
@@ -203,6 +280,9 @@ export default function AiSidebar() {
     const text = input.trim()
     if (!text || !hasProject || aiRunning) return
     setInput('')
+    isNearBottomRef.current = true
+    setShowScrollBottom(false)
+    scrollToBottom(true)
     await runAI(text)
   }
 
@@ -268,95 +348,122 @@ export default function AiSidebar() {
         </div>
 
         {/* 2. 消息流区域 */}
-        <div className="flex-1 overflow-y-auto p-3.5 space-y-4 no-scrollbar">
-          {messagesLoading && messages.length === 0 ? (
-            <div className="flex h-32 items-center justify-center text-xs text-stone-400 font-medium">
-              加载历史记录中…
-            </div>
-          ) : messages.length === 0 && !aiRunning ? (
-            <div className="flex flex-col items-center justify-center h-full px-2 text-center space-y-4 my-auto py-10">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[2px_2px_0px_#1f1f1f]">
-                <svg className="w-6 h-6 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-y-auto p-3.5 space-y-4 no-scrollbar"
+          >
+            {messagesLoading && messages.length === 0 ? (
+              <div className="flex h-32 items-center justify-center text-xs text-stone-400 font-medium">
+                加载历史记录中…
               </div>
-              <div>
-                <h3 className="text-xs font-bold text-stone-800">随时与 AI 结对架构</h3>
-                <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
-                  用自然语言描述业务场景，AI 会自动推导实体表、字段类型与外键关系，并即时同步到右侧画布。
-                </p>
-              </div>
-
-              <div className="w-full space-y-2 pt-2">
-                <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-stone-400">
-                  快速尝试
-                </span>
-                {quickPrompts.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => {
-                      setInput(p)
-                      textareaRef.current?.focus()
-                    }}
-                    className="w-full text-left rounded-xl border border-stone-200 bg-white p-2.5 text-xs text-stone-700 hover:border-[#1f1f1f] hover:shadow-[2px_2px_0px_#1f1f1f] transition"
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <>
-              {messages.map((m) =>
-                m.role === 'user' ? <UserBubble key={m.id} msg={m} /> : <AssistantCard key={m.id} msg={m} />
-              )}
-            </>
-          )}
-
-          {/* 实时推理状态卡片 (当 AI 正在运行且尚未落库完成时展示) */}
-          {aiRunning && (
-            <div className="rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#df4e3e] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#df4e3e]" />
-                </span>
-                <span className="text-xs font-bold text-stone-800">
-                  {aiStatus || 'AI 架构师正在分析需求并落盘设计…'}
-                </span>
-              </div>
-
-              {aiThinking && <ThinkingBlock thinking={aiThinking} defaultOpen={false} isStreaming={true} />}
-
-              {aiError && (
-                <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 font-medium flex items-center gap-1.5">
-                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            ) : messages.length === 0 && !aiRunning ? (
+              <div className="flex flex-col items-center justify-center h-full px-2 text-center space-y-4 my-auto py-10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[2px_2px_0px_#1f1f1f]">
+                  <svg className="w-6 h-6 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
-                  <span>{aiError}</span>
                 </div>
+                <div>
+                  <h3 className="text-xs font-bold text-stone-800">随时与 AI 结对架构</h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
+                    用自然语言描述业务场景，AI 会自动推导实体表、字段类型与外键关系，并即时同步到右侧画布。
+                  </p>
+                </div>
+
+                <div className="w-full space-y-2 pt-2">
+                  <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-stone-400">
+                    快速尝试
+                  </span>
+                  {quickPrompts.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => {
+                        setInput(p)
+                        textareaRef.current?.focus()
+                      }}
+                      className="w-full text-left rounded-xl border border-stone-200 bg-white p-2.5 text-xs text-stone-700 hover:border-[#1f1f1f] hover:shadow-[2px_2px_0px_#1f1f1f] transition"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                {messages.map((m) =>
+                  m.role === 'user' ? <UserBubble key={m.id} msg={m} /> : <AssistantCard key={m.id} msg={m} />
+                )}
+              </>
+            )}
+
+            {/* 实时推理状态卡片 (当 AI 正在运行且尚未落库完成时展示) */}
+            {aiRunning && (
+              <div className="rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#df4e3e] opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#df4e3e]" />
+                  </span>
+                  <span className="text-xs font-bold text-stone-800">
+                    {aiStatus || 'AI 架构师正在分析需求并落盘设计…'}
+                  </span>
+                </div>
+
+                {aiThinking && <ThinkingBlock thinking={aiThinking} defaultOpen={false} isStreaming={true} />}
+
+                {aiError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 font-medium flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span>{aiError}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 交互式需求编排确认卡片 (需要用户决策时) */}
+            {hasClarificationDeck && aiResult?.requirement && (
+              <div className="pt-1">
+                <ClarificationDeck
+                  cards={clarificationCards}
+                  questions={aiResult.requirement.questions}
+                  loading={aiRunning}
+                  onDismiss={dismissAiResult}
+                  onConfirm={async (decisionPrompt) => {
+                    dismissAiResult()
+                    await runAI(decisionPrompt)
+                  }}
+                />
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 向上回看时浮现的快速吸底按钮 */}
+          {showScrollBottom && (
+            <button
+              type="button"
+              onClick={() => {
+                isNearBottomRef.current = true
+                scrollToBottom(true)
+                setShowScrollBottom(false)
+              }}
+              className="absolute bottom-3 right-4 z-20 flex items-center gap-1.5 rounded-full border-[1.5px] border-[#1f1f1f] bg-white px-2.5 py-1 text-[11px] font-bold text-stone-700 shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#faf7f0] hover:text-[#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition select-none animate-in fade-in slide-in-from-bottom-2 duration-150 cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+              <span>回到最新</span>
+              {aiRunning && (
+                <span className="h-1.5 w-1.5 rounded-full bg-[#df4e3e] animate-ping" />
               )}
-            </div>
+            </button>
           )}
-
-          {/* 交互式需求编排确认卡片 (需要用户决策时) */}
-          {hasClarificationDeck && aiResult?.requirement && (
-            <div className="pt-1">
-              <ClarificationDeck
-                cards={clarificationCards}
-                questions={aiResult.requirement.questions}
-                loading={aiRunning}
-                onDismiss={dismissAiResult}
-                onConfirm={async (decisionPrompt) => {
-                  dismissAiResult()
-                  await runAI(decisionPrompt)
-                }}
-              />
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
         </div>
 
         {/* 3. 底部固定指令输入区 */}

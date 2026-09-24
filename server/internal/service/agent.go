@@ -160,6 +160,11 @@ func (a *AgentService) Chat(
 			outCh <- StreamEvent{Type: EventResult, Data: *erDesign}
 		}
 
+		var entityNames []string
+		for _, e := range erDesign.Entities {
+			entityNames = append(entityNames, e.Name)
+		}
+
 		saveAssistantMsg(map[string]interface{}{
 			"summary":                 reqOutput.Summary,
 			"thinking":                thinkingBuffer.String(),
@@ -167,6 +172,7 @@ func (a *AgentService) Chat(
 			"need_clarification":      false,
 			"applied_entities_count":  len(erDesign.Entities),
 			"applied_relations_count": len(erDesign.Relations),
+			"applied_entities":        entityNames,
 		})
 
 		outCh <- StreamEvent{Type: EventDone, Data: true}
@@ -317,9 +323,16 @@ func (a *AgentService) DesignSchema(
 			if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
 				var args tools.ProposeSchemaDesignArgs
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
+					cleanRelations := make([]domain.Relation, 0, len(args.Relations))
+					for _, r := range args.Relations {
+						if strings.TrimSpace(r.SourceEntityID) != "" &&
+							!strings.EqualFold(strings.TrimSpace(r.SourceEntityID), strings.TrimSpace(r.TargetEntityID)) {
+							cleanRelations = append(cleanRelations, r)
+						}
+					}
 					return &domain.ERDesign{
 						Entities:  args.Entities,
-						Relations: args.Relations,
+						Relations: cleanRelations,
 					}, nil
 				}
 			}
@@ -423,6 +436,7 @@ func (a *AgentService) buildSchemaDesignMessages(input SchemaDesignInput) []*sch
 	prompt.WriteString("   - enum -> VARCHAR(32) (code_type: string)\n")
 	prompt.WriteString("   - media -> VARCHAR(512) (code_type: string)\n")
 	prompt.WriteString("3. 根据业务关联关系（one_to_many, many_to_many）建立合理的外键字段（如 user_id BIGINT）和 Relation 连线；\n")
+	prompt.WriteString("   - 【严禁生成指向自身的自引用关系连线】：relations 仅用于两张不同实体表之间的外键关联（source_entity_id 必须与 target_entity_id 不同）。对于像 parent_id（树形分类/评论递归回复）等层级自引用结构，只需在表中保留 parent_id 外键字段即可，绝对不要在 relations 中添加指向本表的自环连线（避免画布产生遮挡字段的表内回环）；\n")
 	prompt.WriteString("4. 表名（name）必须使用简洁规范的英文小写复数（如 users, orders, order_items），字段名（name）请使用标准蛇形命名（如 user_id, order_no）。关于表和字段的 ID，可填入表名作为临时标识或留空，服务端会自动分配全局有序且无冲突的 RFC 9562 UUIDv7 主键。\n\n")
 
 	if input.Requirement != nil {
@@ -467,6 +481,18 @@ func tryParseRequirementJSON(content string) (*RequirementOutput, error) {
 }
 
 func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
+	cleanOut := func(out *domain.ERDesign) *domain.ERDesign {
+		cleanRelations := make([]domain.Relation, 0, len(out.Relations))
+		for _, r := range out.Relations {
+			if strings.TrimSpace(r.SourceEntityID) != "" &&
+				!strings.EqualFold(strings.TrimSpace(r.SourceEntityID), strings.TrimSpace(r.TargetEntityID)) {
+				cleanRelations = append(cleanRelations, r)
+			}
+		}
+		out.Relations = cleanRelations
+		return out
+	}
+
 	content = strings.TrimSpace(content)
 	if strings.Contains(content, "```json") {
 		parts := strings.Split(content, "```json")
@@ -474,13 +500,13 @@ func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
 			jsonBlock, _, _ := strings.Cut(parts[1], "```")
 			var out domain.ERDesign
 			if err := json.Unmarshal([]byte(strings.TrimSpace(jsonBlock)), &out); err == nil && len(out.Entities) > 0 {
-				return &out, nil
+				return cleanOut(&out), nil
 			}
 		}
 	}
 	var out domain.ERDesign
 	if err := json.Unmarshal([]byte(content), &out); err == nil && len(out.Entities) > 0 {
-		return &out, nil
+		return cleanOut(&out), nil
 	}
 	return nil, errors.New("cannot parse ERDesign JSON")
 }
