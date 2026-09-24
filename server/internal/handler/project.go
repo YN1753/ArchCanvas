@@ -170,3 +170,37 @@ func (h *ProjectHandler) SaveModel(c *gin.Context) {
 	}
 	response.Success(c, models)
 }
+
+// ListMessages 获取项目的历史对话消息 (GET /api/v1/projects/messages?project_id=xxx)
+func (h *ProjectHandler) ListMessages(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.ListMessagesReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "project_id is required: "+err.Error(), nil)
+		return
+	}
+
+	messages, err := h.ProjectService.ListProjectMessages(ctx, req.ProjectID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	response.Success(c, messages)
+}
+
+// ClearMessages 清空项目的历史对话 (POST /api/v1/projects/messages/clear)
+func (h *ProjectHandler) ClearMessages(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.ClearMessagesReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "project_id is required: "+err.Error(), nil)
+		return
+	}
+
+	if err := h.ProjectService.ClearProjectMessages(ctx, req.ProjectID); err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	response.Success(c, gin.H{"cleared": true, "project_id": req.ProjectID})
+}
+

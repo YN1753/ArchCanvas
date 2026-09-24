@@ -3,6 +3,7 @@ package service
 import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/domain"
+	"archcanvas/internal/model"
 	"archcanvas/internal/repository"
 	"archcanvas/request"
 	"context"
@@ -26,17 +27,20 @@ type SaveERDesignResult struct {
 type ProjectService struct {
 	ProjectRepo  *repository.ProjectRepository
 	ERDesignRepo *repository.ERDesignRepository
+	MessageRepo  *repository.MessageRepository
 	ModelManager *agent.ModelManager
 }
 
 func NewProjectService(
 	projectRepo *repository.ProjectRepository,
 	erDesignRepo *repository.ERDesignRepository,
+	messageRepo *repository.MessageRepository,
 	modelManager *agent.ModelManager,
 ) *ProjectService {
 	return &ProjectService{
 		ProjectRepo:  projectRepo,
 		ERDesignRepo: erDesignRepo,
+		MessageRepo:  messageRepo,
 		ModelManager: modelManager,
 	}
 }
@@ -135,6 +139,20 @@ func (s *ProjectService) SaveModelConfig(ctx context.Context, req request.SaveMo
 		return agent.AvailableModels{}, errors.New("model manager is not initialized")
 	}
 	return s.ModelManager.SaveAndSwitchModel(ctx, req)
+}
+
+func (s *ProjectService) ListProjectMessages(ctx context.Context, projectID string) ([]model.Message, error) {
+	if s.MessageRepo == nil {
+		return []model.Message{}, nil
+	}
+	return s.MessageRepo.ListMessagesByProject(ctx, projectID)
+}
+
+func (s *ProjectService) ClearProjectMessages(ctx context.Context, projectID string) error {
+	if s.MessageRepo == nil {
+		return nil
+	}
+	return s.MessageRepo.ClearMessagesByProject(ctx, projectID)
 }
 
 

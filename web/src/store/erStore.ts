@@ -9,6 +9,7 @@ import {
   type SaveModelParams,
   type ModelItem,
   type Project,
+  type ProjectMessage,
   type ProviderInfo,
 } from '../api/client'
 import { ensureLayout, layoutDesign, placeNewEntities } from '../flow/layout'
@@ -67,6 +68,10 @@ interface StoreState {
 
   toast: Toast | null
 
+  messages: ProjectMessage[]
+  messagesLoading: boolean
+  aiSidebarOpen: boolean
+
   dslView: 'canvas' | 'code'
   inspectorOpen: boolean
   dataDialogOpen: boolean
@@ -88,6 +93,11 @@ interface StoreActions {
   fetchModels: (params?: GetModelsParams) => Promise<AvailableModelsResponse | null>
   selectModel: (provider: string, model: string, base_url?: string) => void
   saveAndSwitchModel: (params: SaveModelParams) => Promise<boolean>
+
+  setAiSidebarOpen: (open: boolean) => void
+  toggleAiSidebar: () => void
+  fetchProjectMessages: (projectId: string) => Promise<void>
+  clearProjectMessages: () => Promise<void>
 
   select: (selection: Selection) => void
   setHoveredEntityId: (id: string | null) => void
@@ -302,12 +312,46 @@ export const useStore = create<Store>((set, get) => {
     aiError: null,
     aiResult: null,
     toast: null,
+    messages: [],
+    messagesLoading: false,
+    aiSidebarOpen: true,
     dslView: 'canvas',
     inspectorOpen: false,
     dataDialogOpen: false,
     dataDialogTab: 'export-sql',
     canUndo: false,
     canRedo: false,
+
+    setAiSidebarOpen(open) {
+      set({ aiSidebarOpen: open })
+    },
+
+    toggleAiSidebar() {
+      set((state) => ({ aiSidebarOpen: !state.aiSidebarOpen }))
+    },
+
+    async fetchProjectMessages(projectId) {
+      if (!projectId) return
+      set({ messagesLoading: true })
+      try {
+        const messages = await api.getProjectMessages(projectId)
+        set({ messages, messagesLoading: false })
+      } catch (err) {
+        set({ messagesLoading: false })
+      }
+    },
+
+    async clearProjectMessages() {
+      const { project } = get()
+      if (!project) return
+      try {
+        await api.clearProjectMessages(project.id)
+        set({ messages: [], aiResult: null, aiThinking: '', aiError: null })
+        set({ toast: { kind: 'info', text: '已清空当前项目的 AI 历史对话' } })
+      } catch (err) {
+        set({ toast: { kind: 'error', text: `清空会话失败: ${errorMessage(err)}` } })
+      }
+    },
 
     async fetchModels(params?: GetModelsParams) {
       set({ modelsLoading: true, modelsError: null })
@@ -367,6 +411,14 @@ export const useStore = create<Store>((set, get) => {
             model,
             base_url: targetBaseURL,
             set_as_default: true,
+          })
+          .then((res) => {
+            if (res && res.models) {
+              set({
+                models: res.models,
+                providers: res.providers || get().providers,
+              })
+            }
           })
           .catch((err) => {
             console.warn('同步保存模型至 config.yaml 失败:', err)
@@ -474,6 +526,7 @@ export const useStore = create<Store>((set, get) => {
           inspectorOpen: false,
         })
         recompute(ensureLayout(design))
+        void get().fetchProjectMessages(project.id)
       } catch (error) {
         set({ ready: true, bootError: errorMessage(error) })
       } finally {
@@ -494,6 +547,7 @@ export const useStore = create<Store>((set, get) => {
           aiError: null,
         })
         recompute(ensureLayout(design))
+        void get().fetchProjectMessages(id)
         mutationCount = 0
       } catch (error) {
         set({ toast: { kind: 'error', text: errorMessage(error) } })
@@ -841,13 +895,24 @@ export const useStore = create<Store>((set, get) => {
       if (!project) {
         return
       }
-      set({
+
+      const tempUserMsg: ProjectMessage = {
+        id: `temp_${Date.now()}`,
+        conversation_id: '',
+        role: 'user',
+        content: input,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
+      set((state) => ({
         aiRunning: true,
         aiError: null,
         aiResult: null,
         aiThinking: '',
         aiStatus: 'AI 正在分析需求…',
-      })
+        messages: [...state.messages, tempUserMsg],
+      }))
 
       let finalDesign: ERDesign | null = null
       let rawResult: any = null
@@ -880,9 +945,11 @@ export const useStore = create<Store>((set, get) => {
             },
             onError: (err) => {
               set({ aiRunning: false, aiError: errorMessage(err) })
+              void get().fetchProjectMessages(project.id)
             },
             onDone: () => {
               set({ aiRunning: false, aiStatus: '' })
+              void get().fetchProjectMessages(project.id)
 
               if (finalDesign) {
                 recordSnapshot()

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 
-import AiPanel from './components/AiPanel'
+import AiSidebar from './components/AiSidebar'
 import Canvas from './components/Canvas'
 import DataDialog from './components/DataDialog'
 import Inspector from './components/Inspector'
@@ -23,7 +23,7 @@ export default function App() {
     void bootstrap()
   }, [bootstrap])
 
-  // 全局快捷键：⌘/Ctrl + S (保存)、⌘/Ctrl + Z (撤销)、⇧⌘Z / Ctrl+Shift+Z / Ctrl+Y (重做)
+  // 全局快捷键：⌘/Ctrl + S (保存)、⌘/Ctrl + L (切换AI侧栏)、⌘/Ctrl + Z (撤销)、⇧⌘Z (重做)
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const isMod = (event.metaKey || event.ctrlKey) && !event.altKey
@@ -33,6 +33,13 @@ export default function App() {
       if (isMod && key === 's') {
         event.preventDefault()
         void useStore.getState().saveNow()
+        return
+      }
+
+      // ⌘/Ctrl + L 切换 AI 侧栏展开/收起
+      if (isMod && key === 'l') {
+        event.preventDefault()
+        useStore.getState().toggleAiSidebar()
         return
       }
 
@@ -107,10 +114,12 @@ export default function App() {
         />
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          {/* 左侧主要工作区（全尺寸画布 + 底部悬浮 AI 智能胶囊） */}
+          {/* 左侧 AI 架构师侧栏 (可随时一键展开/折叠，支持快捷键 ⌘L) */}
+          <AiSidebar />
+
+          {/* 中间全尺寸画布 */}
           <div className="relative min-w-0 flex-1 h-full">
             <Canvas />
-            <AiPanel />
           </div>
 
           {/* 右侧属性检查器与 DDL 预览面板 */}

@@ -380,6 +380,30 @@ export const api = {
     a.remove()
     window.URL.revokeObjectURL(url)
   },
+
+  /**
+   * 获取项目的历史对话消息
+   */
+  getProjectMessages: (projectId: string) =>
+    request<ProjectMessage[]>(`/projects/messages?project_id=${encodeURIComponent(projectId)}`),
+
+  /**
+   * 清空项目的历史对话
+   */
+  clearProjectMessages: (projectId: string) =>
+    request<{ cleared: boolean; project_id: string }>('/projects/messages/clear', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId }),
+    }),
+}
+
+export interface ProjectMessage {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+  updated_at: string
 }
 
 export interface GenerateRequest {

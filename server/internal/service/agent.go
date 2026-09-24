@@ -3,6 +3,7 @@ package service
 import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/domain"
+	"archcanvas/internal/model"
 	"archcanvas/internal/service/tools"
 	"archcanvas/request"
 	"context"
@@ -39,12 +40,42 @@ func (a *AgentService) Chat(
 	go func() {
 		defer close(outCh)
 
-		// 1. 获取项目已有画布设计作为上下文
+		var thinkingBuffer strings.Builder
 		var currentDesign *domain.ERDesign
+		var historyMessages []model.Message
+		var convID string
+
+		// 1. 获取项目已有画布设计及历史会话上下文
 		if a.ProjectService != nil && req.ProjectID != "" {
 			design, err := a.ProjectService.GetERDesign(ctx, req.ProjectID)
 			if err == nil {
 				currentDesign = design
+			}
+
+			if a.ProjectService.MessageRepo != nil {
+				conv, err := a.ProjectService.MessageRepo.GetOrCreateConversation(ctx, req.ProjectID)
+				if err == nil && conv != nil {
+					convID = conv.ID
+					allMsgs, err := a.ProjectService.MessageRepo.ListMessagesByProject(ctx, req.ProjectID)
+					if err == nil {
+						if len(allMsgs) > 6 {
+							historyMessages = allMsgs[len(allMsgs)-6:]
+						} else {
+							historyMessages = allMsgs
+						}
+					}
+					// 持久化当前用户需求输入
+					_, _ = a.ProjectService.MessageRepo.CreateMessage(ctx, convID, "user", req.Input)
+				}
+			}
+		}
+
+		saveAssistantMsg := func(payload map[string]interface{}) {
+			if convID != "" && a.ProjectService != nil && a.ProjectService.MessageRepo != nil {
+				dataBytes, err := json.Marshal(payload)
+				if err == nil {
+					_, _ = a.ProjectService.MessageRepo.CreateMessage(ctx, convID, "assistant", string(dataBytes))
+				}
 			}
 		}
 
@@ -52,14 +83,22 @@ func (a *AgentService) Chat(
 		reqOutput, err := a.AnalyzeRequirement(ctx, RequirementInput{
 			ProjectID:       req.ProjectID,
 			Message:         req.Input,
+			HistoryMessages: historyMessages,
 			CurrentERDesign: currentDesign,
 			ModelProvider:   req.ModelProvider,
 			ModelName:       req.ModelName,
 		}, func(chunk string) {
+			thinkingBuffer.WriteString(chunk)
 			outCh <- StreamEvent{Type: EventThinking, Data: chunk}
 		})
 		if err != nil {
 			outCh <- StreamEvent{Type: EventError, Data: err.Error()}
+			saveAssistantMsg(map[string]interface{}{
+				"summary":  "业务分析遇到异常",
+				"thinking": thinkingBuffer.String(),
+				"status":   "error",
+				"error":    err.Error(),
+			})
 			return
 		}
 
@@ -67,6 +106,15 @@ func (a *AgentService) Chat(
 			outCh <- StreamEvent{Type: EventStatus, Data: "检测到需求存在疑问，需要进一步确认"}
 			outCh <- StreamEvent{Type: EventResult, Data: reqOutput}
 			outCh <- StreamEvent{Type: EventDone, Data: true}
+
+			saveAssistantMsg(map[string]interface{}{
+				"summary":             reqOutput.Summary,
+				"thinking":            thinkingBuffer.String(),
+				"status":              "clarification",
+				"need_clarification":  true,
+				"clarification_cards": reqOutput.ClarificationCards,
+				"questions":           reqOutput.Questions,
+			})
 			return
 		}
 
@@ -78,10 +126,17 @@ func (a *AgentService) Chat(
 			ModelProvider:   req.ModelProvider,
 			ModelName:       req.ModelName,
 		}, func(chunk string) {
+			thinkingBuffer.WriteString(chunk)
 			outCh <- StreamEvent{Type: EventThinking, Data: chunk}
 		})
 		if err != nil {
 			outCh <- StreamEvent{Type: EventError, Data: err.Error()}
+			saveAssistantMsg(map[string]interface{}{
+				"summary":  "物理表结构设计遇到异常",
+				"thinking": thinkingBuffer.String(),
+				"status":   "error",
+				"error":    err.Error(),
+			})
 			return
 		}
 
@@ -92,12 +147,27 @@ func (a *AgentService) Chat(
 			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, *erDesign)
 			if err != nil {
 				outCh <- StreamEvent{Type: EventError, Data: "落库失败: " + err.Error()}
+				saveAssistantMsg(map[string]interface{}{
+					"summary":  "数据模型持久化落库失败",
+					"thinking": thinkingBuffer.String(),
+					"status":   "error",
+					"error":    err.Error(),
+				})
 				return
 			}
 			outCh <- StreamEvent{Type: EventResult, Data: savedResult.Design}
 		} else {
 			outCh <- StreamEvent{Type: EventResult, Data: *erDesign}
 		}
+
+		saveAssistantMsg(map[string]interface{}{
+			"summary":                 reqOutput.Summary,
+			"thinking":                thinkingBuffer.String(),
+			"status":                  "completed",
+			"need_clarification":      false,
+			"applied_entities_count":  len(erDesign.Entities),
+			"applied_relations_count": len(erDesign.Relations),
+		})
 
 		outCh <- StreamEvent{Type: EventDone, Data: true}
 	}()
@@ -313,10 +383,28 @@ func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schem
 	prompt.WriteString("2. 若需求存在重大模糊或关键矛盾，将 need_clarification 设为 true，并在 clarification_cards 中生成上述递进卡片，在 questions 中列出对应的自然语言追问；\n")
 	prompt.WriteString("3. 最终通过调用 `propose_requirement` 工具提交结构化的业务概念模型与决策卡片。\n")
 
-	return []*schema.Message{
-		schema.SystemMessage(prompt.String()),
-		schema.UserMessage(input.Message),
+	msgs := make([]*schema.Message, 0, len(input.HistoryMessages)+2)
+	msgs = append(msgs, schema.SystemMessage(prompt.String()))
+
+	if len(input.HistoryMessages) > 0 {
+		for _, h := range input.HistoryMessages {
+			if h.Role == "user" {
+				msgs = append(msgs, schema.UserMessage(h.Content))
+			} else if h.Role == "assistant" {
+				var payload struct {
+					Summary string `json:"summary"`
+				}
+				content := h.Content
+				if err := json.Unmarshal([]byte(h.Content), &payload); err == nil && payload.Summary != "" {
+					content = payload.Summary
+				}
+				msgs = append(msgs, schema.AssistantMessage(content, nil))
+			}
+		}
 	}
+
+	msgs = append(msgs, schema.UserMessage(input.Message))
+	return msgs
 }
 
 // buildSchemaDesignMessages 组装阶段二物理数据库建模 Prompt

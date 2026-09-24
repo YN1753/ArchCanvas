@@ -204,6 +204,17 @@ export default function ModelSelector({
   const currentProvider = selectedModel?.provider || 'AI'
   const activePreset = PRESETS.find((p) => p.name === selectedProvider)
 
+  // 按服务商对可用模型进行分组
+  const groupedModels = useMemo(() => {
+    const groups: Record<string, typeof models> = {}
+    for (const item of models) {
+      const p = item.provider || 'default'
+      if (!groups[p]) groups[p] = []
+      groups[p].push(item)
+    }
+    return groups
+  }, [models])
+
   const modelOptions = useMemo(() => {
     return detectedModels.map((m) => ({
       value: m,
@@ -213,48 +224,50 @@ export default function ModelSelector({
 
   return (
     <div className={`relative ${className}`} ref={popoverRef}>
-      {/* 底部输入框旁的紧凑药丸胶囊按钮 (对标参考图) */}
+      {/* 紧凑模型胶囊选择按钮 */}
       <button
         type="button"
         onClick={() => {
           setOpen((prev) => !prev)
           if (!open) setView('list')
         }}
-        className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-stone-50 px-2.5 py-1 text-xs text-stone-800 shadow-2xs hover:bg-stone-100 transition active:scale-98 select-none"
-        title={`当前服务商: ${currentProvider} · 点击快速切换模型或配置服务商`}
+        className="flex items-center gap-1.5 rounded-lg border-[1.5px] border-[#1f1f1f] bg-white px-2.5 py-1 text-xs text-[#1f1f1f] shadow-[1.5px_1.5px_0px_#1f1f1f] hover:bg-stone-50 transition active:translate-x-0.5 active:translate-y-0.5 select-none"
+        title={`当前模型: ${currentDisplayName} (${currentProvider}) · 点击切换`}
       >
-        <span className="text-[11px] text-stone-500 font-sans">模型</span>
-        <span className="max-w-[120px] truncate font-mono text-[11px] text-[#1f1f1f] font-bold">
+        <span className="max-w-[130px] truncate font-mono text-[11px] font-semibold text-[#1f1f1f] leading-none">
           {currentDisplayName}
         </span>
-        <span className="text-[10px] text-blue-600 bg-blue-50/80 border border-blue-200 rounded px-1 font-sans font-semibold">
-          默认
-        </span>
         <svg
-          className={`w-3 h-3 text-stone-500 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`w-3 h-3 text-stone-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-          strokeWidth={2.5}
+          strokeWidth={2.2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
-      {/* 悬浮气泡面板 (Dock Popover) - 绝无全屏深色遮罩，不遮挡背景画布 */}
+      {/* 悬浮气泡面板 (Dock Popover) - 精确右偏移以居中于侧边栏，防止左侧裁剪 */}
       {open ? (
-        <div className="absolute bottom-full right-0 z-40 mb-2 w-80 rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[4px_4px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-100 select-none">
+        <div className="absolute bottom-full right-[-34px] z-40 mb-2.5 w-[314px] rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[4px_4px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-100 select-none">
           {view === 'list' ? (
             /* ================= 视图 1: 快捷模型切换 ================= */
             <div>
               <div className="flex items-center justify-between pb-2 border-b border-stone-200">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
-                  选择推理模型
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-[#1f1f1f]">切换推理模型</span>
+                  {models.length > 0 && (
+                    <span className="rounded bg-stone-100 px-1.5 py-0.2 text-[10px] font-mono text-stone-500">
+                      {models.length}
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="rounded p-1 text-stone-400 hover:text-[#1f1f1f] hover:bg-stone-100 transition"
+                  className="rounded-md p-1 text-stone-400 hover:text-[#1f1f1f] hover:bg-stone-100 transition"
+                  title="关闭"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -263,52 +276,69 @@ export default function ModelSelector({
               </div>
 
               {/* 模型列表 */}
-              <div className="my-1.5 max-h-56 overflow-y-auto space-y-0.5 no-scrollbar py-0.5">
+              <div className="my-2 max-h-60 overflow-y-auto space-y-2 no-scrollbar py-0.5">
                 {models.length === 0 ? (
-                  <div className="py-4 text-center text-xs text-stone-400">暂无模型，请在下方配置</div>
+                  <div className="py-6 text-center text-xs text-stone-400">暂无模型，请在下方配置</div>
                 ) : (
-                  models.map((item) => {
-                    const isSelected =
-                      selectedModel?.provider === item.provider && selectedModel?.model === item.model
-                    return (
-                      <div
-                        key={`${item.provider}::${item.model}`}
-                        onClick={() => {
-                          selectModel(item.provider, item.model, item.base_url)
-                          setOpen(false)
-                        }}
-                        className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-[#fdf0ee] text-[#df4e3e] font-bold border border-[#df4e3e]/30 shadow-[1px_1px_0px_#df4e3e]'
-                            : 'text-[#1f1f1f] hover:bg-stone-100 border border-transparent'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          {isSelected ? (
-                            <span className="text-[#df4e3e] text-xs font-bold shrink-0">✓</span>
-                          ) : (
-                            <span className="w-2.5 shrink-0" />
-                          )}
-                          <span className="truncate font-mono text-[11px]">{item.model}</span>
-                        </div>
-
-                        <span className="text-[10px] text-stone-400 font-sans ml-2 shrink-0">
-                          {item.provider}
+                  Object.entries(groupedModels).map(([providerName, providerModels]) => (
+                    <div key={providerName} className="space-y-1">
+                      <div className="flex items-center gap-1.5 px-1 pt-1 pb-0.5 select-none">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-mono">
+                          {providerName}
                         </span>
+                        <div className="h-[1px] flex-1 bg-stone-100" />
                       </div>
-                    )
-                  })
+                      <div className="space-y-0.5">
+                        {providerModels.map((item) => {
+                          const isSelected =
+                            selectedModel?.provider === item.provider && selectedModel?.model === item.model
+                          return (
+                            <button
+                              key={`${item.provider}::${item.model}`}
+                              type="button"
+                              onClick={() => {
+                                selectModel(item.provider, item.model, item.base_url)
+                                setOpen(false)
+                              }}
+                              className={`w-full flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-left transition select-none ${
+                                isSelected
+                                  ? 'bg-[#faf7f0] text-[#1f1f1f] font-bold border-[1.5px] border-[#1f1f1f] shadow-[1.5px_1.5px_0px_#1f1f1f]'
+                                  : 'text-stone-700 hover:text-[#1f1f1f] hover:bg-stone-100 border border-transparent'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                {isSelected ? (
+                                  <svg className="w-3.5 h-3.5 text-[#df4e3e] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.6}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                ) : (
+                                  <span className="w-3.5 shrink-0" />
+                                )}
+                                <span className="truncate font-mono text-[11px]">{item.model}</span>
+                              </div>
+
+                              {isSelected && (
+                                <span className="text-[9px] font-mono font-bold text-[#df4e3e] bg-[#fdf0ee] border border-[#df4e3e]/30 px-1.5 py-0.2 rounded shrink-0 ml-1.5">
+                                  激活中
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
 
               {/* 底部设置入口 */}
-              <div className="pt-2 border-t border-stone-200 flex items-center justify-between">
+              <div className="pt-2 border-t border-stone-200 mt-1">
                 <button
                   type="button"
                   onClick={() => handleOpenConfig()}
-                  className="flex items-center gap-1.5 text-xs font-bold text-[#df4e3e] hover:underline transition py-0.5"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 py-1.5 text-xs font-semibold text-stone-700 hover:border-[#1f1f1f] hover:bg-white hover:text-[#1f1f1f] hover:shadow-[1.5px_1.5px_0px_#1f1f1f] transition active:translate-x-0.5 active:translate-y-0.5"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-3.5 h-3.5 text-stone-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>

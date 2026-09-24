@@ -49,6 +49,8 @@ export default function Toolbar({
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
   const toggleInspector = useStore((state) => state.toggleInspector)
+  const aiSidebarOpen = useStore((state) => state.aiSidebarOpen)
+  const toggleAiSidebar = useStore((state) => state.toggleAiSidebar)
   const canUndo = useStore((state) => state.canUndo)
   const canRedo = useStore((state) => state.canRedo)
   const undo = useStore((state) => state.undo)
@@ -56,7 +58,7 @@ export default function Toolbar({
 
   return (
     <header className="flex items-center justify-between border-b border-[#e5ded0] bg-[#faf7f0] px-4 py-2.5 select-none shadow-2xs">
-      {/* 左侧：Logo、分段开关、项目选择 */}
+      {/* 左侧：Logo、分段开关、项目选择、AI 架构师侧栏开关 */}
       <div className="flex items-center gap-3">
         {/* AC 红色圆形 Logo */}
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#df4e3e] text-white font-extrabold text-xs border-[1.5px] border-[#1f1f1f] shadow-xs shrink-0">
@@ -101,6 +103,24 @@ export default function Toolbar({
 
         {/* 项目管理器 */}
         <ProjectMenu />
+
+        {/* AI 架构师侧栏开关 */}
+        <button
+          type="button"
+          onClick={toggleAiSidebar}
+          className={`flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] px-2.5 py-1 text-xs font-bold transition select-none ${
+            aiSidebarOpen
+              ? 'bg-white text-[#df4e3e] shadow-[2px_2px_0px_#1f1f1f]'
+              : 'bg-[#faf7f0] text-stone-600 hover:bg-white hover:text-stone-900'
+          }`}
+          title="展开 / 折叠 AI 架构师侧栏 (⌘L)"
+        >
+          <span className="flex h-2 w-2 rounded-full bg-[#df4e3e]" />
+          <span>AI 架构师</span>
+          <span className="rounded bg-stone-100 px-1 py-0.2 font-mono text-[10px] text-stone-400">
+            ⌘L
+          </span>
+        </button>
       </div>
 
       {/* 右侧：撤销/重做、未保存虚线胶囊、导出Go脚手架、红色新建主按钮、更多按钮 */}

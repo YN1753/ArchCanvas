@@ -33,6 +33,7 @@ export default function Canvas() {
   const addEntity = useStore((state) => state.addEntity)
   const autoLayout = useStore((state) => state.autoLayout)
   const openDataDialog = useStore((state) => state.openDataDialog)
+  const setAiSidebarOpen = useStore((state) => state.setAiSidebarOpen)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
   const setHoveredEntityId = useStore((state) => state.setHoveredEntityId)
@@ -396,8 +397,11 @@ export default function Canvas() {
               {/* 卡片 3: AI 起草架构 */}
               <div
                 onClick={() => {
-                  const textarea = document.querySelector('textarea')
-                  textarea?.focus()
+                  setAiSidebarOpen(true)
+                  setTimeout(() => {
+                    const textarea = document.getElementById('ai-sidebar-textarea') as HTMLTextAreaElement | null
+                    textarea?.focus()
+                  }, 80)
                 }}
                 className="group rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1"
               >
@@ -408,7 +412,7 @@ export default function Canvas() {
                 </div>
                 <div>
                   <div className="text-sm font-bold text-[#1f1f1f]">AI 起草架构</div>
-                  <div className="text-xs text-stone-500 mt-0.5">下方描述业务，自动铺开实体</div>
+                  <div className="text-xs text-stone-500 mt-0.5">打开左侧 AI 架构师，自动铺开实体</div>
                 </div>
               </div>
             </div>

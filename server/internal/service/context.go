@@ -1,6 +1,9 @@
 package service
 
-import "archcanvas/internal/domain"
+import (
+	"archcanvas/internal/domain"
+	"archcanvas/internal/model"
+)
 
 // 类型别名重新导出，方便 service 外部或内部直接引用
 type ConceptOperation = domain.ConceptOperation
@@ -51,6 +54,7 @@ type AgentContext struct {
 type RequirementInput struct {
 	ProjectID       string           `json:"project_id"`
 	Message         string           `json:"message"`
+	HistoryMessages []model.Message `json:"history_messages,omitempty"`
 	CurrentERDesign *domain.ERDesign `json:"current_er_design,omitempty"`
 	Constraints     []string         `json:"constraints,omitempty"`
 	Decisions       []string         `json:"decisions,omitempty"`

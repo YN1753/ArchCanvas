@@ -36,3 +36,11 @@ type GetModelsReq struct {
 	APIKey   string `form:"api_key" json:"api_key"`
 	Provider string `form:"provider" json:"provider"`
 }
+
+type ListMessagesReq struct {
+	ProjectID string `form:"project_id" json:"project_id" binding:"required"`
+}
+
+type ClearMessagesReq struct {
+	ProjectID string `json:"project_id" binding:"required"`
+}

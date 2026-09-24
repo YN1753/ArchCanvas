@@ -22,11 +22,12 @@ func main() {
 
 	erDesignRepo := repository.NewERDesignRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
 
 	ctx := context.Background()
 	modelManager := agent.NewModelManager(ctx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider, "./configs")
 
-	projectService := service.NewProjectService(projectRepo, erDesignRepo, modelManager)
+	projectService := service.NewProjectService(projectRepo, erDesignRepo, messageRepo, modelManager)
 	projectHandler := handler.NewProjectHandler(projectService)
 
 	agentService := service.NewAgentService(modelManager, projectService)

@@ -30,6 +30,8 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 		projects.GET("detail", handlers.Project.GetProject)            // 项目详情
 		projects.GET("get-er-design", handlers.Project.GetERDesign)    // 获取 ER 设计图
 		projects.POST("save-er-design", handlers.Project.SaveERDesign) // 保存 ER 设计图
+		projects.GET("messages", handlers.Project.ListMessages)        // 获取项目对话历史
+		projects.POST("messages/clear", handlers.Project.ClearMessages)// 清空项目对话历史
 	}
 
 	agent := route.Group("agent")
