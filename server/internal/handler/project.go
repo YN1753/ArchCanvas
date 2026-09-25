@@ -137,6 +137,38 @@ func (h *ProjectHandler) SaveERDesign(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// GetConceptualDesign 获取项目概念模型 (GET /api/v1/projects/get-conceptual-design)
+func (h *ProjectHandler) GetConceptualDesign(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.GetConceptualDesignReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	design, err := h.ProjectService.GetConceptualDesign(ctx, req.ID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	response.Success(c, design)
+}
+
+// SaveConceptualDesign 保存项目概念模型 (POST /api/v1/projects/save-conceptual-design)
+func (h *ProjectHandler) SaveConceptualDesign(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.SaveConceptualDesignReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	if err := h.ProjectService.SaveConceptualDesign(ctx, req.ProjectID, req.Design); err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	response.Success(c, "success")
+}
+
 // GetModels 获取或探测可用大模型列表 (GET /api/v1/models/list)
 func (h *ProjectHandler) GetModels(c *gin.Context) {
 	ctx := c.Request.Context()

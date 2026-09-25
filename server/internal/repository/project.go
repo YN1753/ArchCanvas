@@ -137,3 +137,19 @@ func (r *ProjectRepository) Update(ctx context.Context, id, name, description st
 	}
 	return &project, nil
 }
+
+func (r *ProjectRepository) SaveConceptualDesign(ctx context.Context, id string, conceptualDesignJSON string) error {
+	if r == nil || r.db == nil {
+		return errors.New("project repository database is nil")
+	}
+	if id == "" {
+		return errors.New("project id is required")
+	}
+	return r.db.WithContext(ctx).
+		Model(&model.Project{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"conceptual_design": conceptualDesignJSON,
+			"updated_at":        time.Now(),
+		}).Error
+}

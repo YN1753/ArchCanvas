@@ -25,10 +25,19 @@ type GetERDesignReq struct {
 	ID string `form:"id" binding:"required"`
 }
 
+type GetConceptualDesignReq struct {
+	ID string `form:"id" binding:"required"`
+}
+
 type SaveERDesignReq struct {
 	ProjectID string            `json:"project_id" binding:"required"`
 	Entities  []domain.Entity   `json:"entities"`
 	Relations []domain.Relation `json:"relations"`
+}
+
+type SaveConceptualDesignReq struct {
+	ProjectID string                  `json:"project_id" binding:"required"`
+	Design    domain.ConceptualDesign `json:"design" binding:"required"`
 }
 
 type GetModelsReq struct {

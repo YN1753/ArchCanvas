@@ -7,16 +7,19 @@ import (
 	"archcanvas/internal/repository"
 	"archcanvas/request"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 type ProjectDetail struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	ERDesign    *domain.ERDesign `json:"er_design,omitempty"`
-	CreatedAt   string           `json:"created_at"`
-	UpdatedAt   string           `json:"updated_at"`
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Description      string                   `json:"description"`
+	ConceptualDesign *domain.ConceptualDesign `json:"conceptual_design,omitempty"`
+	ERDesign         *domain.ERDesign         `json:"er_design,omitempty"`
+	CreatedAt        string                   `json:"created_at"`
+	UpdatedAt        string                   `json:"updated_at"`
 }
 
 type SaveERDesignResult struct {
@@ -102,14 +105,47 @@ func (s *ProjectService) GetProject(ctx context.Context, id string) (*ProjectDet
 		return nil, err
 	}
 	design, _ := s.ERDesignRepo.GetByProjectID(ctx, id)
+
+	var conceptualDesign *domain.ConceptualDesign
+	if p.ConceptualDesign != "" {
+		var cd domain.ConceptualDesign
+		if err := json.Unmarshal([]byte(p.ConceptualDesign), &cd); err == nil {
+			conceptualDesign = &cd
+		}
+	}
+
 	return &ProjectDetail{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		ERDesign:    design,
-		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:   p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:               p.ID,
+		Name:             p.Name,
+		Description:      p.Description,
+		ConceptualDesign: conceptualDesign,
+		ERDesign:         design,
+		CreatedAt:        p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:        p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}, nil
+}
+
+func (s *ProjectService) GetConceptualDesign(ctx context.Context, projectID string) (*domain.ConceptualDesign, error) {
+	p, err := s.ProjectRepo.GetByID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if p.ConceptualDesign == "" {
+		return nil, nil
+	}
+	var cd domain.ConceptualDesign
+	if err := json.Unmarshal([]byte(p.ConceptualDesign), &cd); err != nil {
+		return nil, fmt.Errorf("unmarshal conceptual design: %w", err)
+	}
+	return &cd, nil
+}
+
+func (s *ProjectService) SaveConceptualDesign(ctx context.Context, projectID string, design domain.ConceptualDesign) error {
+	bytes, err := json.Marshal(design)
+	if err != nil {
+		return fmt.Errorf("marshal conceptual design: %w", err)
+	}
+	return s.ProjectRepo.SaveConceptualDesign(ctx, projectID, string(bytes))
 }
 
 func (s *ProjectService) GetERDesign(ctx context.Context, projectID string) (*domain.ERDesign, error) {

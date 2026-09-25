@@ -1,4 +1,4 @@
-import type { ERDesign } from '../types/dsl'
+import type { ConceptualDesign, ERDesign } from '../types/dsl'
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
@@ -12,6 +12,7 @@ export interface Project {
   id: string
   name: string
   description: string
+  conceptual_design?: ConceptualDesign
   er_design: ERDesign
   created_at: string
   updated_at: string
@@ -334,6 +335,18 @@ export const api = {
         project_id: id,
         entities: design.entities,
         relations: design.relations,
+      }),
+    }),
+
+  getConceptualDesign: (id: string) =>
+    request<ConceptualDesign>(`/projects/get-conceptual-design?id=${id}`),
+
+  saveConceptualDesign: (id: string, design: ConceptualDesign) =>
+    request<string>('/projects/save-conceptual-design', {
+      method: 'POST',
+      body: JSON.stringify({
+        project_id: id,
+        design,
       }),
     }),
 
