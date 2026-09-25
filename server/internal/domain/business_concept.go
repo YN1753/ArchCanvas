@@ -33,28 +33,52 @@ const (
 
 // ConceptAttribute 概念属性（纯业务层定义，不涉及具体的物理 SQL 字段类型）
 type ConceptAttribute struct {
-	Name             string            `json:"name" jsonschema:"description=属性名称，如 id, username, price, status"`
+	ID               string            `json:"id,omitempty" jsonschema:"description=属性唯一标识"`
+	Name             string            `json:"name" jsonschema:"description=属性英文名称，如 id, username, total_amount, status"`
+	DisplayName      string            `json:"display_name,omitempty" jsonschema:"description=属性中文业务名称，如 编号, 用户名, 订单总金额, 状态"`
 	Category         AttributeCategory `json:"category" jsonschema:"enum=string,enum=number,enum=boolean,enum=datetime,enum=enum,enum=media,description=属性数据类型类别"`
-	Description      string            `json:"description" jsonschema:"description=属性的业务含义"`
-	Required         bool              `json:"required" jsonschema:"description=是否必填"`
-	IsUnique         bool              `json:"is_unique" jsonschema:"description=是否唯一"`
+	Description      string            `json:"description,omitempty" jsonschema:"description=属性的业务含义"`
+	IsBusinessKey    bool              `json:"is_business_key,omitempty" jsonschema:"description=是否为核心业务标识符或主键（陈氏图中以下划线显示）"`
+	Required         bool              `json:"required,omitempty" jsonschema:"description=是否必填"`
+	IsUnique         bool              `json:"is_unique,omitempty" jsonschema:"description=是否唯一"`
 	EnumValueOptions []string          `json:"enum_value_options,omitempty" jsonschema:"description=若为enum类别，列出允许的可选枚举值列表"`
 }
 
-// BusinessConcept 业务实体概念（纯业务概念模型）
+// BusinessConcept 业务实体概念（纯业务概念模型，对应陈氏图中的矩形实体）
 type BusinessConcept struct {
-	Name        string             `json:"name" jsonschema:"description=业务实体概念名称，如 User, Order, Product"`
-	Description string             `json:"description" jsonschema:"description=实体的业务定义和用途"`
-	Operation   ConceptOperation   `json:"operation" jsonschema:"enum=create,enum=modify,enum=retain,enum=delete,description=对该实体的操作行为"`
-	Attributes  []ConceptAttribute `json:"attributes" jsonschema:"description=该业务概念包含的属性列表"`
+	ID          string             `json:"id,omitempty" jsonschema:"description=业务概念唯一标识，留空将由系统自动分配"`
+	Name        string             `json:"name" jsonschema:"description=业务概念英文标识，如 User, Order, Product"`
+	DisplayName string             `json:"display_name,omitempty" jsonschema:"description=概念的中文业务名称，如 用户, 订单, 商品"`
+	Description string             `json:"description,omitempty" jsonschema:"description=实体的业务定义和用途"`
+	Operation   ConceptOperation   `json:"operation,omitempty" jsonschema:"enum=create,enum=modify,enum=retain,enum=delete,description=对该实体的操作行为"`
+	Position    *Position          `json:"position,omitempty" jsonschema:"description=概念在陈氏画布上的绝对坐标"`
+	Attributes  []ConceptAttribute `json:"attributes" jsonschema:"description=该业务概念包含的核心业务属性列表"`
 }
 
-// ConceptRelation 业务概念之间的关联关系
+// ConceptRelation 业务概念之间的关联关系（对应陈氏图中的菱形联系）
 type ConceptRelation struct {
-	SourceConcept string             `json:"source_concept" jsonschema:"description=源业务概念名称"`
-	TargetConcept string             `json:"target_concept" jsonschema:"description=目标业务概念名称"`
+	ID            string             `json:"id,omitempty" jsonschema:"description=关联唯一标识"`
+	Name          string             `json:"name,omitempty" jsonschema:"description=关联动作或动词标签，如 下单, 选修, 归属分类"`
+	SourceConcept string             `json:"source_concept" jsonschema:"description=源业务概念名称或ID"`
+	TargetConcept string             `json:"target_concept" jsonschema:"description=目标业务概念名称或ID"`
 	Cardinality   ConceptCardinality `json:"cardinality" jsonschema:"enum=one_to_one,enum=one_to_many,enum=many_to_many,description=关联对应关系"`
-	Description   string             `json:"description" jsonschema:"description=业务关联场景说明，如一个用户可以拥有多笔订单"`
+	Description   string             `json:"description,omitempty" jsonschema:"description=业务关联场景说明，如一个用户可以拥有多笔订单"`
+	Position      *Position          `json:"position,omitempty" jsonschema:"description=菱形联系在陈氏画布上的绝对坐标"`
+}
+
+// ConceptualDesign 概念模型设计方案（陈氏模型的一等公民表达，与物理 ERDesign 对偶）
+type ConceptualDesign struct {
+	Summary   string            `json:"summary,omitempty"`
+	Concepts  []BusinessConcept `json:"concepts"`
+	Relations []ConceptRelation `json:"relations"`
+}
+
+// EmptyConceptualDesign 返回空的概念模型设计方案
+func EmptyConceptualDesign() ConceptualDesign {
+	return ConceptualDesign{
+		Concepts:  make([]BusinessConcept, 0),
+		Relations: make([]ConceptRelation, 0),
+	}
 }
 
 // ClarificationOption 澄清确认卡片中的单项预设选项（类似 MiMo 编排选项）

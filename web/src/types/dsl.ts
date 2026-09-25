@@ -128,3 +128,53 @@ export function localID(prefix: 'ent' | 'attr' | 'rel'): string {
 export function isLocalID(id: string): boolean {
   return id.includes('_local_')
 }
+
+// ---------------------------------------------------------------------------
+// Layer 1: 业务概念模型 (Conceptual / Chen's ER Model)
+// ---------------------------------------------------------------------------
+
+export type ConceptOperation = 'create' | 'modify' | 'retain' | 'delete'
+export type ConceptCardinality = 'one_to_one' | 'one_to_many' | 'many_to_many'
+export type AttributeCategory = 'string' | 'number' | 'boolean' | 'datetime' | 'enum' | 'media'
+
+export interface ConceptAttribute {
+  id?: string
+  name: string
+  display_name?: string
+  category: AttributeCategory
+  description?: string
+  is_business_key?: boolean
+  required?: boolean
+  is_unique?: boolean
+  enum_value_options?: string[]
+}
+
+export interface BusinessConcept {
+  id?: string
+  name: string
+  display_name?: string
+  description?: string
+  operation?: ConceptOperation
+  position?: Position
+  attributes: ConceptAttribute[]
+}
+
+export interface ConceptRelation {
+  id?: string
+  name?: string
+  source_concept: string
+  target_concept: string
+  cardinality: ConceptCardinality
+  description?: string
+  position?: Position
+}
+
+export interface ConceptualDesign {
+  summary?: string
+  concepts: BusinessConcept[]
+  relations: ConceptRelation[]
+}
+
+export function emptyConceptualDesign(): ConceptualDesign {
+  return { concepts: [], relations: [] }
+}
