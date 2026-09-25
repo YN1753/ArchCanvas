@@ -1,7 +1,7 @@
 import dagre from 'dagre'
 import type { Node } from '@xyflow/react'
 
-import type { Attribute, Entity, ERDesign, Relation } from '../types/dsl'
+import type { Attribute, Entity, ERDesign, Position, Relation } from '../types/dsl'
 import { getEntityChineseName } from '../utils/chinese'
 import type { ChenEntityNodeData } from '../components/chen/ChenEntityNode'
 import type { ChenRelationNodeData } from '../components/chen/ChenRelationNode'
@@ -111,6 +111,7 @@ function getRowXOffsets(count: number): number[] {
 export function toChenFlowElements(
   design: ERDesign,
   selectedId?: string | null,
+  customPositions?: Record<string, Position>,
 ): { nodes: ChenNode[]; edges: ChenEdgeType[] } {
   if (!design || !design.entities || design.entities.length === 0) {
     return { nodes: [], edges: [] }
@@ -276,10 +277,21 @@ export function toChenFlowElements(
     }
     const ecx = laid ? laid.x : 100
 
+    const defaultEntityX = ecx - ENTITY_W / 2
+    const defaultEntityY = ecy - ENTITY_H / 2
+    const customEntityPos = customPositions?.[entity.id]
+
+    const entityX = customEntityPos ? customEntityPos.x : defaultEntityX
+    const entityY = customEntityPos ? customEntityPos.y : defaultEntityY
+
+    // 动态锚点：若实体发生位置微调，上下属性椭圆默认跟随其实体移动
+    const baseEcx = entityX + ENTITY_W / 2
+    const baseEcy = entityY + ENTITY_H / 2
+
     nodes.push({
       id: entity.id,
       type: 'chenEntity',
-      position: { x: ecx - ENTITY_W / 2, y: ecy - ENTITY_H / 2 },
+      position: { x: entityX, y: entityY },
       data: {
         entity,
       },
@@ -288,18 +300,19 @@ export function toChenFlowElements(
 
     // 生成上方属性椭圆
     if (attrInfo.topAttrs.length > 0) {
-      const topY = ecy - ATTR_Y_OFFSET
+      const topY = baseEcy - ATTR_Y_OFFSET
       const offsets = getRowXOffsets(attrInfo.topAttrs.length)
       for (let i = 0; i < attrInfo.topAttrs.length; i++) {
         const attr = attrInfo.topAttrs[i]
-        const ax = ecx + offsets[i] - ATTR_W / 2
-        const ay = topY - ATTR_H / 2
+        const defaultAx = baseEcx + offsets[i] - ATTR_W / 2
+        const defaultAy = topY - ATTR_H / 2
         const attrNodeId = `attr-${entity.id}-${attr.id}`
+        const customAttrPos = customPositions?.[attrNodeId]
 
         nodes.push({
           id: attrNodeId,
           type: 'chenAttribute',
-          position: { x: ax, y: ay },
+          position: customAttrPos ?? { x: defaultAx, y: defaultAy },
           data: {
             attribute: attr,
             entityId: entity.id,
@@ -323,18 +336,19 @@ export function toChenFlowElements(
 
     // 生成下方属性椭圆
     if (attrInfo.bottomAttrs.length > 0) {
-      const bottomY = ecy + ATTR_Y_OFFSET
+      const bottomY = baseEcy + ATTR_Y_OFFSET
       const offsets = getRowXOffsets(attrInfo.bottomAttrs.length)
       for (let i = 0; i < attrInfo.bottomAttrs.length; i++) {
         const attr = attrInfo.bottomAttrs[i]
-        const ax = ecx + offsets[i] - ATTR_W / 2
-        const ay = bottomY - ATTR_H / 2
+        const defaultAx = baseEcx + offsets[i] - ATTR_W / 2
+        const defaultAy = bottomY - ATTR_H / 2
         const attrNodeId = `attr-${entity.id}-${attr.id}`
+        const customAttrPos = customPositions?.[attrNodeId]
 
         nodes.push({
           id: attrNodeId,
           type: 'chenAttribute',
-          position: { x: ax, y: ay },
+          position: customAttrPos ?? { x: defaultAx, y: defaultAy },
           data: {
             attribute: attr,
             entityId: entity.id,
@@ -360,13 +374,14 @@ export function toChenFlowElements(
   // 5. 生成中间表提升的菱形联系节点与边
   for (const junc of junctionDiamonds) {
     const laid = g.node(junc.id)
-    const x = laid ? laid.x - RELATION_W / 2 : 250
-    const y = laid ? laid.y - RELATION_H / 2 : 250
+    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
+    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
+    const customPos = customPositions?.[junc.id]
 
     nodes.push({
       id: junc.id,
       type: 'chenRelation',
-      position: { x, y },
+      position: customPos ?? { x: defaultX, y: defaultY },
       data: {
         relationId: junc.entity.id,
         name: getEntityChineseName(junc.entity.name),
@@ -410,13 +425,14 @@ export function toChenFlowElements(
   // 6. 生成普通外键关系的菱形联系节点与边
   for (const reg of regularDiamonds) {
     const laid = g.node(reg.id)
-    const x = laid ? laid.x - RELATION_W / 2 : 250
-    const y = laid ? laid.y - RELATION_H / 2 : 250
+    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
+    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
+    const customPos = customPositions?.[reg.id]
 
     nodes.push({
       id: reg.id,
       type: 'chenRelation',
-      position: { x, y },
+      position: customPos ?? { x: defaultX, y: defaultY },
       data: {
         relationId: reg.relation.id,
         name: reg.verb,

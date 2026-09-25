@@ -53,6 +53,9 @@ export default function Canvas() {
   const setHoveredRelationId = useStore((state) => state.setHoveredRelationId)
   const focusedEntityId = useStore((state) => state.focusedEntityId)
   const canvasViewMode = useStore((state) => state.canvasViewMode)
+  const chenPositions = useStore((state) => state.chenPositions)
+  const updateChenPositions = useStore((state) => state.updateChenPositions)
+  const resetChenPositions = useStore((state) => state.resetChenPositions)
 
   const [nodes, setNodes] = useState<any[]>([])
   const [edges, setEdges] = useState<any[]>([])
@@ -118,6 +121,7 @@ export default function Canvas() {
       const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
         design,
         selectedEntityID ?? selectedRelationID,
+        chenPositions,
       )
       setNodes(chenNodes)
       setEdges(chenEdges)
@@ -125,7 +129,7 @@ export default function Canvas() {
       setNodes(toFlowNodes(design, selectedEntityID))
       setEdges(toFlowEdges(design, selectedRelationID))
     }
-  }, [design, selectedEntityID, selectedRelationID, canvasViewMode])
+  }, [design, selectedEntityID, selectedRelationID, canvasViewMode, chenPositions])
 
   useEffect(() => {
     if (!projectID || design.entities.length === 0) {
@@ -173,9 +177,11 @@ export default function Canvas() {
 
   const handleAutoLayout = () => {
     if (canvasViewMode === 'chen') {
+      resetChenPositions()
       const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
         design,
         selectedEntityID ?? selectedRelationID,
+        {},
       )
       setNodes(chenNodes)
       setEdges(chenEdges)
@@ -287,9 +293,9 @@ export default function Canvas() {
         panOnDrag={toolMode === 'pan' || isSpacePressed ? true : [1]}
         panActivationKeyCode="Space"
         onNodeDragStop={(_, _node, draggedNodes) => {
-          if (canvasViewMode === 'chen') return
-          if (draggedNodes && draggedNodes.length > 0) {
-            moveEntities(
+          if (!draggedNodes || draggedNodes.length === 0) return
+          if (canvasViewMode === 'chen') {
+            updateChenPositions(
               draggedNodes.map((n) => ({
                 id: n.id,
                 position: {
@@ -298,9 +304,39 @@ export default function Canvas() {
                 },
               })),
             )
+            return
           }
+          moveEntities(
+            draggedNodes.map((n) => ({
+              id: n.id,
+              position: {
+                x: Math.round(n.position.x / 20) * 20,
+                y: Math.round(n.position.y / 20) * 20,
+              },
+            })),
+          )
         }}
-        onNodeClick={(_, node) => select({ kind: 'entity', id: node.id })}
+        onNodeClick={(_, node) => {
+          if (canvasViewMode === 'chen') {
+            if (node.type === 'chenRelation') {
+              const data = node.data as any
+              if (data?.isJunctionTable) {
+                select({ kind: 'entity', id: data.relationId })
+              } else if (data?.relationId) {
+                select({ kind: 'relation', id: data.relationId })
+              }
+              return
+            }
+            if (node.type === 'chenAttribute') {
+              const data = node.data as any
+              if (data?.entityId) {
+                select({ kind: 'entity', id: data.entityId })
+              }
+              return
+            }
+          }
+          select({ kind: 'entity', id: node.id })
+        }}
         onNodeMouseEnter={(_, node) => setHoveredEntityId(node.id)}
         onNodeMouseLeave={() => setHoveredEntityId(null)}
         onEdgeClick={(_, edge) => select({ kind: 'relation', id: edge.id })}

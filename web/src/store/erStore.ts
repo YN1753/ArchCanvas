@@ -21,6 +21,7 @@ import {
   type Cardinality,
   type Entity,
   type ERDesign,
+  type Position,
   type Relation,
 } from '../types/dsl'
 import { validateDesign, type ValidationReport } from '../validate/dsl'
@@ -75,6 +76,7 @@ interface StoreState {
   aiSidebarOpen: boolean
 
   canvasViewMode: CanvasViewMode
+  chenPositions: Record<string, Position>
   dslView: 'canvas' | 'code'
   inspectorOpen: boolean
   dataDialogOpen: boolean
@@ -118,6 +120,8 @@ interface StoreActions {
 
   moveEntity: (id: string, position: { x: number; y: number }) => void
   moveEntities: (moves: Array<{ id: string; position: { x: number; y: number } }>) => void
+  updateChenPositions: (moves: Array<{ id: string; position: { x: number; y: number } }>) => void
+  resetChenPositions: () => void
   addEntity: (position?: { x: number; y: number }) => void
   renameEntity: (id: string, name: string) => void
   deleteEntity: (id: string) => void
@@ -156,6 +160,22 @@ function errorMessage(error: unknown): string {
     return error.message
   }
   return String(error)
+}
+
+function loadChenPositions(projectId: string): Record<string, Position> {
+  try {
+    const raw = localStorage.getItem(`archcanvas_chen_pos_${projectId}`)
+    if (raw) {
+      return JSON.parse(raw)
+    }
+  } catch {}
+  return {}
+}
+
+function saveChenPositions(projectId: string, positions: Record<string, Position>) {
+  try {
+    localStorage.setItem(`archcanvas_chen_pos_${projectId}`, JSON.stringify(positions))
+  } catch {}
 }
 
 export const useStore = create<Store>((set, get) => {
@@ -322,6 +342,7 @@ export const useStore = create<Store>((set, get) => {
     messagesLoading: false,
     aiSidebarOpen: true,
     canvasViewMode: 'chen',
+    chenPositions: {},
     dslView: 'canvas',
     inspectorOpen: false,
     dataDialogOpen: false,
@@ -529,6 +550,7 @@ export const useStore = create<Store>((set, get) => {
           bootError: null,
           projects,
           project: detail,
+          chenPositions: loadChenPositions(project.id),
           selection: null,
           inspectorOpen: false,
         })
@@ -547,6 +569,7 @@ export const useStore = create<Store>((set, get) => {
         resetHistory()
         set({
           project: detail,
+          chenPositions: loadChenPositions(id),
           selection: null,
           inspectorOpen: false,
           serverWarnings: [],
@@ -566,7 +589,7 @@ export const useStore = create<Store>((set, get) => {
         const project = await api.createProject(name, description)
         const projects = await api.listProjects()
         resetHistory()
-        set({ projects, project, selection: null, inspectorOpen: false, aiResult: null })
+        set({ projects, project, chenPositions: {}, selection: null, inspectorOpen: false, aiResult: null })
         recompute({ entities: [], relations: [] })
         mutationCount = 0
         set({ toast: { kind: 'info', text: `已成功创建项目「${name}」` } })
@@ -578,6 +601,9 @@ export const useStore = create<Store>((set, get) => {
     async deleteProject(id) {
       try {
         await api.deleteProject(id)
+        try {
+          localStorage.removeItem(`archcanvas_chen_pos_${id}`)
+        } catch {}
         let projects = await api.listProjects()
         if (projects.length === 0) {
           const created = await api.createProject('新项目')
@@ -691,6 +717,27 @@ export const useStore = create<Store>((set, get) => {
       )
     },
 
+    updateChenPositions(moves) {
+      if (moves.length === 0) return
+      const { project, chenPositions } = get()
+      const nextPositions = { ...chenPositions }
+      for (const move of moves) {
+        nextPositions[move.id] = move.position
+      }
+      set({ chenPositions: nextPositions })
+      if (project) {
+        saveChenPositions(project.id, nextPositions)
+      }
+    },
+
+    resetChenPositions() {
+      const { project } = get()
+      set({ chenPositions: {} })
+      if (project) {
+        saveChenPositions(project.id, {})
+      }
+    },
+
     addEntity(customPosition) {
       recordSnapshot()
       const { design } = get()
@@ -738,7 +785,7 @@ export const useStore = create<Store>((set, get) => {
 
     deleteEntity(id) {
       recordSnapshot()
-      const { design, selection } = get()
+      const { design, selection, chenPositions, project } = get()
       const next: ERDesign = {
         entities: design.entities.filter((entity) => entity.id !== id),
         relations: design.relations.filter(
@@ -746,6 +793,18 @@ export const useStore = create<Store>((set, get) => {
         ),
       }
       const removedRelations = design.relations.length - next.relations.length
+      const nextChenPositions = { ...chenPositions }
+      delete nextChenPositions[id]
+      delete nextChenPositions[`junction-${id}`]
+      for (const key of Object.keys(nextChenPositions)) {
+        if (key.startsWith(`attr-${id}-`)) {
+          delete nextChenPositions[key]
+        }
+      }
+      if (project) {
+        saveChenPositions(project.id, nextChenPositions)
+      }
+      set({ chenPositions: nextChenPositions })
       mutationCount += 1
       recompute(next, {
         selection: selection?.kind === 'entity' && selection.id === id ? null : selection,
@@ -892,7 +951,13 @@ export const useStore = create<Store>((set, get) => {
 
     deleteRelation(id) {
       recordSnapshot()
-      const { design, selection } = get()
+      const { design, selection, chenPositions, project } = get()
+      const nextChenPositions = { ...chenPositions }
+      delete nextChenPositions[`rel-${id}`]
+      if (project) {
+        saveChenPositions(project.id, nextChenPositions)
+      }
+      set({ chenPositions: nextChenPositions })
       mutationCount += 1
       recompute(
         {
