@@ -1,4 +1,10 @@
-import type { ConceptualDesign, ERDesign } from '../types/dsl'
+import type {
+  ConceptualDesign,
+  DatabaseDialect,
+  EngineeringSpec,
+  ERDesign,
+  SchemaReviewReport,
+} from '../types/dsl'
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
@@ -182,10 +188,34 @@ export interface ChatStreamParams {
   model_name?: string
 }
 
-export async function chatStream(
-  params: ChatStreamParams,
+export interface ProposeConceptsParams {
+  project_id: string
+  input: string
+  model_provider?: string
+  model_name?: string
+}
+
+export interface DerivePhysicalParams {
+  project_id: string
+  dialect?: DatabaseDialect
+  specification?: EngineeringSpec
+  conceptual_design?: ConceptualDesign
+  model_provider?: string
+  model_name?: string
+}
+
+export interface ReviewSchemaParams {
+  project_id: string
+  dialect?: DatabaseDialect
+  model_provider?: string
+  model_name?: string
+}
+
+async function streamPost<T = any>(
+  endpoint: string,
+  params: unknown,
   callbacks: {
-    onEvent: (event: ChatEvent) => void
+    onEvent: (event: ChatEvent<T>) => void
     onError?: (err: Error) => void
     onDone?: () => void
   },
@@ -193,7 +223,7 @@ export async function chatStream(
 ): Promise<void> {
   let response: Response
   try {
-    response = await fetch(`${BASE}/agent/chat`, {
+    response = await fetch(`${BASE}${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -298,6 +328,54 @@ export async function chatStream(
   }
 }
 
+export function chatStream(
+  params: ChatStreamParams,
+  callbacks: {
+    onEvent: (event: ChatEvent) => void
+    onError?: (err: Error) => void
+    onDone?: () => void
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamPost('/agent/chat', params, callbacks, signal)
+}
+
+export function proposeConceptsStream(
+  params: ProposeConceptsParams,
+  callbacks: {
+    onEvent: (event: ChatEvent) => void
+    onError?: (err: Error) => void
+    onDone?: () => void
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamPost('/agent/propose-concepts', params, callbacks, signal)
+}
+
+export function derivePhysicalStream(
+  params: DerivePhysicalParams,
+  callbacks: {
+    onEvent: (event: ChatEvent) => void
+    onError?: (err: Error) => void
+    onDone?: () => void
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamPost('/agent/derive-physical', params, callbacks, signal)
+}
+
+export function reviewSchemaStream(
+  params: ReviewSchemaParams,
+  callbacks: {
+    onEvent: (event: ChatEvent<SchemaReviewReport>) => void
+    onError?: (err: Error) => void
+    onDone?: () => void
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamPost<SchemaReviewReport>('/agent/review-schema', params, callbacks, signal)
+}
+
 export const api = {
   listProjects: () => request<Project[]>('/projects/list'),
 
@@ -360,6 +438,9 @@ export const api = {
     }),
 
   chatStream,
+  proposeConceptsStream,
+  derivePhysicalStream,
+  reviewSchemaStream,
 
   /**
    * 获取可用的大模型列表（语义化 GET /models/list）。

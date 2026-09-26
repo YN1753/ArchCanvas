@@ -188,3 +188,33 @@ export interface ConceptualDesign {
 export function emptyConceptualDesign(): ConceptualDesign {
   return { concepts: [], relations: [] }
 }
+
+// ---------------------------------------------------------------------------
+// Layer 3: 架构质量与性能守卫 (Schema Review / Health Report)
+// ---------------------------------------------------------------------------
+
+export type SchemaIssueSeverity = 'critical' | 'warning' | 'info'
+export type SchemaIssueCategory = 'index' | 'normalization' | 'naming' | 'performance' | 'type_safety'
+
+export interface SchemaIssue {
+  id: string
+  category: SchemaIssueCategory
+  severity: SchemaIssueSeverity
+  title: string
+  description: string
+  entity_name?: string
+  column_name?: string
+  suggestion: string
+}
+
+export interface SchemaReviewReport {
+  score: number // 0-100
+  summary: string
+  passed_count: number
+  total_count: number
+  issues: SchemaIssue[]
+}
+
+export type DatabaseDialect = 'mysql' | 'postgres' | 'sqlite'
+export type EngineeringSpec = 'standard' | 'enterprise' | 'minimal'
+
