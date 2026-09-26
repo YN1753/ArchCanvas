@@ -56,8 +56,15 @@ func (a *AgentService) Chat(
 		var historyMessages []model.Message
 		var convID string
 
+		var currentConceptualDesign *domain.ConceptualDesign
+
 		// 1. 获取项目已有画布设计及历史会话上下文
 		if a.ProjectService != nil && req.ProjectID != "" {
+			cd, err := a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
+			if err == nil && cd != nil && len(cd.Concepts) > 0 {
+				currentConceptualDesign = cd
+			}
+
 			design, err := a.ProjectService.GetERDesign(ctx, req.ProjectID)
 			if err == nil {
 				currentDesign = design
@@ -96,12 +103,13 @@ func (a *AgentService) Chat(
 			return
 		}
 		reqOutput, err := a.AnalyzeRequirement(ctx, RequirementInput{
-			ProjectID:       req.ProjectID,
-			Message:         req.Input,
-			HistoryMessages: historyMessages,
-			CurrentERDesign: currentDesign,
-			ModelProvider:   req.ModelProvider,
-			ModelName:       req.ModelName,
+			ProjectID:               req.ProjectID,
+			Message:                 req.Input,
+			HistoryMessages:         historyMessages,
+			CurrentConceptualDesign: currentConceptualDesign,
+			CurrentERDesign:         currentDesign,
+			ModelProvider:           req.ModelProvider,
+			ModelName:               req.ModelName,
 		}, func(chunk string) {
 			thinkingBuffer.WriteString(chunk)
 			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
@@ -386,13 +394,22 @@ func (a *AgentService) DesignSchema(
 // buildRequirementMessages 组装阶段一业务需求分析 Prompt
 func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schema.Message {
 	var prompt strings.Builder
-	prompt.WriteString("你是一位资深的系统业务分析师（Requirements Analyst）。\n")
-	prompt.WriteString("你的职责是专注业务领域模型（Business Concepts），梳理出实体概念、业务属性、概念关系、假设与业务边界。\n\n")
+	prompt.WriteString("你是一位资深的领域概念建模架构师（Domain Concept Modeler）。\n")
+	prompt.WriteString("你的核心职责是专注业务领域概念模型（Chen's ER Model），梳理出实体概念、业务属性、概念动词关系以及业务边界。\n\n")
 
 	prompt.WriteString("【严格遵循的状态枚举取值限制】：\n")
 	prompt.WriteString("- 概念操作 operation 必须且只能是以下四项之一：\"create\"（新增概念）, \"modify\"（修改概念）, \"retain\"（保留概念）, \"delete\"（删除概念）\n")
 	prompt.WriteString("- 关联基数 cardinality 必须且只能是以下三项之一：\"one_to_one\"（一对一）, \"one_to_many\"（一对多）, \"many_to_many\"（多对多）\n")
 	prompt.WriteString("- 属性类别 category 必须且只能是以下六项之一：\"string\"（文本）, \"number\"（数值）, \"boolean\"（布尔）, \"datetime\"（日期时间）, \"enum\"（枚举）, \"media\"（文件/多媒体）\n\n")
+
+	prompt.WriteString("【纯业务概念建模（Chen's ER）铁律（绝对禁止物理污染）】：\n")
+	prompt.WriteString("1. 【聚焦业务实体与核心属性】：抽取具有独立业务含义的实体概念（如 User, Order, Product），每个概念仅包含 3 到 6 个最关键的高阶业务属性（如 name, price, status, balance 等）。\n")
+	prompt.WriteString("2. 【禁止提前物理实现】：\n")
+	prompt.WriteString("   - 绝对不要生成自增整型 ID（如 id, auto_increment）或物理底层类型（如 VARCHAR, INT, BIGINT, TEXT）；类型必须且只能使用抽象类别 category（string, number, boolean, datetime, enum, media）；\n")
+	prompt.WriteString("   - 绝对不要创建物理外键属性（如 user_id, order_id）；概念之间的关联通过 relations 表达即可，属性中不需要外键！\n")
+	prompt.WriteString("   - 绝对不要创建物理中间表概念（如用户与角色的多对多关系，只需生成一条动词关联：User ──拥有(M:N)── Role，绝对禁止凭空捏造一个 UserRole 概念实体！多对多拆解是后续物理表推导的工作）；\n")
+	prompt.WriteString("3. 【业务标识符标注】：若属性具有业务唯一标识特征（如 username, order_no, sku_code），将 is_business_key 标记为 true（陈氏图中将显示下划线）；\n")
+	prompt.WriteString("4. 【双语显示】：实体概念与属性均需提供准确的英文标识（name，如 Order）与中文业务名称（display_name，如 订单）。关联关系同理，动词 name 需简洁明了（如 下单, 购买, 选修, 包含）。\n\n")
 
 	if len(input.Constraints) > 0 {
 		prompt.WriteString("【用户历史明确提出的硬性红线（必须绝对遵守）】：\n")
@@ -409,7 +426,12 @@ func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schem
 		prompt.WriteString("\n")
 	}
 
-	if input.CurrentERDesign != nil && len(input.CurrentERDesign.Entities) > 0 {
+	if input.CurrentConceptualDesign != nil && len(input.CurrentConceptualDesign.Concepts) > 0 {
+		cdJSON, err := json.Marshal(input.CurrentConceptualDesign)
+		if err == nil {
+			prompt.WriteString(fmt.Sprintf("【当前画布已有的陈氏概念模型（增量演化上下文，必须保持现有概念稳定）】：\n%s\n\n", string(cdJSON)))
+		}
+	} else if input.CurrentERDesign != nil && len(input.CurrentERDesign.Entities) > 0 {
 		erJSON, err := json.Marshal(input.CurrentERDesign)
 		if err == nil {
 			prompt.WriteString(fmt.Sprintf("【当前已有系统数据模型（增量分析上下文）】：\n%s\n\n", string(erJSON)))
@@ -417,12 +439,12 @@ func (a *AgentService) buildRequirementMessages(input RequirementInput) []*schem
 	}
 
 	prompt.WriteString("【澄清选项卡触发与生成规则（至关重要）】：\n")
-	prompt.WriteString("1. 【精准具体小需求（静默直通）】：若用户的输入已经足够明确、指向具体单表/特定字段修改（例如“在users表加个phone字段”、“把status改成枚举”），严禁多事提问！必须将 need_clarification 设为 false，clarification_cards 留空，直接提议业务概念并放行物理建模！\n")
+	prompt.WriteString("1. 【精准具体小需求（静默直通）】：若用户的输入已经足够明确、指向具体实体/特定概念修改（例如“在用户概念加个手机号”、“把状态改成枚举”），严禁多事提问！必须将 need_clarification 设为 false，clarification_cards 留空，直接提议业务概念！\n")
 	prompt.WriteString("2. 【宏观庞大粗粒度需求（编排门禁触发）】：若用户的输入是宏观系统级需求（例如“帮我做一个校园二手交易平台”、“做一个社区团购系统”），存在多种核心业务落地路径时，必须将 need_clarification 设为 true，并生成 2 到 3 张【逻辑递进、前后连贯】的决策卡片（clarification_cards）：\n")
 	prompt.WriteString("   - 卡片需按照业务主线递进（如：卡片1 核心业务交付模式 -> 卡片2 准入与认证体系 -> 卡片3 互动或结算方式）；\n")
 	prompt.WriteString("   - 每张卡片提供 2 到 4 个代表性预设选项（options）：\n")
 	prompt.WriteString("     * label: 选项主标题（简短明了，如“校内寝室自提与面交”）；\n")
-	prompt.WriteString("     * description: 选项副标题说明（一句话说明对架构表结构的影响与业务理由，如“支持离线提货码核销与楼栋定位，架构轻量”）；\n")
+	prompt.WriteString("     * description: 选项副标题说明（一句话说明对业务模式与架构的影响）；\n")
 	prompt.WriteString("     * is_default: 必须且只能将其中最符合通用场景的最佳实践选项标记为 true；\n")
 	prompt.WriteString("   - 【切勿生成自定义/其他选项】：大模型无需自己添加“其他”或“自定义”，前端交互层会自动在每张卡片尾部固定注入自定义输入框！\n\n")
 

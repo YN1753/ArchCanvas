@@ -52,14 +52,15 @@ type AgentContext struct {
 
 // RequirementInput 需求分析算子的输入契约
 type RequirementInput struct {
-	ProjectID       string           `json:"project_id"`
-	Message         string           `json:"message"`
-	HistoryMessages []model.Message `json:"history_messages,omitempty"`
-	CurrentERDesign *domain.ERDesign `json:"current_er_design,omitempty"`
-	Constraints     []string         `json:"constraints,omitempty"`
-	Decisions       []string         `json:"decisions,omitempty"`
-	ModelProvider   string           `json:"model_provider,omitempty"`
-	ModelName       string           `json:"model_name,omitempty"`
+	ProjectID               string                   `json:"project_id"`
+	Message                 string                   `json:"message"`
+	HistoryMessages         []model.Message          `json:"history_messages,omitempty"`
+	CurrentConceptualDesign *domain.ConceptualDesign `json:"current_conceptual_design,omitempty"`
+	CurrentERDesign         *domain.ERDesign         `json:"current_er_design,omitempty"`
+	Constraints             []string                 `json:"constraints,omitempty"`
+	Decisions               []string                 `json:"decisions,omitempty"`
+	ModelProvider           string                   `json:"model_provider,omitempty"`
+	ModelName               string                   `json:"model_name,omitempty"`
 }
 
 // RequirementOutput 需求分析算子的纯净业务结构化输出契约
@@ -80,4 +81,14 @@ type SchemaDesignInput struct {
 	CurrentERDesign *domain.ERDesign   `json:"current_er_design,omitempty"`
 	ModelProvider   string             `json:"model_provider,omitempty"`
 	ModelName       string             `json:"model_name,omitempty"`
+}
+
+// DerivePhysicalInput Layer 2 物理工程推导算子的输入契约
+type DerivePhysicalInput struct {
+	ProjectID        string                   `json:"project_id"`
+	Dialect          string                   `json:"dialect"` // "mysql" | "postgres" | "sqlite"
+	ConceptualDesign *domain.ConceptualDesign `json:"conceptual_design"`
+	CurrentERDesign  *domain.ERDesign         `json:"current_er_design,omitempty"`
+	ModelProvider    string                   `json:"model_provider,omitempty"`
+	ModelName        string                   `json:"model_name,omitempty"`
 }

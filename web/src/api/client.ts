@@ -1,7 +1,6 @@
 import type {
   ConceptualDesign,
   DatabaseDialect,
-  EngineeringSpec,
   ERDesign,
   SchemaReviewReport,
 } from '../types/dsl'
@@ -198,7 +197,6 @@ export interface ProposeConceptsParams {
 export interface DerivePhysicalParams {
   project_id: string
   dialect?: DatabaseDialect
-  specification?: EngineeringSpec
   conceptual_design?: ConceptualDesign
   model_provider?: string
   model_name?: string

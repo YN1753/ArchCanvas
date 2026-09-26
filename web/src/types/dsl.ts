@@ -216,5 +216,4 @@ export interface SchemaReviewReport {
 }
 
 export type DatabaseDialect = 'mysql' | 'postgres' | 'sqlite'
-export type EngineeringSpec = 'standard' | 'enterprise' | 'minimal'
 

@@ -20,8 +20,7 @@ type ProposeConceptsReq struct {
 // DerivePhysicalReq Layer 2 物理表与索引工程推导请求
 type DerivePhysicalReq struct {
 	ProjectID        string                   `json:"project_id"`
-	Dialect          string                   `json:"dialect,omitempty"`       // 方言: mysql / postgres / sqlite，默认 mysql
-	Specification    string                   `json:"specification,omitempty"` // 规范预设: standard / enterprise / minimal，默认 standard
+	Dialect          string                   `json:"dialect,omitempty"` // 方言: mysql / postgres / sqlite，默认 mysql
 	ConceptualDesign *domain.ConceptualDesign `json:"conceptual_design,omitempty"`
 	ModelProvider    string                   `json:"model_provider,omitempty"`
 	ModelName        string                   `json:"model_name,omitempty"`

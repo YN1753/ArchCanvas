@@ -38,8 +38,15 @@ func (a *AgentService) ProposeConcepts(
 		var historyMessages []model.Message
 		var convID string
 
+		var currentConceptualDesign *domain.ConceptualDesign
+
 		// 1. 获取项目已有画布设计及历史会话上下文
 		if a.ProjectService != nil && req.ProjectID != "" {
+			cd, err := a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
+			if err == nil && cd != nil && len(cd.Concepts) > 0 {
+				currentConceptualDesign = cd
+			}
+
 			design, err := a.ProjectService.GetERDesign(ctx, req.ProjectID)
 			if err == nil {
 				currentDesign = design
@@ -79,12 +86,13 @@ func (a *AgentService) ProposeConcepts(
 		}
 
 		reqOutput, err := a.AnalyzeRequirement(ctx, RequirementInput{
-			ProjectID:       req.ProjectID,
-			Message:         req.Input,
-			HistoryMessages: historyMessages,
-			CurrentERDesign: currentDesign,
-			ModelProvider:   req.ModelProvider,
-			ModelName:       req.ModelName,
+			ProjectID:               req.ProjectID,
+			Message:                 req.Input,
+			HistoryMessages:         historyMessages,
+			CurrentConceptualDesign: currentConceptualDesign,
+			CurrentERDesign:         currentDesign,
+			ModelProvider:           req.ModelProvider,
+			ModelName:               req.ModelName,
 		}, func(chunk string) {
 			thinkingBuffer.WriteString(chunk)
 			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
@@ -103,12 +111,13 @@ func (a *AgentService) ProposeConcepts(
 			return
 		}
 
-		// 组装业务概念聚合
-		conceptualDesign := domain.ConceptualDesign{
+		// 组装并平滑合并业务概念聚合（保留已有概念坐标与稳定 ID）
+		rawConceptualDesign := domain.ConceptualDesign{
 			Summary:   reqOutput.Summary,
 			Concepts:  reqOutput.Concepts,
 			Relations: reqOutput.Relations,
 		}
+		conceptualDesign := mergeConceptualDesign(currentConceptualDesign, rawConceptualDesign)
 
 		// 持久化至项目陈氏图字段
 		if a.ProjectService != nil && req.ProjectID != "" {
@@ -192,10 +201,6 @@ func (a *AgentService) DerivePhysical(
 		if dialect == "" {
 			dialect = "mysql"
 		}
-		specification := strings.ToLower(strings.TrimSpace(req.Specification))
-		if specification == "" {
-			specification = "standard"
-		}
 
 		var thinkingBuffer strings.Builder
 		var currentDesign *domain.ERDesign
@@ -223,22 +228,18 @@ func (a *AgentService) DerivePhysical(
 			}
 		}
 
-		statusMsg := fmt.Sprintf("物理架构工程师正在推导物理表与索引 (目标方言: %s, 规范: %s)…", dialect, specification)
+		statusMsg := fmt.Sprintf("物理架构工程师正在推导物理表与索引 (目标方言: %s)…", dialect)
 		if !sendEvent(StreamEvent{Type: EventStatus, Data: statusMsg}) {
 			return
 		}
 
-		reqOutput := &RequirementOutput{
-			Summary:   conceptualDesign.Summary,
-			Concepts:  conceptualDesign.Concepts,
-			Relations: conceptualDesign.Relations,
-		}
-
-		erDesign, err := a.DesignSchema(ctx, SchemaDesignInput{
-			Requirement:     reqOutput,
-			CurrentERDesign: currentDesign,
-			ModelProvider:   req.ModelProvider,
-			ModelName:       req.ModelName,
+		erDesign, err := a.DerivePhysicalSchema(ctx, DerivePhysicalInput{
+			ProjectID:        req.ProjectID,
+			Dialect:          dialect,
+			ConceptualDesign: conceptualDesign,
+			CurrentERDesign:  currentDesign,
+			ModelProvider:    req.ModelProvider,
+			ModelName:        req.ModelName,
 		}, func(chunk string) {
 			thinkingBuffer.WriteString(chunk)
 			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
@@ -461,4 +462,121 @@ func evaluateSchemaHealth(design *domain.ERDesign, dialect string) domain.Schema
 		TotalCount:  totalChecks,
 		Issues:      issues,
 	}
+}
+
+// mergeConceptualDesign 对比并合并新旧概念模型，保持已有概念的 ID、坐标 Position 和已有属性稳定
+func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.ConceptualDesign) domain.ConceptualDesign {
+	if existing == nil || len(existing.Concepts) == 0 {
+		for i := range incoming.Concepts {
+			if incoming.Concepts[i].ID == "" {
+				incoming.Concepts[i].ID = id.NewUUIDv7()
+			}
+			for j := range incoming.Concepts[i].Attributes {
+				if incoming.Concepts[i].Attributes[j].ID == "" {
+					incoming.Concepts[i].Attributes[j].ID = id.NewUUIDv7()
+				}
+			}
+		}
+		for i := range incoming.Relations {
+			if incoming.Relations[i].ID == "" {
+				incoming.Relations[i].ID = id.NewUUIDv7()
+			}
+		}
+		return incoming
+	}
+
+	existingConceptsByName := make(map[string]domain.BusinessConcept, len(existing.Concepts))
+	existingConceptsByID := make(map[string]domain.BusinessConcept, len(existing.Concepts))
+	for _, c := range existing.Concepts {
+		if c.ID != "" {
+			existingConceptsByID[c.ID] = c
+		}
+		existingConceptsByName[strings.ToLower(c.Name)] = c
+		if c.DisplayName != "" {
+			existingConceptsByName[strings.ToLower(c.DisplayName)] = c
+		}
+	}
+
+	for i := range incoming.Concepts {
+		inc := &incoming.Concepts[i]
+		var matched *domain.BusinessConcept
+		if inc.ID != "" {
+			if old, ok := existingConceptsByID[inc.ID]; ok {
+				matched = &old
+			}
+		}
+		if matched == nil {
+			if old, ok := existingConceptsByName[strings.ToLower(inc.Name)]; ok {
+				matched = &old
+			} else if inc.DisplayName != "" {
+				if old, ok := existingConceptsByName[strings.ToLower(inc.DisplayName)]; ok {
+					matched = &old
+				}
+			}
+		}
+
+		if matched != nil {
+			if inc.ID == "" {
+				inc.ID = matched.ID
+			}
+			if inc.Position == nil && matched.Position != nil {
+				inc.Position = matched.Position
+			}
+			// 保持已有属性的 ID 稳定
+			oldAttrMap := make(map[string]string, len(matched.Attributes))
+			for _, a := range matched.Attributes {
+				oldAttrMap[strings.ToLower(a.Name)] = a.ID
+				if a.DisplayName != "" {
+					oldAttrMap[strings.ToLower(a.DisplayName)] = a.ID
+				}
+			}
+			for j := range inc.Attributes {
+				if inc.Attributes[j].ID == "" {
+					if oldID, ok := oldAttrMap[strings.ToLower(inc.Attributes[j].Name)]; ok {
+						inc.Attributes[j].ID = oldID
+					} else if inc.Attributes[j].DisplayName != "" {
+						if oldID, ok := oldAttrMap[strings.ToLower(inc.Attributes[j].DisplayName)]; ok {
+							inc.Attributes[j].ID = oldID
+						} else {
+							inc.Attributes[j].ID = id.NewUUIDv7()
+						}
+					} else {
+						inc.Attributes[j].ID = id.NewUUIDv7()
+					}
+				}
+			}
+		} else {
+			if inc.ID == "" {
+				inc.ID = id.NewUUIDv7()
+			}
+			for j := range inc.Attributes {
+				if inc.Attributes[j].ID == "" {
+					inc.Attributes[j].ID = id.NewUUIDv7()
+				}
+			}
+		}
+	}
+
+	// 保持关系 ID 与坐标稳定
+	for i := range incoming.Relations {
+		rel := &incoming.Relations[i]
+		if rel.ID == "" {
+			for _, oldR := range existing.Relations {
+				if strings.EqualFold(oldR.SourceConcept, rel.SourceConcept) &&
+					strings.EqualFold(oldR.TargetConcept, rel.TargetConcept) &&
+					oldR.Cardinality == rel.Cardinality {
+					rel.ID = oldR.ID
+					if rel.Position == nil {
+						rel.Position = oldR.Position
+					}
+					break
+				}
+			}
+		}
+		if rel.ID == "" {
+			rel.ID = id.NewUUIDv7()
+		}
+	}
+
+	return incoming
 }
