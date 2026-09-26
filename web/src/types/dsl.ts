@@ -40,9 +40,17 @@ export interface Position {
   y: number
 }
 
+export interface IndexDefinition {
+  name: string
+  columns: string[]
+  is_unique?: boolean
+  comment?: string
+}
+
 export interface Attribute {
   id: string
   name: string
+  comment?: string
   db_type: string
   code_type: string
   is_primary_key: boolean
@@ -56,9 +64,11 @@ export interface Attribute {
 export interface Entity {
   id: string
   name: string
+  comment?: string
   /** 为空表示尚未布局，交给自动布局决定。 */
   position?: Position
   attributes: Attribute[]
+  indexes?: IndexDefinition[]
 }
 
 export interface Relation {

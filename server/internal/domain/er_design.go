@@ -10,16 +10,27 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
+// IndexDefinition 物理表的索引定义（支持单列/复合索引与唯一索引）
+type IndexDefinition struct {
+	Name     string   `json:"name"`                // 索引名称，如 idx_user_status
+	Columns  []string `json:"columns"`             // 索引覆盖的列名列表（按最左匹配前缀顺序）
+	IsUnique bool     `json:"is_unique,omitempty"` // 是否为唯一索引
+	Comment  string   `json:"comment,omitempty"`   // 索引的设计意图说明
+}
+
 type Entity struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Position   *Position   `json:"position,omitempty"`
-	Attributes []Attribute `json:"attributes"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Comment    string            `json:"comment,omitempty"` // 表的中文业务注释
+	Position   *Position         `json:"position,omitempty"`
+	Attributes []Attribute       `json:"attributes"`
+	Indexes    []IndexDefinition `json:"indexes,omitempty"` // 表的索引清单
 }
 
 type Attribute struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
+	Comment      string  `json:"comment,omitempty"` // 字段中文业务说明，对齐 SQL COMMENT
 	DBType       string  `json:"db_type"`
 	CodeType     string  `json:"code_type"`
 	IsPrimaryKey bool    `json:"is_primary_key"`

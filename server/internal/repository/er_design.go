@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -92,11 +93,21 @@ func (r *ERDesignRepository) GetByProjectID(
 			}
 		}
 
+		var indexes []domain.IndexDefinition
+		if entity.Indexes != "" && entity.Indexes != "[]" {
+			_ = json.Unmarshal([]byte(entity.Indexes), &indexes)
+		}
+		if indexes == nil {
+			indexes = make([]domain.IndexDefinition, 0)
+		}
+
 		design.Entities = append(design.Entities, domain.Entity{
 			ID:         entity.ID,
 			Name:       entity.Name,
+			Comment:    entity.Comment,
 			Position:   pos,
 			Attributes: entityAttributes,
+			Indexes:    indexes,
 		})
 	}
 	for _, relation := range relations {
@@ -214,16 +225,29 @@ func (r *ERDesignRepository) SaveByProjectID(
 				posY = oldPos[1]
 			}
 
+			indexesJSON := ""
+			if len(e.Indexes) > 0 {
+				if bytes, err := json.Marshal(e.Indexes); err == nil {
+					indexesJSON = string(bytes)
+				}
+			}
+
 			entModel := model.Entity{
 				ID:        entityID,
 				ProjectID: projectID,
 				Name:      e.Name,
+				Comment:   e.Comment,
+				Indexes:   indexesJSON,
 				PosX:      posX,
 				PosY:      posY,
 			}
 
 			if oldEnt, ok := oldEntitiesByID[entityID]; ok {
-				if oldEnt.Name != entModel.Name || !float64PtrEqual(oldEnt.PosX, entModel.PosX) || !float64PtrEqual(oldEnt.PosY, entModel.PosY) {
+				if oldEnt.Name != entModel.Name ||
+					oldEnt.Comment != entModel.Comment ||
+					oldEnt.Indexes != entModel.Indexes ||
+					!float64PtrEqual(oldEnt.PosX, entModel.PosX) ||
+					!float64PtrEqual(oldEnt.PosY, entModel.PosY) {
 					entitiesToUpdate = append(entitiesToUpdate, entModel)
 				}
 			} else {
@@ -279,6 +303,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 					ID:           attrID,
 					EntityID:     entityID,
 					Name:         attr.Name,
+					Comment:      attr.Comment,
 					DBType:       attr.DBType,
 					CodeType:     attr.CodeType,
 					IsPrimaryKey: attr.IsPrimaryKey,
@@ -290,6 +315,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 				if oldA, ok := existingAttrsByID[attrID]; ok {
 					if oldA.Name != attrModel.Name ||
+						oldA.Comment != attrModel.Comment ||
 						oldA.DBType != attrModel.DBType ||
 						oldA.CodeType != attrModel.CodeType ||
 						oldA.IsPrimaryKey != attrModel.IsPrimaryKey ||
@@ -438,9 +464,11 @@ func (r *ERDesignRepository) SaveByProjectID(
 			if err := tx.Model(&model.Entity{}).
 				Where("id = ?", ent.ID).
 				Updates(map[string]interface{}{
-					"name":  ent.Name,
-					"pos_x": ent.PosX,
-					"pos_y": ent.PosY,
+					"name":    ent.Name,
+					"comment": ent.Comment,
+					"indexes": ent.Indexes,
+					"pos_x":   ent.PosX,
+					"pos_y":   ent.PosY,
 				}).Error; err != nil {
 				return fmt.Errorf("update entity %s: %w", ent.ID, err)
 			}
@@ -470,6 +498,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 				Where("id = ?", attr.ID).
 				Updates(map[string]interface{}{
 					"name":           attr.Name,
+					"comment":        attr.Comment,
 					"db_type":        attr.DBType,
 					"code_type":      attr.CodeType,
 					"is_primary_key": attr.IsPrimaryKey,
@@ -543,6 +572,7 @@ func toDomainAttribute(attribute model.Attribute) domain.Attribute {
 	return domain.Attribute{
 		ID:           attribute.ID,
 		Name:         attribute.Name,
+		Comment:      attribute.Comment,
 		DBType:       attribute.DBType,
 		CodeType:     attribute.CodeType,
 		IsPrimaryKey: attribute.IsPrimaryKey,
