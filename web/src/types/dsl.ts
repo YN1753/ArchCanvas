@@ -75,6 +75,7 @@ export interface Relation {
   id: string
   source_entity_id: string
   target_entity_id: string
+  relation_type_id?: string
   cardinality: Cardinality
 }
 

@@ -67,9 +67,12 @@ export function ensureLayout(design: ERDesign): ERDesign {
   if (design.entities.length === 0) {
     return design
   }
-  const cleanRelations = (design.relations ?? []).filter(
-    (r) => r.source_entity_id !== r.target_entity_id,
-  )
+  const cleanRelations = (design.relations ?? [])
+    .filter((r) => r.source_entity_id !== r.target_entity_id)
+    .map((r) => ({
+      ...r,
+      cardinality: (r.cardinality || (r as any).relation_type_id || 'one_to_many') as any,
+    }))
   const cleanedDesign = { ...design, relations: cleanRelations }
 
   const missing = cleanedDesign.entities.filter((entity) => !entity.position)

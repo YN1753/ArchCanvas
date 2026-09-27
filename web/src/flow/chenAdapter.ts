@@ -1,7 +1,7 @@
 import dagre from 'dagre'
 import type { Node } from '@xyflow/react'
 
-import type { Attribute, Entity, ERDesign, Position, Relation } from '../types/dsl'
+import type { Attribute, Cardinality, Entity, ERDesign, Position, Relation } from '../types/dsl'
 import { getEntityChineseName } from '../utils/chinese'
 import type { ChenEntityNodeData } from '../components/chen/ChenEntityNode'
 import type { ChenRelationNodeData } from '../components/chen/ChenRelationNode'
@@ -245,7 +245,8 @@ export function toChenFlowElements(
     processedPairKeys.add(pairKey)
 
     const diaId = `rel-${rel.id}`
-    const verb = getRelationshipVerb(src.name, tgt.name, rel.cardinality)
+    const relCard = (rel.cardinality || (rel as any).relation_type_id || 'one_to_many') as Cardinality
+    const verb = getRelationshipVerb(src.name, tgt.name, relCard)
     regularDiamonds.push({
       id: diaId,
       relation: rel,
@@ -428,6 +429,7 @@ export function toChenFlowElements(
     const defaultX = laid ? laid.x - RELATION_W / 2 : 250
     const defaultY = laid ? laid.y - RELATION_H / 2 : 250
     const customPos = customPositions?.[reg.id]
+    const card = (reg.relation.cardinality || (reg.relation as any).relation_type_id || 'one_to_many') as Cardinality
 
     nodes.push({
       id: reg.id,
@@ -436,15 +438,15 @@ export function toChenFlowElements(
       data: {
         relationId: reg.relation.id,
         name: reg.verb,
-        cardinality: reg.relation.cardinality,
+        cardinality: card,
         sourceEntityId: reg.source.id,
         targetEntityId: reg.target.id,
       },
       selected: reg.id === selectedId || reg.relation.id === selectedId,
     })
 
-    const is1to1 = reg.relation.cardinality === 'one_to_one'
-    const isM2M = reg.relation.cardinality === 'many_to_many'
+    const is1to1 = card === 'one_to_one'
+    const isM2M = card === 'many_to_many'
 
     // 源端基数标签：1 或 M
     const srcCard = isM2M ? 'M' : '1'

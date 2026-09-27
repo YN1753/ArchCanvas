@@ -71,9 +71,9 @@ function ChenRelationNode({ data, selected }: NodeProps<ChenRelationNodeType>) {
         >
           {data.cardinality === 'many_to_many'
             ? 'M:N'
-            : data.cardinality === 'one_to_many'
-              ? '1:N'
-              : '1:1'}
+            : data.cardinality === 'one_to_one'
+              ? '1:1'
+              : '1:N'}
         </span>
       </div>
     </div>

@@ -410,7 +410,14 @@ export const api = {
       body: JSON.stringify({
         project_id: id,
         entities: design.entities,
-        relations: design.relations,
+        relations: (design.relations ?? []).map((r) => {
+          const card = r.cardinality || (r as any).relation_type_id || 'one_to_many'
+          return {
+            ...r,
+            relation_type_id: card,
+            cardinality: card,
+          }
+        }),
       }),
     }),
 

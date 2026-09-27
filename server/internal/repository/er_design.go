@@ -111,11 +111,16 @@ func (r *ERDesignRepository) GetByProjectID(
 		})
 	}
 	for _, relation := range relations {
+		relType := relation.RelationTypeID
+		if relType == "" {
+			relType = "one_to_many"
+		}
 		design.Relations = append(design.Relations, domain.Relation{
 			ID:             relation.ID,
 			SourceEntityID: relation.SourceEntityID,
 			TargetEntityID: relation.TargetEntityID,
-			RelationTypeID: relation.RelationTypeID,
+			RelationTypeID: relType,
+			Cardinality:    relType,
 		})
 	}
 
@@ -393,12 +398,20 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 			matchedOldRelIDs[relID] = true
 
+			relType := rel.RelationTypeID
+			if relType == "" {
+				relType = rel.Cardinality
+			}
+			if relType == "" {
+				relType = "one_to_many"
+			}
+
 			relModel := model.Relation{
 				ID:             relID,
 				ProjectID:      projectID,
 				SourceEntityID: sourceID,
 				TargetEntityID: targetID,
-				RelationTypeID: rel.RelationTypeID,
+				RelationTypeID: relType,
 			}
 
 			if oldR, ok := oldRelationsByID[relID]; ok {

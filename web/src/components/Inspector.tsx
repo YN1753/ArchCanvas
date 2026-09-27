@@ -8,6 +8,7 @@ import {
   DB_TYPE_SUGGESTIONS,
   isLocalID,
   type Attribute,
+  type Cardinality,
 } from '../types/dsl'
 import {
   CARDINALITY_CHINESE,
@@ -373,7 +374,8 @@ function RelationInspector({ relationID }: { relationID: string }) {
     sublabel: getEntityChineseName(entity.name),
   }))
 
-  const relLabel = CARDINALITY_CHINESE[relation.cardinality]?.label ?? '关联'
+  const currentCard = (relation.cardinality || (relation as any).relation_type_id || 'one_to_many') as Cardinality
+  const relLabel = CARDINALITY_CHINESE[currentCard]?.label ?? '关联'
 
   return (
     <div className="space-y-4">
@@ -390,7 +392,6 @@ function RelationInspector({ relationID }: { relationID: string }) {
               placeholder="选择源实体..."
             />
           </div>
-
           <div>
             <span className="mb-1 block text-[11px] font-semibold text-stone-600">目标实体</span>
             <Select
@@ -411,9 +412,9 @@ function RelationInspector({ relationID }: { relationID: string }) {
             <button
               key={cardinality}
               type="button"
-              onClick={() => updateRelation(relation.id, { cardinality })}
+              onClick={() => updateRelation(relation.id, { cardinality, relation_type_id: cardinality })}
               className={`rounded-lg border-[1.5px] px-2 py-2 text-xs font-bold transition ${
-                relation.cardinality === cardinality
+                currentCard === cardinality
                   ? 'border-[#1f1f1f] bg-[#fdf0ee] text-[#df4e3e] shadow-[2px_2px_0px_#1f1f1f]'
                   : 'border-stone-300 bg-white text-stone-600 hover:border-[#1f1f1f]'
               }`}

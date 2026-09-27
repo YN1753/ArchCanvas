@@ -1,5 +1,7 @@
 package domain
 
+import "encoding/json"
+
 type ERDesign struct {
 	Entities  []Entity   `json:"entities"`
 	Relations []Relation `json:"relations"`
@@ -45,4 +47,51 @@ type Relation struct {
 	SourceEntityID string `json:"source_entity_id"`
 	TargetEntityID string `json:"target_entity_id"`
 	RelationTypeID string `json:"relation_type_id"`
+	Cardinality    string `json:"cardinality,omitempty"`
 }
+
+func (r *Relation) UnmarshalJSON(data []byte) error {
+	type Alias Relation
+	aux := &struct {
+		*Alias
+		Card    string `json:"cardinality"`
+		RelType string `json:"relation_type_id"`
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if r.RelationTypeID == "" {
+		r.RelationTypeID = aux.Card
+	}
+	if r.Cardinality == "" {
+		r.Cardinality = r.RelationTypeID
+	}
+	if r.Cardinality == "" {
+		r.Cardinality = "one_to_many"
+		r.RelationTypeID = "one_to_many"
+	}
+	return nil
+}
+
+func (r Relation) MarshalJSON() ([]byte, error) {
+	relType := r.RelationTypeID
+	if relType == "" {
+		relType = r.Cardinality
+	}
+	if relType == "" {
+		relType = "one_to_many"
+	}
+	type Alias Relation
+	return json.Marshal(&struct {
+		Alias
+		RelationTypeID string `json:"relation_type_id"`
+		Cardinality    string `json:"cardinality"`
+	}{
+		Alias:          Alias(r),
+		RelationTypeID: relType,
+		Cardinality:    relType,
+	})
+}
+
