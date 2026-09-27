@@ -92,3 +92,12 @@ type DerivePhysicalInput struct {
 	ModelProvider    string                   `json:"model_provider,omitempty"`
 	ModelName        string                   `json:"model_name,omitempty"`
 }
+
+// ReviewSchemaInput Layer 3 架构审查算子的输入契约
+type ReviewSchemaInput struct {
+	ProjectID       string           `json:"project_id"`
+	Dialect         string           `json:"dialect"`
+	CurrentERDesign *domain.ERDesign `json:"current_er_design"`
+	ModelProvider   string           `json:"model_provider,omitempty"`
+	ModelName       string           `json:"model_name,omitempty"`
+}
