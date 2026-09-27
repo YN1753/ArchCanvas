@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectMessage } from '../api/client'
 import { useStore } from '../store/erStore'
+import type { DatabaseDialect } from '../types/dsl'
 import ClarificationDeck from './ClarificationDeck'
 import ModelSelector from './ModelSelector'
 
@@ -14,6 +15,7 @@ interface AssistantPayload {
   applied_entities_count?: number
   applied_relations_count?: number
   applied_entities?: string[]
+  conceptual_design?: any
   error?: string
 }
 
@@ -140,9 +142,13 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
               需要澄清
             </span>
+          ) : payload.status === 'concept_ready' || payload.conceptual_design ? (
+            <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">
+              概念已推导
+            </span>
           ) : (
             <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-              设计落库
+              物理架构已生成
             </span>
           )}
         </div>
@@ -155,6 +161,18 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#1f1f1f] font-sans font-medium select-text">
             {payload.summary}
           </p>
+        )}
+
+        {/* 概念模型提示 */}
+        {payload.conceptual_design?.concepts && payload.conceptual_design.concepts.length > 0 && (
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1">
+            <svg className="w-3.5 h-3.5 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            <span>
+              已提炼 {payload.conceptual_design.concepts.length} 个核心概念与 {payload.conceptual_design.relations?.length ?? 0} 组业务关联
+            </span>
+          </div>
         )}
 
         {/* 错误提示 */}
@@ -206,6 +224,146 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
   )
 }
 
+function DerivePhysicalCard() {
+  const conceptualDesign = useStore((state) => state.conceptualDesign)
+  const agentPhase = useStore((state) => state.agentPhase)
+  const targetDialect = useStore((state) => state.targetDialect)
+  const setTargetDialect = useStore((state) => state.setTargetDialect)
+  const derivePhysical = useStore((state) => state.derivePhysical)
+  const reviewSchema = useStore((state) => state.reviewSchema)
+  const setCanvasViewMode = useStore((state) => state.setCanvasViewMode)
+  const aiRunning = useStore((state) => state.aiRunning)
+
+  const conceptsCount = conceptualDesign?.concepts?.length ?? 0
+  const relationsCount = conceptualDesign?.relations?.length ?? 0
+
+  if (conceptsCount === 0) return null
+
+  const dialects: Array<{ id: DatabaseDialect; label: string }> = [
+    { id: 'mysql', label: 'MySQL 8.0' },
+    { id: 'postgres', label: 'PostgreSQL' },
+    { id: 'sqlite', label: 'SQLite' },
+  ]
+
+  const isPhysicalReady = agentPhase === 'physical_ready'
+  const isDeriving = agentPhase === 'deriving_physical'
+
+  return (
+    <div className="w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-3">
+      <div className="flex items-center justify-between border-b border-stone-100 pb-2">
+        <div className="flex items-center gap-1.5">
+          <svg className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2 1.5 3 3.5 3s3.5-1 3.5-3V7c0-2-1.5-3-3.5-3S4 5 4 7zm0 5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m-7-5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m10 0v10c0 2 1.5 3 3.5 3s3.5-1 3.5-3V7c0-2-1.5-3-3.5-3s-3.5 1-3.5 3zm0 5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m-7-5c0 2 1.5 3 3.5 3s3.5-1 3.5-3" />
+          </svg>
+          <span className="text-xs font-bold text-[#1f1f1f]">
+            {isPhysicalReady ? '物理模型与索引就绪' : '概念模型就绪 · 物理推导'}
+          </span>
+        </div>
+        <span
+          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+            isPhysicalReady
+              ? 'bg-emerald-100 text-emerald-800'
+              : isDeriving
+              ? 'bg-amber-100 text-amber-800 animate-pulse'
+              : 'bg-sky-100 text-sky-800'
+          }`}
+        >
+          {isPhysicalReady ? '已生成物理表' : isDeriving ? '正在推导中' : '待推导物理表'}
+        </span>
+      </div>
+
+      <p className="text-[11.5px] leading-relaxed text-stone-600">
+        {isPhysicalReady
+          ? `已成功生成生产级数据表结构（含 M:N 中间表解耦、审计字段与智能索引配置）。`
+          : `已提炼 ${conceptsCount} 个业务概念、${relationsCount} 组关联关系。选择目标数据库方言后，可一键推导物理建表规范与索引。`}
+      </p>
+
+      {/* 方言选择器 */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-stone-400">
+            目标数据库方言
+          </span>
+          <span className="text-[10px] text-stone-400 font-mono">
+            {targetDialect.toUpperCase()}
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {dialects.map((d) => {
+            const active = targetDialect === d.id
+            return (
+              <button
+                key={d.id}
+                type="button"
+                disabled={aiRunning}
+                onClick={() => setTargetDialect(d.id)}
+                className={`py-1.5 px-2 text-[11px] font-mono font-bold rounded-lg border-[1.5px] transition text-center cursor-pointer ${
+                  active
+                    ? 'border-[#1f1f1f] bg-[#1f1f1f] text-white shadow-[1px_1px_0px_#1f1f1f]'
+                    : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-400 hover:bg-white'
+                }`}
+              >
+                {d.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* 操作按钮区 */}
+      <div className="space-y-2 pt-1">
+        <button
+          type="button"
+          disabled={aiRunning}
+          onClick={() => void derivePhysical(targetDialect)}
+          className="w-full py-2 px-3 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] text-white text-xs font-bold shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          {isDeriving ? (
+            <>
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              <span>正在推导物理表与索引…</span>
+            </>
+          ) : (
+            <>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              <span>{isPhysicalReady ? '重新推导物理表与索引' : '推导物理表与索引'}</span>
+            </>
+          )}
+        </button>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCanvasViewMode('chen')}
+            className="flex-1 py-1.5 px-2.5 rounded-lg border border-stone-300 bg-white text-[11px] font-bold text-stone-700 hover:border-[#1f1f1f] hover:bg-stone-50 transition flex items-center justify-center gap-1 cursor-pointer"
+          >
+            <svg className="w-3 h-3 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+            </svg>
+            <span>陈氏白板审阅</span>
+          </button>
+
+          {isPhysicalReady && (
+            <button
+              type="button"
+              disabled={aiRunning}
+              onClick={() => void reviewSchema(targetDialect)}
+              className="flex-1 py-1.5 px-2.5 rounded-lg border border-[#1f1f1f] bg-stone-900 text-[11px] font-bold text-white hover:bg-stone-800 transition flex items-center justify-center gap-1 cursor-pointer shadow-[1px_1px_0px_#1f1f1f]"
+            >
+              <svg className="w-3 h-3 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>架构质量体检</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AiSidebar() {
   const project = useStore((state) => state.project)
   const messages = useStore((state) => state.messages)
@@ -219,7 +377,7 @@ export default function AiSidebar() {
   const aiStatus = useStore((state) => state.aiStatus)
   const aiError = useStore((state) => state.aiError)
   const aiResult = useStore((state) => state.aiResult)
-  const runAI = useStore((state) => state.runAI)
+  const proposeConcepts = useStore((state) => state.proposeConcepts)
   const dismissAiResult = useStore((state) => state.dismissAiResult)
 
   const [input, setInput] = useState('')
@@ -283,7 +441,7 @@ export default function AiSidebar() {
     isNearBottomRef.current = true
     setShowScrollBottom(false)
     scrollToBottom(true)
-    await runAI(text)
+    await proposeConcepts(text)
   }
 
   const clarificationCards = aiResult?.requirement?.clarification_cards ?? []
@@ -359,7 +517,9 @@ export default function AiSidebar() {
                 加载历史记录中…
               </div>
             ) : messages.length === 0 && !aiRunning ? (
-              <div className="flex flex-col items-center justify-center h-full px-2 text-center space-y-4 my-auto py-10">
+              <div className="flex flex-col items-center justify-center min-h-full px-2 text-center space-y-4 my-auto py-6">
+                <DerivePhysicalCard />
+
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[2px_2px_0px_#1f1f1f]">
                   <svg className="w-6 h-6 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -368,7 +528,7 @@ export default function AiSidebar() {
                 <div>
                   <h3 className="text-xs font-bold text-stone-800">随时与 AI 结对架构</h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
-                    用自然语言描述业务场景，AI 会自动推导实体表、字段类型与外键关系，并即时同步到右侧画布。
+                    用自然语言描述业务场景，AI 会先构建高阶业务概念模型（Chen's ER），再一键推导物理数据表与索引规范。
                   </p>
                 </div>
 
@@ -396,6 +556,7 @@ export default function AiSidebar() {
                 {messages.map((m) =>
                   m.role === 'user' ? <UserBubble key={m.id} msg={m} /> : <AssistantCard key={m.id} msg={m} />
                 )}
+                <DerivePhysicalCard />
               </>
             )}
 
@@ -435,7 +596,7 @@ export default function AiSidebar() {
                   onDismiss={dismissAiResult}
                   onConfirm={async (decisionPrompt) => {
                     dismissAiResult()
-                    await runAI(decisionPrompt)
+                    await proposeConcepts(decisionPrompt)
                   }}
                 />
               </div>

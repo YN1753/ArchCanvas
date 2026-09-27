@@ -15,14 +15,18 @@ import {
 import { ensureLayout, layoutDesign, placeNewEntities } from '../flow/layout'
 import {
   defaultCodeType,
+  emptyConceptualDesign,
   localID,
   type Attribute,
   type CanvasViewMode,
   type Cardinality,
+  type ConceptualDesign,
+  type DatabaseDialect,
   type Entity,
   type ERDesign,
   type Position,
   type Relation,
+  type SchemaReviewReport,
 } from '../types/dsl'
 import { validateDesign, type ValidationReport } from '../validate/dsl'
 
@@ -83,6 +87,12 @@ interface StoreState {
   dataDialogTab: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
   canUndo: boolean
   canRedo: boolean
+
+  conceptualDesign: ConceptualDesign
+  agentPhase: 'idle' | 'concept_ready' | 'deriving_physical' | 'physical_ready' | 'reviewing'
+  targetDialect: DatabaseDialect
+  reviewReport: SchemaReviewReport | null
+  reviewDrawerOpen: boolean
 }
 
 interface StoreActions {
@@ -139,6 +149,14 @@ interface StoreActions {
   importDesign: (design: ERDesign) => void
   runAI: (input: string) => Promise<void>
   saveNow: () => Promise<void>
+
+  setAgentPhase: (phase: 'idle' | 'concept_ready' | 'deriving_physical' | 'physical_ready' | 'reviewing') => void
+  setTargetDialect: (dialect: DatabaseDialect) => void
+  setReviewDrawerOpen: (open: boolean) => void
+  proposeConcepts: (input: string) => Promise<void>
+  derivePhysical: (dialect?: DatabaseDialect) => Promise<void>
+  reviewSchema: (dialect?: DatabaseDialect) => Promise<void>
+  saveConceptualDesign: (design: ConceptualDesign) => Promise<void>
 }
 
 type Store = StoreState & StoreActions
@@ -350,6 +368,24 @@ export const useStore = create<Store>((set, get) => {
     canUndo: false,
     canRedo: false,
 
+    conceptualDesign: emptyConceptualDesign(),
+    agentPhase: 'idle',
+    targetDialect: 'mysql',
+    reviewReport: null,
+    reviewDrawerOpen: false,
+
+    setAgentPhase(phase) {
+      set({ agentPhase: phase })
+    },
+
+    setTargetDialect(dialect) {
+      set({ targetDialect: dialect })
+    },
+
+    setReviewDrawerOpen(open) {
+      set({ reviewDrawerOpen: open })
+    },
+
     setAiSidebarOpen(open) {
       set({ aiSidebarOpen: open })
     },
@@ -544,12 +580,21 @@ export const useStore = create<Store>((set, get) => {
         const project = projects[0]
         const detail = await api.getProject(project.id)
         const design = await api.getERDesign(project.id)
+        const conceptualDesign =
+          detail.conceptual_design && detail.conceptual_design.concepts && detail.conceptual_design.concepts.length > 0
+            ? detail.conceptual_design
+            : emptyConceptualDesign()
+        const initialAgentPhase: 'idle' | 'concept_ready' =
+          conceptualDesign.concepts.length > 0 && design.entities.length === 0 ? 'concept_ready' : 'idle'
         resetHistory()
         set({
           ready: true,
           bootError: null,
           projects,
           project: detail,
+          conceptualDesign,
+          agentPhase: initialAgentPhase,
+          reviewReport: null,
           chenPositions: loadChenPositions(project.id),
           selection: null,
           inspectorOpen: false,
@@ -566,15 +611,24 @@ export const useStore = create<Store>((set, get) => {
     async selectProject(id) {
       try {
         const [detail, design] = await Promise.all([api.getProject(id), api.getERDesign(id)])
+        const conceptualDesign =
+          detail.conceptual_design && detail.conceptual_design.concepts && detail.conceptual_design.concepts.length > 0
+            ? detail.conceptual_design
+            : emptyConceptualDesign()
+        const initialAgentPhase: 'idle' | 'concept_ready' =
+          conceptualDesign.concepts.length > 0 && design.entities.length === 0 ? 'concept_ready' : 'idle'
         resetHistory()
         set({
           project: detail,
+          conceptualDesign,
+          agentPhase: initialAgentPhase,
           chenPositions: loadChenPositions(id),
           selection: null,
           inspectorOpen: false,
           serverWarnings: [],
           aiResult: null,
           aiError: null,
+          reviewReport: null,
         })
         recompute(ensureLayout(design))
         void get().fetchProjectMessages(id)
@@ -589,7 +643,17 @@ export const useStore = create<Store>((set, get) => {
         const project = await api.createProject(name, description)
         const projects = await api.listProjects()
         resetHistory()
-        set({ projects, project, chenPositions: {}, selection: null, inspectorOpen: false, aiResult: null })
+        set({
+          projects,
+          project,
+          conceptualDesign: emptyConceptualDesign(),
+          agentPhase: 'idle',
+          reviewReport: null,
+          chenPositions: {},
+          selection: null,
+          inspectorOpen: false,
+          aiResult: null,
+        })
         recompute({ entities: [], relations: [] })
         mutationCount = 0
         set({ toast: { kind: 'info', text: `已成功创建项目「${name}」` } })
@@ -1168,6 +1232,285 @@ export const useStore = create<Store>((set, get) => {
         )
       } catch (error) {
         set({ aiRunning: false, aiError: errorMessage(error) })
+      }
+    },
+
+    async saveConceptualDesign(design: ConceptualDesign) {
+      const { project } = get()
+      if (!project) return
+      set({ conceptualDesign: design })
+      try {
+        await api.saveConceptualDesign(project.id, design)
+      } catch (err) {
+        set({ toast: { kind: 'error', text: `保存概念模型失败: ${errorMessage(err)}` } })
+      }
+    },
+
+    async proposeConcepts(input: string) {
+      const { project, selectedModel } = get()
+      if (!project) return
+      const trimmed = input.trim()
+      if (!trimmed) return
+
+      set({
+        aiRunning: true,
+        aiThinking: '',
+        aiStatus: '正在分析业务需求并构建高阶概念模型...',
+        aiError: null,
+      })
+
+      let rawResult: any = null
+
+      try {
+        await api.proposeConceptsStream(
+          {
+            project_id: project.id,
+            input: trimmed,
+            model_provider: selectedModel?.provider,
+            model_name: selectedModel?.model,
+          },
+          {
+            onEvent: (event) => {
+              if (event.type === 'thinking') {
+                set((state) => ({ aiThinking: state.aiThinking + (event.data || '') }))
+              } else if (event.type === 'status') {
+                set({ aiStatus: String(event.data || '') })
+              } else if (event.type === 'error') {
+                set({ aiError: String(event.data || '') })
+              } else if (event.type === 'result') {
+                rawResult = event.data
+                if (event.data?.conceptual_design) {
+                  set({
+                    conceptualDesign: event.data.conceptual_design,
+                    agentPhase: 'concept_ready',
+                    canvasViewMode: 'chen',
+                  })
+                }
+              }
+            },
+            onError: (err) => {
+              set({ aiRunning: false, aiError: errorMessage(err) })
+            },
+            onDone: async () => {
+              set({ aiRunning: false, aiStatus: '' })
+              void get().fetchProjectMessages(project.id)
+
+              if (rawResult && rawResult.need_clarification) {
+                set({
+                  aiResult: {
+                    applied: false,
+                    requirement: {
+                      summary: rawResult.summary || '需求存在疑问，请确认以下业务决策',
+                      explicit_requirements: [],
+                      negative_constraints: [],
+                      assumptions: [],
+                      decisions: [],
+                      need_clarification: true,
+                      clarification_cards: rawResult.clarification_cards || [],
+                      questions: rawResult.questions || [],
+                      operation_scope: 'clarification',
+                    },
+                    execution: null,
+                    review: null,
+                  },
+                })
+              } else if (rawResult && rawResult.summary) {
+                set({
+                  aiResult: {
+                    applied: true,
+                    requirement: {
+                      summary: rawResult.summary,
+                      explicit_requirements: [],
+                      negative_constraints: [],
+                      assumptions: [],
+                      decisions: [],
+                      need_clarification: false,
+                      questions: [],
+                      operation_scope: 'concept',
+                    },
+                    execution: null,
+                    review: null,
+                  },
+                })
+              }
+            },
+          },
+        )
+      } catch (error) {
+        set({ aiRunning: false, aiError: errorMessage(error) })
+      }
+    },
+
+    async derivePhysical(dialect?: DatabaseDialect) {
+      const { project, selectedModel, conceptualDesign } = get()
+      if (!project) return
+      const targetDialect = dialect || get().targetDialect || 'mysql'
+      set({
+        targetDialect,
+        aiRunning: true,
+        aiThinking: '',
+        aiStatus: `物理架构工程师正在推导物理表与索引 (${targetDialect.toUpperCase()})...`,
+        aiError: null,
+        agentPhase: 'deriving_physical',
+      })
+
+      let finalDesign: ERDesign | null = null
+
+      try {
+        await api.derivePhysicalStream(
+          {
+            project_id: project.id,
+            dialect: targetDialect,
+            conceptual_design: conceptualDesign,
+            model_provider: selectedModel?.provider,
+            model_name: selectedModel?.model,
+          },
+          {
+            onEvent: (event) => {
+              if (event.type === 'thinking') {
+                set((state) => ({ aiThinking: state.aiThinking + (event.data || '') }))
+              } else if (event.type === 'status') {
+                set({ aiStatus: String(event.data || '') })
+              } else if (event.type === 'error') {
+                set({ aiError: String(event.data || '') })
+              } else if (event.type === 'result') {
+                finalDesign = event.data as ERDesign
+              }
+            },
+            onError: (err) => {
+              set({ aiRunning: false, aiError: errorMessage(err), agentPhase: 'concept_ready' })
+            },
+            onDone: async () => {
+              set({ aiRunning: false, aiStatus: '' })
+              void get().fetchProjectMessages(project.id)
+
+              let designToApply = finalDesign
+              if (!designToApply) {
+                try {
+                  const serverDesign = await api.getERDesign(project.id)
+                  if (serverDesign && Array.isArray(serverDesign.entities) && serverDesign.entities.length > 0) {
+                    designToApply = serverDesign
+                  }
+                } catch (e) {
+                  console.warn('拉取服务端 ER 设计兜底失败:', e)
+                }
+              }
+
+              if (designToApply && Array.isArray(designToApply.entities) && designToApply.entities.length > 0) {
+                recordSnapshot()
+                const currentEntities = get().design.entities
+                const isInitiallyEmpty = currentEntities.length === 0
+
+                const posByID = new Map(currentEntities.map((entity) => [entity.id, entity.position]))
+                const posByName = new Map(currentEntities.map((entity) => [entity.name.toLowerCase(), entity.position]))
+
+                const before = new Set(currentEntities.map((entity) => entity.id))
+                const added = designToApply.entities
+                  .filter((entity) => !before.has(entity.id))
+                  .map((entity) => entity.id)
+
+                const cleanedRelations = (designToApply.relations ?? []).filter(
+                  (r) => r.source_entity_id !== r.target_entity_id,
+                )
+
+                let nextDesign: ERDesign
+                if (isInitiallyEmpty) {
+                  const freshDesign = {
+                    ...designToApply,
+                    entities: designToApply.entities.map((e) => ({
+                      ...e,
+                      attributes: e.attributes ?? [],
+                      position: undefined,
+                    })),
+                    relations: cleanedRelations,
+                  }
+                  nextDesign = layoutDesign(freshDesign)
+                } else {
+                  const mergedEntities = designToApply.entities.map((entity) => ({
+                    ...entity,
+                    attributes: entity.attributes ?? [],
+                    position: entity.position ?? posByID.get(entity.id) ?? posByName.get(entity.name.toLowerCase()),
+                  }))
+                  const designWithPos = { ...designToApply, entities: mergedEntities, relations: cleanedRelations }
+                  nextDesign = ensureLayout(placeNewEntities(designWithPos, added))
+                }
+
+                mutationCount = 0
+                recompute(nextDesign, { serverWarnings: [] })
+                scheduleSave()
+                set({
+                  agentPhase: 'physical_ready',
+                  canvasViewMode: 'relational',
+                  toast: { kind: 'info', text: '物理表结构与索引推导完成并已同步' },
+                })
+              } else {
+                set({ agentPhase: 'concept_ready' })
+              }
+            },
+          },
+        )
+      } catch (error) {
+        set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'concept_ready' })
+      }
+    },
+
+    async reviewSchema(dialect?: DatabaseDialect) {
+      const { project, selectedModel } = get()
+      if (!project) return
+      const targetDialect = dialect || get().targetDialect || 'mysql'
+      set({
+        targetDialect,
+        aiRunning: true,
+        aiThinking: '',
+        aiStatus: '首席架构师正在执行架构质量与性能体检...',
+        aiError: null,
+        agentPhase: 'reviewing',
+      })
+
+      let finalReport: SchemaReviewReport | null = null
+
+      try {
+        await api.reviewSchemaStream(
+          {
+            project_id: project.id,
+            dialect: targetDialect,
+            model_provider: selectedModel?.provider,
+            model_name: selectedModel?.model,
+          },
+          {
+            onEvent: (event) => {
+              if (event.type === 'thinking') {
+                set((state) => ({ aiThinking: state.aiThinking + (event.data || '') }))
+              } else if (event.type === 'status') {
+                set({ aiStatus: String(event.data || '') })
+              } else if (event.type === 'error') {
+                set({ aiError: String(event.data || '') })
+              } else if (event.type === 'result') {
+                finalReport = event.data as SchemaReviewReport
+              }
+            },
+            onError: (err) => {
+              set({ aiRunning: false, aiError: errorMessage(err), agentPhase: 'physical_ready' })
+            },
+            onDone: async () => {
+              set({ aiRunning: false, aiStatus: '' })
+              void get().fetchProjectMessages(project.id)
+
+              if (finalReport) {
+                set({
+                  reviewReport: finalReport,
+                  reviewDrawerOpen: true,
+                  agentPhase: 'physical_ready',
+                  toast: { kind: 'info', text: `架构体检完成！健康度得分: ${finalReport.score} 分` },
+                })
+              } else {
+                set({ agentPhase: 'physical_ready' })
+              }
+            },
+          },
+        )
+      } catch (error) {
+        set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'physical_ready' })
       }
     },
 
