@@ -6,6 +6,7 @@ import Canvas from './components/Canvas'
 import DataDialog from './components/DataDialog'
 import Inspector from './components/Inspector'
 import ScaffoldDialog from './components/ScaffoldDialog'
+import SchemaReviewDrawer from './components/SchemaReviewDrawer'
 import Toast from './components/Toast'
 import Toolbar from './components/Toolbar'
 import { useStore } from './store/erStore'
@@ -17,6 +18,8 @@ export default function App() {
   const dataDialogOpen = useStore((state) => state.dataDialogOpen)
   const openDataDialog = useStore((state) => state.openDataDialog)
   const closeDataDialog = useStore((state) => state.closeDataDialog)
+  const reviewDrawerOpen = useStore((state) => state.reviewDrawerOpen)
+  const setReviewDrawerOpen = useStore((state) => state.setReviewDrawerOpen)
   const [scaffoldDialogOpen, setScaffoldDialogOpen] = useState(false)
 
   useEffect(() => {
@@ -90,7 +93,9 @@ export default function App() {
       <div className="grid h-full place-items-center bg-[#faf7f0] p-8">
         <div className="max-w-lg rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-6 shadow-[4px_4px_0px_#1f1f1f]">
           <div className="flex items-center gap-2 text-[#df4e3e] font-bold text-sm">
-            <span>⚠️</span>
+            <svg className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
             <span>服务连接失败</span>
           </div>
           <p className="mt-2.5 text-xs leading-relaxed break-all text-rose-700 font-mono bg-rose-50 p-3 rounded-lg border-[1.5px] border-rose-300">
@@ -129,6 +134,7 @@ export default function App() {
 
       {dataDialogOpen ? <DataDialog onClose={closeDataDialog} /> : null}
       {scaffoldDialogOpen ? <ScaffoldDialog onClose={() => setScaffoldDialogOpen(false)} /> : null}
+      {reviewDrawerOpen ? <SchemaReviewDrawer onClose={() => setReviewDrawerOpen(false)} /> : null}
       <Toast />
     </ReactFlowProvider>
   )

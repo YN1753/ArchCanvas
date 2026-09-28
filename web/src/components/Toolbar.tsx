@@ -57,6 +57,10 @@ export default function Toolbar({
   const canRedo = useStore((state) => state.canRedo)
   const undo = useStore((state) => state.undo)
   const redo = useStore((state) => state.redo)
+  const reviewReport = useStore((state) => state.reviewReport)
+  const setReviewDrawerOpen = useStore((state) => state.setReviewDrawerOpen)
+  const reviewSchema = useStore((state) => state.reviewSchema)
+  const targetDialect = useStore((state) => state.targetDialect)
 
   return (
     <header className="flex items-center justify-between border-b border-[#e5ded0] bg-[#faf7f0] px-4 py-2.5 select-none shadow-2xs">
@@ -196,14 +200,47 @@ export default function Toolbar({
           <span>导入/导出</span>
         </button>
 
+        {/* 架构体检按钮 */}
+        <button
+          type="button"
+          onClick={() => {
+            setReviewDrawerOpen(true)
+            if (!reviewReport) {
+              void reviewSchema(targetDialect)
+            }
+          }}
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-800 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer"
+          title="对当前数据模型执行全方位质量、索引与性能体检"
+        >
+          <svg className="w-3.5 h-3.5 text-stone-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          <span>架构体检</span>
+          {reviewReport && (
+            <span
+              className={`rounded px-1.5 py-0.2 text-[10px] font-mono font-bold ${
+                reviewReport.score >= 90
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : reviewReport.score >= 70
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-rose-100 text-rose-800'
+              }`}
+            >
+              {reviewReport.score}分
+            </span>
+          )}
+        </button>
+
         {/* 导出 Go 脚手架按钮 */}
         <button
           type="button"
           onClick={onOpenScaffold}
-          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-800 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none"
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-800 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer"
           title="将当前 ER 模型一键导出为完整可运行的 Go Web 工程脚手架"
         >
-          <span className="text-xs">⚡</span>
+          <svg className="w-3.5 h-3.5 text-stone-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
           <span>导出 Go 脚手架</span>
         </button>
 
