@@ -213,6 +213,108 @@ function AttributeEditor({
   )
 }
 
+function ConceptInspector({ conceptID }: { conceptID: string }) {
+  const concept = useStore((state) =>
+    state.conceptualDesign.concepts.find(
+      (c) =>
+        c.id === conceptID ||
+        c.name.toLowerCase() === conceptID.toLowerCase() ||
+        conceptID.toLowerCase().includes(c.name.toLowerCase()),
+    ),
+  )
+
+  if (!concept) {
+    return null
+  }
+
+  const entityChinese = concept.display_name || getEntityChineseName(concept.name)
+
+  return (
+    <div className="space-y-4">
+      {/* 概念实体基础信息卡片 */}
+      <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f]">
+        <div className="mb-2 flex items-center justify-between">
+          <SectionTitle>业务概念实体</SectionTitle>
+          <span className="text-[11px] font-semibold text-[#df4e3e] bg-[#fdf0ee] border border-[#df4e3e]/30 px-2 py-0.5 rounded-full">
+            {entityChinese}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="ident font-bold text-sm text-[#1f1f1f]">{concept.name}</div>
+          {concept.display_name && (
+            <span className="text-xs text-stone-500 font-medium">({concept.display_name})</span>
+          )}
+        </div>
+
+        {concept.description && (
+          <p className="mt-2 text-xs text-stone-600 bg-stone-50 p-2.5 rounded-lg border border-stone-200 leading-relaxed">
+            {concept.description}
+          </p>
+        )}
+
+        <div className="mt-3 flex items-center gap-2 text-[11px] text-stone-500 font-mono">
+          <span>属性总数：{concept.attributes.length}</span>
+          <span>·</span>
+          <span>业务标识：{concept.attributes.filter((a) => a.is_business_key).length} 个</span>
+        </div>
+      </div>
+
+      {/* 概念属性清单 */}
+      <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-2.5">
+        <SectionTitle>核心业务属性与标识</SectionTitle>
+
+        <div className="space-y-2">
+          {concept.attributes.map((attr) => (
+            <div
+              key={attr.id || attr.name}
+              className="rounded-lg border border-stone-200 bg-[#faf7f0] p-2.5 text-xs text-[#1f1f1f]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold">
+                  {attr.is_business_key ? (
+                    <span className="underline decoration-[#1f1f1f] decoration-[1.5px] underline-offset-2">
+                      {attr.display_name || attr.name}
+                    </span>
+                  ) : (
+                    <span>{attr.display_name || attr.name}</span>
+                  )}
+                  <span className="font-mono text-[10px] text-stone-400 font-normal">
+                    ({attr.name})
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {attr.is_business_key && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-800 border border-amber-300">
+                      业务标识
+                    </span>
+                  )}
+                  <span className="rounded bg-stone-200 px-1.5 py-0.5 text-[9px] font-mono font-bold text-stone-700">
+                    {attr.category}
+                  </span>
+                </div>
+              </div>
+
+              {attr.description && (
+                <div className="mt-1 text-[11px] text-stone-500 leading-tight">
+                  {attr.description}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 概念层提示条 */}
+      <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#fbf9f4] p-3 text-[11px] text-stone-600 leading-relaxed shadow-[1.5px_1.5px_0px_#1f1f1f]">
+        <div className="font-bold text-stone-800 mb-0.5">业务概念层 (Layer 1)</div>
+        当前处于高阶陈氏业务概念阶段。点击左侧 AI 架构师面板的「推导物理表与索引」，可一键将上述概念解耦并自动转化为生产级数据库表结构。
+      </div>
+    </div>
+  )
+}
+
 function EntityInspector({ entityID }: { entityID: string }) {
   const entity = useStore((state) => state.design.entities.find((item) => item.id === entityID))
   const renameEntity = useStore((state) => state.renameEntity)
@@ -222,7 +324,7 @@ function EntityInspector({ entityID }: { entityID: string }) {
   const [copied, setCopied] = useState(false)
 
   if (!entity) {
-    return null
+    return <ConceptInspector conceptID={entityID} />
   }
 
   const entityChinese = getEntityChineseName(entity.name)
@@ -356,6 +458,75 @@ function EntityInspector({ entityID }: { entityID: string }) {
   )
 }
 
+function ConceptRelationInspector({ relationID }: { relationID: string }) {
+  const rel = useStore((state) =>
+    state.conceptualDesign.relations.find(
+      (r) =>
+        r.id === relationID ||
+        relationID.includes(r.id || '') ||
+        (r.name && relationID.toLowerCase().includes(r.name.toLowerCase())),
+    ),
+  )
+
+  if (!rel) {
+    return null
+  }
+
+  const cardLabel =
+    rel.cardinality === 'many_to_many'
+      ? '多对多 (M:N)'
+      : rel.cardinality === 'one_to_one'
+        ? '一对一 (1:1)'
+        : '一对多 (1:N)'
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f]">
+        <div className="mb-2 flex items-center justify-between">
+          <SectionTitle>概念联系（{rel.name || '业务关联'}）</SectionTitle>
+          <span className="text-[11px] font-semibold text-[#df4e3e] bg-[#fdf0ee] border border-[#df4e3e]/30 px-2 py-0.5 rounded-full">
+            {cardLabel}
+          </span>
+        </div>
+
+        <div className="space-y-3 mt-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-stone-600">源概念：</span>
+            <span className="font-mono font-bold text-[#1f1f1f] bg-stone-100 px-2 py-0.5 rounded border border-stone-300">
+              {rel.source_concept}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-stone-600">宿概念：</span>
+            <span className="font-mono font-bold text-[#1f1f1f] bg-stone-100 px-2 py-0.5 rounded border border-stone-300">
+              {rel.target_concept}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-stone-600">动作谓词：</span>
+            <span className="font-bold text-[#df4e3e] bg-[#fdf0ee] px-2 py-0.5 rounded border border-[#df4e3e]/30">
+              {rel.name || '关联'}
+            </span>
+          </div>
+
+          {rel.description && (
+            <p className="mt-2 text-xs text-stone-600 bg-stone-50 p-2.5 rounded-lg border border-stone-200 leading-relaxed">
+              {rel.description}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#fbf9f4] p-3 text-[11px] text-stone-600 leading-relaxed shadow-[1.5px_1.5px_0px_#1f1f1f]">
+        <div className="font-bold text-stone-800 mb-0.5">业务概念关系 (Layer 1)</div>
+        当前处于高阶陈氏业务联系阶段。多对多联系 (M:N) 将在推导物理表时自动被分解为中间表或业务关联实体。
+      </div>
+    </div>
+  )
+}
+
 function RelationInspector({ relationID }: { relationID: string }) {
   const relation = useStore((state) =>
     state.design.relations.find((item) => item.id === relationID),
@@ -365,7 +536,7 @@ function RelationInspector({ relationID }: { relationID: string }) {
   const deleteRelation = useStore((state) => state.deleteRelation)
 
   if (!relation) {
-    return null
+    return <ConceptRelationInspector relationID={relationID} />
   }
 
   const entityOptions = entities.map((entity) => ({
@@ -508,8 +679,11 @@ function OverviewInspector() {
         ) : null}
       </div>
 
-      <div className="rounded-xl border-[1.5px] border-dashed border-stone-400 bg-white/60 p-3 text-[11px] text-stone-600 leading-relaxed">
-        💡 提示：点击画布中的任意实体表节点或连线，即可在此展开专属字段编辑与即时 SQL 预览。
+      <div className="rounded-xl border-[1.5px] border-dashed border-stone-400 bg-white/60 p-3 text-[11px] text-stone-600 leading-relaxed flex items-center gap-2">
+        <svg className="w-4 h-4 shrink-0 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>提示：点击画布中的任意实体表节点或连线，即可在此展开专属字段编辑与即时 SQL 预览。</span>
       </div>
     </div>
   )

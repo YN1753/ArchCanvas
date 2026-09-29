@@ -1,8 +1,18 @@
 import dagre from 'dagre'
 import type { Node } from '@xyflow/react'
 
-import type { Attribute, Cardinality, Entity, ERDesign, Position, Relation } from '../types/dsl'
-import { getEntityChineseName } from '../utils/chinese'
+import type {
+  Attribute,
+  BusinessConcept,
+  Cardinality,
+  ConceptAttribute,
+  ConceptualDesign,
+  Entity,
+  ERDesign,
+  Position,
+  Relation,
+} from '../types/dsl'
+import { getAttributeChineseName, getEntityChineseName } from '../utils/chinese'
 import type { ChenEntityNodeData } from '../components/chen/ChenEntityNode'
 import type { ChenRelationNodeData } from '../components/chen/ChenRelationNode'
 import type { ChenAttributeNodeData } from '../components/chen/ChenAttributeNode'
@@ -481,4 +491,417 @@ export function toChenFlowElements(
   }
 
   return { nodes, edges }
+}
+
+/**
+ * 将 Layer 1 原生业务概念模型 (ConceptualDesign) 零损失渲染为标准陈氏图 (Chen's ER Model)
+ */
+export function conceptualToChenFlowElements(
+  conceptualDesign: ConceptualDesign,
+  selectedId?: string | null,
+  customPositions?: Record<string, Position>,
+): { nodes: ChenNode[]; edges: ChenEdgeType[] } {
+  if (!conceptualDesign || !conceptualDesign.concepts || conceptualDesign.concepts.length === 0) {
+    return { nodes: [], edges: [] }
+  }
+
+  const nodes: ChenNode[] = []
+  const edges: ChenEdgeType[] = []
+
+  const ENTITY_W = 150
+  const ENTITY_H = 52
+  const RELATION_W = 108
+  const RELATION_H = 68
+  const ATTR_W = 76
+  const ATTR_H = 28
+  const ATTR_Y_OFFSET = 50
+
+  const concepts = conceptualDesign.concepts
+
+  // 1. 概念标识与查找映射 (支持 id, name, display_name 多向精确解析)
+  const conceptMap = new Map<string, BusinessConcept>()
+  const lookupMap = new Map<string, BusinessConcept>()
+
+  for (const c of concepts) {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    conceptMap.set(cid, c)
+    lookupMap.set(cid, c)
+    lookupMap.set(c.name.toLowerCase(), c)
+    if (c.display_name) {
+      lookupMap.set(c.display_name.toLowerCase(), c)
+    }
+  }
+
+  // 2. 为每个概念精选属性并分列上下两排
+  interface ConceptAttrLayout {
+    topAttrs: ConceptAttribute[]
+    bottomAttrs: ConceptAttribute[]
+  }
+  const conceptAttrMap = new Map<string, ConceptAttrLayout>()
+
+  for (const c of concepts) {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    const attrs = c.attributes || []
+
+    // 优先保留业务标识（is_business_key），再补充常规业务属性，最多 4 个
+    const keyAttrs = attrs.filter((a) => a.is_business_key)
+    const bizAttrs = attrs.filter((a) => !a.is_business_key)
+
+    const selectedAttrs: ConceptAttribute[] = [
+      ...keyAttrs,
+      ...bizAttrs.slice(0, Math.max(0, 4 - keyAttrs.length)),
+    ]
+    if (selectedAttrs.length === 0 && attrs.length > 0) {
+      selectedAttrs.push(attrs[0])
+    }
+
+    const topCount = Math.ceil(selectedAttrs.length / 2)
+    conceptAttrMap.set(cid, {
+      topAttrs: selectedAttrs.slice(0, topCount),
+      bottomAttrs: selectedAttrs.slice(topCount),
+    })
+  }
+
+  // 3. 构建 Dagre 拓扑图
+  const g = new dagre.graphlib.Graph()
+  g.setDefaultEdgeLabel(() => ({}))
+  g.setGraph({
+    rankdir: 'LR',
+    nodesep: 100,
+    ranksep: 200,
+    marginx: 80,
+    marginy: 80,
+  })
+
+  for (const c of concepts) {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    const attrInfo = conceptAttrMap.get(cid)!
+    const hasTop = attrInfo.topAttrs.length > 0
+    const hasBottom = attrInfo.bottomAttrs.length > 0
+    const virtualHeight =
+      ENTITY_H + (hasTop ? ATTR_Y_OFFSET + 8 : 0) + (hasBottom ? ATTR_Y_OFFSET + 8 : 0)
+    const maxAttrsInRow = Math.max(attrInfo.topAttrs.length, attrInfo.bottomAttrs.length)
+    const virtualWidth = Math.max(ENTITY_W, maxAttrsInRow * (ATTR_W + 12))
+
+    g.setNode(`ent-${cid}`, { width: virtualWidth, height: virtualHeight })
+  }
+
+  // 4. 解析关系并加入 Dagre
+  interface ResolvedRelation {
+    id: string
+    rawId: string
+    name: string
+    cardinality: Cardinality
+    source: BusinessConcept
+    target: BusinessConcept
+    sourceId: string
+    targetId: string
+    position?: Position
+  }
+
+  const resolvedRelations: ResolvedRelation[] = []
+  const processedPairs = new Set<string>()
+
+  for (const rel of conceptualDesign.relations || []) {
+    const src = lookupMap.get(rel.source_concept.toLowerCase()) || lookupMap.get(rel.source_concept)
+    const tgt = lookupMap.get(rel.target_concept.toLowerCase()) || lookupMap.get(rel.target_concept)
+    if (!src || !tgt) continue
+
+    const srcId = src.id || `concept_${src.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    const tgtId = tgt.id || `concept_${tgt.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    if (srcId === tgtId) continue
+
+    const pairKey = [srcId, tgtId].sort().join('--')
+    if (processedPairs.has(pairKey)) continue
+    processedPairs.add(pairKey)
+
+    const rawId = rel.id || `rel_${srcId}_${tgtId}`
+    const diaId = `rel-${rawId}`
+    const card = (rel.cardinality || 'one_to_many') as Cardinality
+    const verb = rel.name || getRelationshipVerb(src.name, tgt.name, card)
+
+    resolvedRelations.push({
+      id: diaId,
+      rawId,
+      name: verb,
+      cardinality: card,
+      source: src,
+      target: tgt,
+      sourceId: srcId,
+      targetId: tgtId,
+      position: rel.position,
+    })
+
+    g.setNode(diaId, { width: RELATION_W, height: RELATION_H })
+    g.setEdge(`ent-${srcId}`, diaId, { minlen: 1, weight: 2 })
+    g.setEdge(diaId, `ent-${tgtId}`, { minlen: 1, weight: 2 })
+  }
+
+  // 执行自动排版
+  dagre.layout(g)
+
+  // 5. 生成实体矩形节点与上下属性椭圆
+  for (const c of concepts) {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    const laid = g.node(`ent-${cid}`)
+    const attrInfo = conceptAttrMap.get(cid)!
+    const hasTop = attrInfo.topAttrs.length > 0
+    const hasBottom = attrInfo.bottomAttrs.length > 0
+
+    let ecy = laid ? laid.y : 100
+    if (hasTop && !hasBottom) {
+      ecy += (ATTR_Y_OFFSET + 8) / 2
+    } else if (!hasTop && hasBottom) {
+      ecy -= (ATTR_Y_OFFSET + 8) / 2
+    }
+    const ecx = laid ? laid.x : 100
+
+    const defaultEntityX = ecx - ENTITY_W / 2
+    const defaultEntityY = ecy - ENTITY_H / 2
+    const customEntityPos = customPositions?.[cid] ?? c.position
+
+    const entityX = customEntityPos ? customEntityPos.x : defaultEntityX
+    const entityY = customEntityPos ? customEntityPos.y : defaultEntityY
+
+    const baseEcx = entityX + ENTITY_W / 2
+    const baseEcy = entityY + ENTITY_H / 2
+
+    const chineseName = c.display_name || getEntityChineseName(c.name)
+
+    nodes.push({
+      id: cid,
+      type: 'chenEntity',
+      position: { x: entityX, y: entityY },
+      data: {
+        concept: c,
+        name: c.name,
+        displayName: chineseName,
+        conceptId: cid,
+        entity: {
+          id: cid,
+          name: c.name,
+          comment: c.description,
+          position: { x: entityX, y: entityY },
+          attributes: (c.attributes || []).map((ca) => ({
+            id: ca.id || `attr_${cid}_${ca.name}`,
+            name: ca.name,
+            comment: ca.display_name,
+            db_type: ca.category,
+            code_type: ca.category,
+            is_primary_key: Boolean(ca.is_business_key),
+            is_nullable: !ca.required,
+            is_unique: Boolean(ca.is_unique),
+            description: ca.description || ca.display_name || '',
+          })),
+        },
+      },
+      selected: cid === selectedId || c.id === selectedId,
+    })
+
+    // 生成上方属性椭圆
+    if (attrInfo.topAttrs.length > 0) {
+      const topY = baseEcy - ATTR_Y_OFFSET
+      const offsets = getRowXOffsets(attrInfo.topAttrs.length)
+      for (let i = 0; i < attrInfo.topAttrs.length; i++) {
+        const attr = attrInfo.topAttrs[i]
+        const defaultAx = baseEcx + offsets[i] - ATTR_W / 2
+        const defaultAy = topY - ATTR_H / 2
+        const attrNodeId = `attr-${cid}-${attr.id || attr.name}`
+        const customAttrPos = customPositions?.[attrNodeId]
+
+        nodes.push({
+          id: attrNodeId,
+          type: 'chenAttribute',
+          position: customAttrPos ?? { x: defaultAx, y: defaultAy },
+          data: {
+            conceptAttribute: attr,
+            name: attr.name,
+            displayName:
+              attr.display_name ||
+              getAttributeChineseName(attr.name, attr.description, attr.is_business_key),
+            isKey: Boolean(attr.is_business_key),
+            category: attr.category,
+            description: attr.description,
+            entityId: cid,
+            entityName: c.name,
+            attribute: {
+              id: attr.id || attr.name,
+              name: attr.name,
+              comment: attr.display_name,
+              db_type: attr.category,
+              code_type: attr.category,
+              is_primary_key: Boolean(attr.is_business_key),
+              is_nullable: !attr.required,
+              is_unique: Boolean(attr.is_unique),
+              description: attr.description || attr.display_name || '',
+            },
+          },
+        })
+
+        edges.push({
+          id: `edge-${cid}-${attrNodeId}`,
+          type: 'chenEdge',
+          source: cid,
+          target: attrNodeId,
+          sourceHandle: 'top',
+          targetHandle: 'bottom',
+          data: {
+            isAttributeEdge: true,
+          },
+        })
+      }
+    }
+
+    // 生成下方属性椭圆
+    if (attrInfo.bottomAttrs.length > 0) {
+      const bottomY = baseEcy + ATTR_Y_OFFSET
+      const offsets = getRowXOffsets(attrInfo.bottomAttrs.length)
+      for (let i = 0; i < attrInfo.bottomAttrs.length; i++) {
+        const attr = attrInfo.bottomAttrs[i]
+        const defaultAx = baseEcx + offsets[i] - ATTR_W / 2
+        const defaultAy = bottomY - ATTR_H / 2
+        const attrNodeId = `attr-${cid}-${attr.id || attr.name}`
+        const customAttrPos = customPositions?.[attrNodeId]
+
+        nodes.push({
+          id: attrNodeId,
+          type: 'chenAttribute',
+          position: customAttrPos ?? { x: defaultAx, y: defaultAy },
+          data: {
+            conceptAttribute: attr,
+            name: attr.name,
+            displayName:
+              attr.display_name ||
+              getAttributeChineseName(attr.name, attr.description, attr.is_business_key),
+            isKey: Boolean(attr.is_business_key),
+            category: attr.category,
+            description: attr.description,
+            entityId: cid,
+            entityName: c.name,
+            attribute: {
+              id: attr.id || attr.name,
+              name: attr.name,
+              comment: attr.display_name,
+              db_type: attr.category,
+              code_type: attr.category,
+              is_primary_key: Boolean(attr.is_business_key),
+              is_nullable: !attr.required,
+              is_unique: Boolean(attr.is_unique),
+              description: attr.description || attr.display_name || '',
+            },
+          },
+        })
+
+        edges.push({
+          id: `edge-${cid}-${attrNodeId}`,
+          type: 'chenEdge',
+          source: cid,
+          target: attrNodeId,
+          sourceHandle: 'bottom',
+          targetHandle: 'top',
+          data: {
+            isAttributeEdge: true,
+          },
+        })
+      }
+    }
+  }
+
+  // 6. 生成联系菱形节点与边
+  for (const rel of resolvedRelations) {
+    const laid = g.node(rel.id)
+    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
+    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
+    const customPos = customPositions?.[rel.id] ?? customPositions?.[rel.rawId] ?? rel.position
+
+    nodes.push({
+      id: rel.id,
+      type: 'chenRelation',
+      position: customPos ?? { x: defaultX, y: defaultY },
+      data: {
+        relationId: rel.rawId,
+        name: rel.name,
+        cardinality: rel.cardinality,
+        sourceEntityId: rel.sourceId,
+        targetEntityId: rel.targetId,
+      },
+      selected: rel.id === selectedId || rel.rawId === selectedId,
+    })
+
+    const is1to1 = rel.cardinality === 'one_to_one'
+    const isM2M = rel.cardinality === 'many_to_many'
+
+    const srcCard = isM2M ? 'M' : '1'
+    const tgtCard = is1to1 ? '1' : 'N'
+
+    edges.push({
+      id: `edge-${rel.sourceId}-${rel.id}`,
+      type: 'chenEdge',
+      source: rel.sourceId,
+      target: rel.id,
+      sourceHandle: 'right',
+      targetHandle: 'left',
+      data: {
+        cardinalityLabel: srcCard,
+        isAttributeEdge: false,
+      },
+    })
+
+    edges.push({
+      id: `edge-${rel.id}-${rel.targetId}`,
+      type: 'chenEdge',
+      source: rel.id,
+      target: rel.targetId,
+      sourceHandle: 'right',
+      targetHandle: 'left',
+      data: {
+        cardinalityLabel: tgtCard,
+        isAttributeEdge: false,
+      },
+    })
+  }
+
+  return { nodes, edges }
+}
+
+/**
+ * 统一陈氏图渲染适配器：优先零损失消费原生业务概念模型，降级适配物理表
+ */
+export function renderChenFlowElements(params: {
+  conceptualDesign?: ConceptualDesign
+  design?: ERDesign
+  agentPhase?: string
+  selectedId?: string | null
+  customPositions?: Record<string, Position>
+}): { nodes: ChenNode[]; edges: ChenEdgeType[] } {
+  const { conceptualDesign, design, agentPhase, selectedId, customPositions } = params
+
+  const hasConcepts = Boolean(
+    conceptualDesign &&
+      Array.isArray(conceptualDesign.concepts) &&
+      conceptualDesign.concepts.length > 0,
+  )
+  const hasEntities = Boolean(
+    design && Array.isArray(design.entities) && design.entities.length > 0,
+  )
+
+  // 1. 若处于概念设计阶段，或有概念模型且无物理表，直接消费概念模型
+  if (
+    hasConcepts &&
+    (agentPhase === 'concept_ready' || agentPhase === 'deriving_physical' || !hasEntities)
+  ) {
+    return conceptualToChenFlowElements(conceptualDesign!, selectedId, customPositions)
+  }
+
+  // 2. 若存在物理表设计，反向推导陈氏图
+  if (hasEntities && design) {
+    return toChenFlowElements(design, selectedId, customPositions)
+  }
+
+  // 3. 兜底
+  if (hasConcepts) {
+    return conceptualToChenFlowElements(conceptualDesign!, selectedId, customPositions)
+  }
+
+  return { nodes: [], edges: [] }
 }

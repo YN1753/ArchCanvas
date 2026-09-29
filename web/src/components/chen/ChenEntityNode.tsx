@@ -2,25 +2,38 @@ import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
 import { useStore } from '../../store/erStore'
-import type { Entity } from '../../types/dsl'
+import type { BusinessConcept, Entity } from '../../types/dsl'
 import { getEntityChineseName } from '../../utils/chinese'
 
 export interface ChenEntityNodeData extends Record<string, unknown> {
-  entity: Entity
+  entity?: Entity
+  concept?: BusinessConcept
+  name?: string
+  displayName?: string
+  conceptId?: string
 }
 
 export type ChenEntityNodeType = Node<ChenEntityNodeData, 'chenEntity'>
 
 function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
   const entity = data.entity
-  const chineseName = getEntityChineseName(entity.name)
+  const concept = data.concept
+  const name = data.name || concept?.name || entity?.name || ''
+  const chineseName = data.displayName || concept?.display_name || (name ? getEntityChineseName(name) : '')
+  const entityId = data.conceptId || concept?.id || entity?.id || ''
+
   const select = useStore((state) => state.select)
   const focusedEntityId = useStore((state) => state.focusedEntityId)
-  const isFocused = focusedEntityId === entity.id
+  const isFocused = Boolean(
+    focusedEntityId &&
+      (focusedEntityId === entityId || (name && focusedEntityId.toLowerCase() === name.toLowerCase())),
+  )
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    select({ kind: 'entity', id: entity.id })
+    if (entityId) {
+      select({ kind: 'entity', id: entityId })
+    }
   }
 
   return (
@@ -41,7 +54,7 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
       {/* 核心概念名与英文表名 */}
       <div className="text-center">
         <div className="text-[14px] font-black text-[#1f1f1f] tracking-tight leading-tight">{chineseName}</div>
-        <div className="font-mono text-[10px] font-medium text-stone-400 mt-0.5">{entity.name}</div>
+        <div className="font-mono text-[10px] font-medium text-stone-400 mt-0.5">{name}</div>
       </div>
     </div>
   )

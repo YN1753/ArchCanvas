@@ -1,11 +1,17 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
-import type { Attribute } from '../../types/dsl'
+import type { Attribute, ConceptAttribute } from '../../types/dsl'
 import { getAttributeChineseName } from '../../utils/chinese'
 
 export interface ChenAttributeNodeData extends Record<string, unknown> {
-  attribute: Attribute
+  attribute?: Attribute
+  conceptAttribute?: ConceptAttribute
+  name?: string
+  displayName?: string
+  isKey?: boolean
+  category?: string
+  description?: string
   entityId: string
   entityName: string
 }
@@ -13,12 +19,18 @@ export interface ChenAttributeNodeData extends Record<string, unknown> {
 export type ChenAttributeNodeType = Node<ChenAttributeNodeData, 'chenAttribute'>
 
 function ChenAttributeNode({ data, selected }: NodeProps<ChenAttributeNodeType>) {
-  const attr = data.attribute
-  const chineseName = getAttributeChineseName(attr.name, attr.description, attr.is_primary_key)
+  const isKey = Boolean(data.isKey || data.conceptAttribute?.is_business_key || data.attribute?.is_primary_key)
+  const name = data.name || data.conceptAttribute?.name || data.attribute?.name || ''
+  const desc = data.description || data.conceptAttribute?.description || data.attribute?.description || ''
+  const typeInfo = data.category || data.conceptAttribute?.category || data.attribute?.db_type || ''
+  const chineseName =
+    data.displayName ||
+    data.conceptAttribute?.display_name ||
+    getAttributeChineseName(name, desc, isKey)
 
   return (
     <div
-      title={`${attr.name}: ${attr.db_type}${attr.description ? ` (${attr.description})` : ''}`}
+      title={`${name}: ${typeInfo}${desc ? ` (${desc})` : ''}`}
       className={`group relative flex h-[28px] min-w-[64px] max-w-[100px] cursor-default items-center justify-center rounded-full border-[1.5px] px-2.5 transition-all select-none ${
         selected
           ? 'border-[#df4e3e] bg-red-50/90 shadow-[2px_2px_0px_#df4e3e]'
@@ -32,16 +44,16 @@ function ChenAttributeNode({ data, selected }: NodeProps<ChenAttributeNodeType>)
       <Handle type="target" position={Position.Left} id="left" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
 
       <div className="flex items-center justify-center overflow-hidden text-center">
-        {attr.is_primary_key ? (
+        {isKey ? (
           <span className="truncate text-[11px] font-black text-[#1f1f1f]">
-            {/* 陈氏标准：主键属性带有下划线，无需颜色特殊化 */}
+            {/* 陈氏标准：主键/业务标识属性带有下划线 */}
             <span className="underline decoration-[#1f1f1f] decoration-[1.5px] underline-offset-2">
-              {chineseName || attr.name}
+              {chineseName || name}
             </span>
           </span>
         ) : (
           <span className="truncate text-[11px] font-bold text-[#1f1f1f]">
-            {chineseName || attr.name}
+            {chineseName || name}
           </span>
         )}
       </div>

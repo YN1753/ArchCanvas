@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react'
 
 import { toFlowEdges, toFlowNodes } from '../flow/adapter'
-import { toChenFlowElements } from '../flow/chenAdapter'
+import { renderChenFlowElements } from '../flow/chenAdapter'
 import { useStore } from '../store/erStore'
 import RelationEdgeView from './RelationEdge'
 import TableNodeView from './TableNode'
@@ -35,6 +35,8 @@ const edgeTypes = {
 
 export default function Canvas() {
   const design = useStore((state) => state.design)
+  const conceptualDesign = useStore((state) => state.conceptualDesign)
+  const agentPhase = useStore((state) => state.agentPhase)
   const selection = useStore((state) => state.selection)
   const projectID = useStore((state) => state.project?.id ?? null)
 
@@ -68,6 +70,11 @@ export default function Canvas() {
 
   const selectedEntityID = selection?.kind === 'entity' ? selection.id : null
   const selectedRelationID = selection?.kind === 'relation' ? selection.id : null
+
+  const isCanvasEmpty =
+    canvasViewMode === 'chen'
+      ? (conceptualDesign?.concepts?.length ?? 0) === 0 && design.entities.length === 0
+      : design.entities.length === 0
 
   // 当 AI 侧栏点击实体标签或手动触发 focusEntity 时，镜头平滑飞至目标表
   useEffect(() => {
@@ -118,28 +125,47 @@ export default function Canvas() {
 
   useEffect(() => {
     if (canvasViewMode === 'chen') {
-      const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
+      const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
+        conceptualDesign,
         design,
-        selectedEntityID ?? selectedRelationID,
-        chenPositions,
-      )
+        agentPhase,
+        selectedId: selectedEntityID ?? selectedRelationID,
+        customPositions: chenPositions,
+      })
       setNodes(chenNodes)
       setEdges(chenEdges)
     } else {
       setNodes(toFlowNodes(design, selectedEntityID))
       setEdges(toFlowEdges(design, selectedRelationID))
     }
-  }, [design, selectedEntityID, selectedRelationID, canvasViewMode, chenPositions])
+  }, [
+    design,
+    conceptualDesign,
+    agentPhase,
+    selectedEntityID,
+    selectedRelationID,
+    canvasViewMode,
+    chenPositions,
+  ])
 
   useEffect(() => {
-    if (!projectID || design.entities.length === 0) {
-      return
-    }
+    if (!projectID) return
+    const count =
+      canvasViewMode === 'chen'
+        ? conceptualDesign?.concepts?.length || design.entities.length
+        : design.entities.length
+    if (count === 0) return
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.18, maxZoom: 1 })
     }, 120)
     return () => window.clearTimeout(timer)
-  }, [projectID, design.entities.length, canvasViewMode, fitView])
+  }, [
+    projectID,
+    design.entities.length,
+    conceptualDesign?.concepts?.length,
+    canvasViewMode,
+    fitView,
+  ])
 
   const handleNodesChange = (changes: NodeChange<any>[]) => {
     if (canvasViewMode === 'chen') {
@@ -178,11 +204,13 @@ export default function Canvas() {
   const handleAutoLayout = () => {
     if (canvasViewMode === 'chen') {
       resetChenPositions()
-      const { nodes: chenNodes, edges: chenEdges } = toChenFlowElements(
+      const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
+        conceptualDesign,
         design,
-        selectedEntityID ?? selectedRelationID,
-        {},
-      )
+        agentPhase,
+        selectedId: selectedEntityID ?? selectedRelationID,
+        customPositions: {},
+      })
       setNodes(chenNodes)
       setEdges(chenEdges)
     } else {
@@ -471,7 +499,7 @@ export default function Canvas() {
       </div>
 
       {/* 空白画布起草引导区 (1:1 复刻参考图「在纸上先画架构」) */}
-      {design.entities.length === 0 ? (
+      {isCanvasEmpty ? (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center p-6 select-none overflow-y-auto no-scrollbar pb-32">
           <div className="pointer-events-auto flex flex-col items-center max-w-xl w-full text-center">
             {/* 顶部架构蓝图图章 */}

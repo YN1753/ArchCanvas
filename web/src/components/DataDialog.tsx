@@ -87,12 +87,12 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const tabs: Array<{ key: Tab; label: string; icon: string }> = [
-    { key: 'export-sql', label: '导出 SQL DDL', icon: '🗄️' },
-    { key: 'export-json', label: '导出 JSON', icon: '📦' },
-    { key: 'export-mermaid', label: '导出 Mermaid', icon: '📐' },
-    { key: 'import-sql', label: '导入 SQL DDL', icon: '⚡' },
-    { key: 'import-json', label: '导入 JSON', icon: '📥' },
+  const tabs: Array<{ key: Tab; label: string }> = [
+    { key: 'export-sql', label: '导出 SQL DDL' },
+    { key: 'export-json', label: '导出 JSON' },
+    { key: 'export-mermaid', label: '导出 Mermaid' },
+    { key: 'import-sql', label: '导入 SQL DDL' },
+    { key: 'import-json', label: '导入 JSON' },
   ]
 
   return (
@@ -116,13 +116,37 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                   setImportError(null)
                   setImportWarnings([])
                 }}
-                className={`flex items-center gap-1.5 border-b-2 py-3.5 text-xs font-bold transition ${
+                className={`flex items-center gap-1.5 border-b-2 py-3.5 text-xs font-bold transition cursor-pointer select-none ${
                   tab === item.key
                     ? 'border-[#df4e3e] text-[#df4e3e]'
                     : 'border-transparent text-stone-500 hover:text-[#1f1f1f]'
                 }`}
               >
-                <span>{item.icon}</span>
+                {item.key === 'export-sql' && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                  </svg>
+                )}
+                {item.key === 'export-json' && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                  </svg>
+                )}
+                {item.key === 'export-mermaid' && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                  </svg>
+                )}
+                {item.key === 'import-sql' && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                )}
+                {item.key === 'import-json' && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                )}
                 <span>{item.label}</span>
               </button>
             ))}
@@ -131,9 +155,12 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-stone-500 hover:bg-stone-200/60 hover:text-[#1f1f1f] transition font-bold"
+            className="rounded-lg p-1 text-stone-500 hover:bg-stone-200/60 hover:text-[#1f1f1f] transition cursor-pointer"
+            title="关闭"
           >
-            ✕
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
