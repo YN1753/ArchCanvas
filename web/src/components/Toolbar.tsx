@@ -46,6 +46,7 @@ export default function Toolbar({
   onOpenScaffold: () => void
 }) {
   const addEntity = useStore((state) => state.addEntity)
+  const addConcept = useStore((state) => state.addConcept)
   const dslView = useStore((state) => state.dslView)
   const setDslView = useStore((state) => state.setDslView)
   const canvasViewMode = useStore((state) => state.canvasViewMode)
@@ -247,11 +248,17 @@ export default function Toolbar({
         {/* 红色新建实体主按钮 */}
         <button
           type="button"
-          onClick={() => addEntity()}
-          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-4 py-1.5 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition select-none"
+          onClick={() => {
+            if (canvasViewMode === 'chen') {
+              addConcept()
+            } else {
+              addEntity()
+            }
+          }}
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-4 py-1.5 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer"
         >
           <span className="text-sm font-bold leading-none">+</span>
-          <span>新建实体</span>
+          <span>{canvasViewMode === 'chen' ? '新建业务概念' : '新建实体'}</span>
         </button>
 
         {/* 帮助 / 诊断按钮 */}

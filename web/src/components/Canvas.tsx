@@ -58,6 +58,11 @@ export default function Canvas() {
   const chenPositions = useStore((state) => state.chenPositions)
   const updateChenPositions = useStore((state) => state.updateChenPositions)
   const resetChenPositions = useStore((state) => state.resetChenPositions)
+  const addConcept = useStore((state) => state.addConcept)
+  const deleteConcept = useStore((state) => state.deleteConcept)
+  const addConceptRelation = useStore((state) => state.addConceptRelation)
+  const deleteConceptRelation = useStore((state) => state.deleteConceptRelation)
+  const deleteConceptAttribute = useStore((state) => state.deleteConceptAttribute)
 
   const [nodes, setNodes] = useState<any[]>([])
   const [edges, setEdges] = useState<any[]>([])
@@ -169,6 +174,22 @@ export default function Canvas() {
 
   const handleNodesChange = (changes: NodeChange<any>[]) => {
     if (canvasViewMode === 'chen') {
+      for (const change of changes) {
+        if (change.type === 'remove') {
+          if (change.id.startsWith('rel-')) {
+            deleteConceptRelation(change.id.slice(4))
+          } else if (change.id.startsWith('attr-')) {
+            const attrNode = nodes.find((n) => n.id === change.id)
+            const entityId = attrNode?.data?.entityId
+            const attrId = attrNode?.data?.conceptAttribute?.id || attrNode?.data?.conceptAttribute?.name
+            if (entityId && attrId) {
+              deleteConceptAttribute(entityId, attrId)
+            }
+          } else {
+            deleteConcept(change.id)
+          }
+        }
+      }
       setNodes((current) => applyNodeChanges(changes, current))
       return
     }
@@ -185,6 +206,35 @@ export default function Canvas() {
 
   const handleEdgesChange = (changes: EdgeChange<any>[]) => {
     if (canvasViewMode === 'chen') {
+      for (const change of changes) {
+        if (change.type === 'remove') {
+          const edge = edges.find((e) => e.id === change.id)
+          if (edge) {
+            const relNodeId = edge.source?.startsWith('rel-')
+              ? edge.source
+              : edge.target?.startsWith('rel-')
+              ? edge.target
+              : null
+            if (relNodeId) {
+              deleteConceptRelation(relNodeId.slice(4))
+              continue
+            }
+            const attrNodeId = edge.source?.startsWith('attr-')
+              ? edge.source
+              : edge.target?.startsWith('attr-')
+              ? edge.target
+              : null
+            if (attrNodeId) {
+              const attrNode = nodes.find((n) => n.id === attrNodeId)
+              const entityId = attrNode?.data?.entityId
+              const attrId = attrNode?.data?.conceptAttribute?.id || attrNode?.data?.conceptAttribute?.name
+              if (entityId && attrId) {
+                deleteConceptAttribute(entityId, attrId)
+              }
+            }
+          }
+        }
+      }
       return
     }
     for (const change of changes) {
@@ -195,7 +245,19 @@ export default function Canvas() {
   }
 
   const handleConnect: OnConnect = (connection) => {
-    if (canvasViewMode === 'chen') return
+    if (canvasViewMode === 'chen') {
+      if (connection.source && connection.target) {
+        if (
+          !connection.source.startsWith('attr-') &&
+          !connection.target.startsWith('attr-') &&
+          !connection.source.startsWith('rel-') &&
+          !connection.target.startsWith('rel-')
+        ) {
+          addConceptRelation(connection.source, connection.target)
+        }
+      }
+      return
+    }
     if (connection.source && connection.target) {
       addRelation(connection.source, connection.target)
     }
@@ -290,7 +352,6 @@ export default function Canvas() {
         isSpacePressed || toolMode === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
       onDoubleClick={(event) => {
-        if (canvasViewMode === 'chen') return
         const target = event.target as HTMLElement
         if (
           target.classList.contains('react-flow__pane') ||
@@ -299,10 +360,15 @@ export default function Canvas() {
           target.tagName.toLowerCase() === 'path'
         ) {
           const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-          addEntity({
+          const pos = {
             x: Math.round(flowPos.x / 20) * 20,
             y: Math.round(flowPos.y / 20) * 20,
-          })
+          }
+          if (canvasViewMode === 'chen') {
+            addConcept(pos)
+          } else {
+            addEntity(pos)
+          }
         }
       }}
     >
@@ -367,7 +433,20 @@ export default function Canvas() {
         }}
         onNodeMouseEnter={(_, node) => setHoveredEntityId(node.id)}
         onNodeMouseLeave={() => setHoveredEntityId(null)}
-        onEdgeClick={(_, edge) => select({ kind: 'relation', id: edge.id })}
+        onEdgeClick={(_, edge) => {
+          if (canvasViewMode === 'chen') {
+            if (edge.source?.startsWith('rel-')) {
+              select({ kind: 'relation', id: edge.source.slice(4) })
+              return
+            }
+            if (edge.target?.startsWith('rel-')) {
+              select({ kind: 'relation', id: edge.target.slice(4) })
+              return
+            }
+            return
+          }
+          select({ kind: 'relation', id: edge.id })
+        }}
         onEdgeMouseEnter={(_, edge) => setHoveredRelationId(edge.id)}
         onEdgeMouseLeave={() => setHoveredRelationId(null)}
         onPaneClick={() => {
@@ -385,7 +464,9 @@ export default function Canvas() {
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.5} color="#d6cfc4" />
 
-        {design.entities.length > 0 ? (
+        {(canvasViewMode === 'chen'
+          ? (conceptualDesign?.concepts?.length || 0) > 0
+          : design.entities.length > 0) ? (
           <MiniMap
             pannable
             zoomable
@@ -512,24 +593,40 @@ export default function Canvas() {
               </svg>
             </div>
 
-            <h2 className="text-2xl font-black text-[#1f1f1f] tracking-tight">在纸上先画架构</h2>
+            <h2 className="text-2xl font-black text-[#1f1f1f] tracking-tight">
+              {canvasViewMode === 'chen' ? '在白板上构思业务模型' : '在纸上先画架构'}
+            </h2>
             <p className="mt-1 text-xs text-stone-500 font-medium">
-              双击画布扔一张表，或把业务说清楚，让 AI 帮你起草
+              {canvasViewMode === 'chen'
+                ? '双击白板新建业务概念，或把业务说清楚让 AI 帮你起草'
+                : '双击画布扔一张表，或把业务说清楚，让 AI 帮你起草'}
             </p>
 
             {/* 3 张核心操作卡片 */}
             <div className="w-full space-y-2.5 mt-5">
-              {/* 卡片 1: 空白建实体 */}
+              {/* 卡片 1: 空白建实体 / 概念 */}
               <div
-                onClick={() => addEntity()}
+                onClick={() => {
+                  if (canvasViewMode === 'chen') {
+                    addConcept()
+                  } else {
+                    addEntity()
+                  }
+                }}
                 className="group rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#df4e3e]/40 bg-[#fdf0ee] text-[#df4e3e] font-bold text-lg group-hover:scale-105 transition">
                   +
                 </div>
                 <div>
-                  <div className="text-sm font-bold text-[#1f1f1f]">空白建实体</div>
-                  <div className="text-xs text-stone-500 mt-0.5">像贴便签一样新建一张表</div>
+                  <div className="text-sm font-bold text-[#1f1f1f]">
+                    {canvasViewMode === 'chen' ? '空白建业务概念' : '空白建实体'}
+                  </div>
+                  <div className="text-xs text-stone-500 mt-0.5">
+                    {canvasViewMode === 'chen'
+                      ? '在概念白板上新建一个核心实体'
+                      : '像贴便签一样新建一张表'}
+                  </div>
                 </div>
               </div>
 
