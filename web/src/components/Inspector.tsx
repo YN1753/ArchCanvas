@@ -11,6 +11,7 @@ import {
   type AttributeCategory,
   type Cardinality,
   type ConceptAttribute,
+  type DatabaseDialect,
 } from '../types/dsl'
 import {
   CARDINALITY_CHINESE,
@@ -481,7 +482,9 @@ function EntityInspector({ entityID }: { entityID: string }) {
   const renameEntity = useStore((state) => state.renameEntity)
   const deleteEntity = useStore((state) => state.deleteEntity)
   const addAttribute = useStore((state) => state.addAttribute)
+  const targetDialect = useStore((state) => state.targetDialect)
   const [tab, setTab] = useState<'fields' | 'sql'>('fields')
+  const [previewDialect, setPreviewDialect] = useState<DatabaseDialect>(targetDialect || 'mysql')
   const [copied, setCopied] = useState(false)
 
   if (!entity) {
@@ -489,7 +492,7 @@ function EntityInspector({ entityID }: { entityID: string }) {
   }
 
   const entityChinese = getEntityChineseName(entity.name)
-  const sqlString = entityToSQL(entity)
+  const sqlString = entityToSQL(entity, previewDialect)
 
   return (
     <div className="space-y-4">
@@ -580,23 +583,41 @@ function EntityInspector({ entityID }: { entityID: string }) {
       {tab === 'sql' && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <SectionTitle>CREATE TABLE 语句</SectionTitle>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(sqlString)
-                  setCopied(true)
-                  window.setTimeout(() => setCopied(false), 1500)
-                } catch {}
-              }}
-              className="flex items-center gap-1 rounded border-[1.5px] border-[#1f1f1f] bg-white text-[#1f1f1f] px-2 py-0.5 text-[11px] font-bold hover:bg-stone-100 shadow-[1px_1px_0px_#1f1f1f] transition"
-            >
-              {copied ? '✓ 已复制' : '复制 DDL'}
-            </button>
+            <SectionTitle>SQL DDL 结构预览</SectionTitle>
+            <div className="flex items-center gap-1.5">
+              <div className="flex rounded-lg border border-stone-300 bg-white p-0.5 text-[10px] font-bold shadow-2xs">
+                {(['mysql', 'postgres', 'sqlite'] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setPreviewDialect(d)}
+                    className={`px-1.5 py-0.5 rounded transition cursor-pointer ${
+                      previewDialect === d
+                        ? 'bg-[#df4e3e] text-white'
+                        : 'text-stone-600 hover:text-[#1f1f1f]'
+                    }`}
+                  >
+                    {d === 'postgres' ? 'PG' : d.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(sqlString)
+                    setCopied(true)
+                    window.setTimeout(() => setCopied(false), 1500)
+                  } catch {}
+                }}
+                className="flex items-center gap-1 rounded border-[1.5px] border-[#1f1f1f] bg-white text-[#1f1f1f] px-2 py-0.5 text-[11px] font-bold hover:bg-stone-100 shadow-[1px_1px_0px_#1f1f1f] transition cursor-pointer"
+              >
+                {copied ? '✓ 已复制' : '复制 DDL'}
+              </button>
+            </div>
           </div>
 
-          <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#1f1f1f] p-3 text-[11px] font-mono leading-relaxed text-emerald-400 overflow-x-auto shadow-[2px_2px_0px_#1f1f1f]">
+          <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#1f1f1f] p-3 text-[11px] font-mono leading-relaxed text-emerald-400 overflow-x-auto shadow-[2px_2px_0px_#1f1f1f] max-h-72">
             <pre className="whitespace-pre">{sqlString}</pre>
           </div>
         </div>

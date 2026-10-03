@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { toMermaid } from '../export/mermaid'
 import { designToSQL, parseSQLToDesign, SAMPLE_SQL } from '../export/sql'
 import { useStore, type DataDialogTab } from '../store/erStore'
+import type { DatabaseDialect } from '../types/dsl'
 import { parseDesignJSON, validateDesign } from '../validate/dsl'
 
 export type Tab = DataDialogTab
@@ -25,8 +26,10 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
   const project = useStore((state) => state.project)
   const importDesign = useStore((state) => state.importDesign)
   const defaultTab = useStore((state) => state.dataDialogTab)
+  const targetDialect = useStore((state) => state.targetDialect)
 
   const [tab, setTab] = useState<Tab>(defaultTab ?? 'export-sql')
+  const [exportDialect, setExportDialect] = useState<DatabaseDialect>(targetDialect || 'mysql')
   const [importJsonText, setImportJsonText] = useState('')
   const [importSqlText, setImportSqlText] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
@@ -34,14 +37,14 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false)
 
   const jsonText = useMemo(() => JSON.stringify(design, null, 2), [design])
-  const sqlText = useMemo(() => designToSQL(design), [design])
+  const sqlText = useMemo(() => designToSQL(design, exportDialect), [design, exportDialect])
   const mermaidText = useMemo(() => toMermaid(design), [design])
 
   const activeText =
     tab === 'export-sql' ? sqlText : tab === 'export-mermaid' ? mermaidText : jsonText
 
-  const activeFilename = `${project?.name ?? 'archcanvas'}.${
-    tab === 'export-sql' ? 'sql' : tab === 'export-mermaid' ? 'mmd' : 'json'
+  const activeFilename = `${project?.name ?? 'archcanvas'}${
+    tab === 'export-sql' ? `_${exportDialect}.sql` : tab === 'export-mermaid' ? '.mmd' : '.json'
   }`
 
   async function copy() {
@@ -264,13 +267,39 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
             </>
           ) : (
             <>
-              <p className="text-xs text-stone-600">
-                {tab === 'export-sql'
-                  ? '生成的 MySQL / MariaDB 标准建表语句，可直接在 Navicat、DBeaver 或终端执行。'
-                  : tab === 'export-mermaid'
+              {tab === 'export-sql' ? (
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs text-stone-600">
+                    {exportDialect === 'postgres'
+                      ? '生成的 PostgreSQL 标准 DDL 脚本，包含表/字段注释及 IF NOT EXISTS 索引定义。'
+                      : exportDialect === 'sqlite'
+                        ? '生成的 SQLite 标准建表脚本，包含自增主键与 IF NOT EXISTS 索引定义。'
+                        : '生成的 MySQL / MariaDB 标准建表语句，包含表注释与 CREATE INDEX 索引定义。'}
+                  </p>
+                  <div className="flex items-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs shrink-0">
+                    {(['mysql', 'postgres', 'sqlite'] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setExportDialect(d)}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                          exportDialect === d
+                            ? 'bg-[#df4e3e] text-white shadow-2xs'
+                            : 'text-stone-700 hover:text-[#df4e3e]'
+                        }`}
+                      >
+                        {d === 'postgres' ? 'PostgreSQL' : d === 'sqlite' ? 'SQLite' : 'MySQL'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-stone-600">
+                  {tab === 'export-mermaid'
                     ? 'Mermaid erDiagram 源码，可直接贴入 Markdown、Notion 或 GitHub 评审。'
                     : '标准的 ER DSL JSON 结构规范，用于版本备份或在其他 ArchCanvas 实例中导入。'}
-              </p>
+                </p>
+              )}
               <textarea
                 readOnly
                 value={activeText}
