@@ -205,6 +205,25 @@ func (a *AgentService) DerivePhysical(
 		var thinkingBuffer strings.Builder
 		var currentDesign *domain.ERDesign
 		var conceptualDesign *domain.ConceptualDesign
+		var convID string
+
+		if a.ProjectService != nil && a.ProjectService.MessageRepo != nil && req.ProjectID != "" {
+			conv, err := a.ProjectService.MessageRepo.GetOrCreateConversation(ctx, req.ProjectID)
+			if err == nil && conv != nil {
+				convID = conv.ID
+			}
+		}
+
+		saveAssistantMsg := func(payload map[string]interface{}) {
+			if convID != "" && a.ProjectService != nil && a.ProjectService.MessageRepo != nil {
+				dataBytes, err := json.Marshal(payload)
+				if err == nil {
+					saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, _ = a.ProjectService.MessageRepo.CreateMessage(saveCtx, convID, "assistant", string(dataBytes))
+				}
+			}
+		}
 
 		// 1. 获取现有概念模型（优先使用前端白板传入的当前快照）
 		if req.ConceptualDesign != nil && len(req.ConceptualDesign.Concepts) > 0 {
@@ -249,6 +268,12 @@ func (a *AgentService) DerivePhysical(
 				return
 			}
 			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
+			saveAssistantMsg(map[string]interface{}{
+				"summary":  "物理数据表推导遇到异常",
+				"thinking": thinkingBuffer.String(),
+				"status":   "error",
+				"error":    err.Error(),
+			})
 			return
 		}
 
@@ -260,6 +285,12 @@ func (a *AgentService) DerivePhysical(
 			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, *erDesign)
 			if err != nil {
 				sendEvent(StreamEvent{Type: EventError, Data: "物理表落库失败: " + err.Error()})
+				saveAssistantMsg(map[string]interface{}{
+					"summary":  "物理表落库失败",
+					"thinking": thinkingBuffer.String(),
+					"status":   "error",
+					"error":    err.Error(),
+				})
 				return
 			}
 			if !sendEvent(StreamEvent{Type: EventResult, Data: savedResult.Design}) {
@@ -270,6 +301,22 @@ func (a *AgentService) DerivePhysical(
 				return
 			}
 		}
+
+		var entityNames []string
+		for _, e := range erDesign.Entities {
+			if e.Name != "" {
+				entityNames = append(entityNames, e.Name)
+			}
+		}
+
+		saveAssistantMsg(map[string]interface{}{
+			"summary":                 fmt.Sprintf("物理表推导完成（目标方言: %s）：共生成 %d 张物理数据表、%d 条物理约束关联。", strings.ToUpper(dialect), len(erDesign.Entities), len(erDesign.Relations)),
+			"thinking":                thinkingBuffer.String(),
+			"status":                  "physical_ready",
+			"applied_entities_count":  len(erDesign.Entities),
+			"applied_relations_count": len(erDesign.Relations),
+			"applied_entities":        entityNames,
+		})
 
 		sendEvent(StreamEvent{Type: EventDone, Data: true})
 	}()
@@ -296,6 +343,27 @@ func (a *AgentService) ReviewSchema(
 			}
 		}
 
+		var convID string
+		if a.ProjectService != nil && a.ProjectService.MessageRepo != nil && req.ProjectID != "" {
+			conv, err := a.ProjectService.MessageRepo.GetOrCreateConversation(ctx, req.ProjectID)
+			if err == nil && conv != nil {
+				convID = conv.ID
+			}
+		}
+
+		saveAssistantMsg := func(payload map[string]interface{}) {
+			if convID != "" && a.ProjectService != nil && a.ProjectService.MessageRepo != nil {
+				dataBytes, err := json.Marshal(payload)
+				if err == nil {
+					saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, _ = a.ProjectService.MessageRepo.CreateMessage(saveCtx, convID, "assistant", string(dataBytes))
+				}
+			}
+		}
+
+		var thinkingBuffer strings.Builder
+
 		if !sendEvent(StreamEvent{Type: EventStatus, Data: "首席数据架构师正在进行全方位质量与性能体检…"}) {
 			return
 		}
@@ -320,6 +388,7 @@ func (a *AgentService) ReviewSchema(
 			ModelProvider:   req.ModelProvider,
 			ModelName:       req.ModelName,
 		}, func(chunk string) {
+			thinkingBuffer.WriteString(chunk)
 			sendEvent(StreamEvent{Type: EventThinking, Data: chunk})
 		})
 		if err != nil {
@@ -327,6 +396,12 @@ func (a *AgentService) ReviewSchema(
 				return
 			}
 			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
+			saveAssistantMsg(map[string]interface{}{
+				"summary":  "架构体检遇到异常",
+				"thinking": thinkingBuffer.String(),
+				"status":   "error",
+				"error":    err.Error(),
+			})
 			return
 		}
 
@@ -337,6 +412,13 @@ func (a *AgentService) ReviewSchema(
 		if !sendEvent(StreamEvent{Type: EventResult, Data: report}) {
 			return
 		}
+
+		saveAssistantMsg(map[string]interface{}{
+			"summary":       fmt.Sprintf("数据库架构体检完成：综合评分 %d 分（共审查 %d 项指标，通过 %d 项，发现 %d 项需关注的架构隐患）。", report.Score, report.TotalCount, report.PassedCount, len(report.Issues)),
+			"thinking":      thinkingBuffer.String(),
+			"status":        "review_ready",
+			"review_report": report,
+		})
 
 		sendEvent(StreamEvent{Type: EventDone, Data: true})
 	}()

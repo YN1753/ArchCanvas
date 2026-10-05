@@ -16,6 +16,7 @@ interface AssistantPayload {
   applied_relations_count?: number
   applied_entities?: string[]
   conceptual_design?: any
+  review_report?: any
   error?: string
 }
 
@@ -146,6 +147,10 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
             <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">
               概念已推导
             </span>
+          ) : payload.status === 'review_ready' || payload.review_report ? (
+            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800">
+              架构体检报告
+            </span>
           ) : (
             <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
               物理架构已生成
@@ -161,6 +166,38 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#1f1f1f] font-sans font-medium select-text">
             {payload.summary}
           </p>
+        )}
+
+        {/* 架构体检报告摘要卡片 */}
+        {payload.review_report && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 p-2.5">
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-base font-black font-mono ${
+                  (payload.review_report.score ?? 0) >= 80
+                    ? 'text-emerald-700'
+                    : (payload.review_report.score ?? 0) >= 60
+                    ? 'text-amber-700'
+                    : 'text-rose-700'
+                }`}
+              >
+                {payload.review_report.score ?? 0} 分
+              </span>
+              <span className="text-[11px] text-indigo-900 font-medium">
+                检查项: {payload.review_report.total_count ?? 0}，风险: {payload.review_report.issues?.length ?? 0} 项
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                useStore.getState().setReviewReport(payload.review_report)
+                useStore.getState().setReviewDrawerOpen(true)
+              }}
+              className="rounded-lg border border-[#1f1f1f] bg-white px-2.5 py-1 text-[11px] font-bold text-[#1f1f1f] shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#faf7f0] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer"
+            >
+              查看体检报告
+            </button>
+          </div>
         )}
 
         {/* 概念模型提示 */}

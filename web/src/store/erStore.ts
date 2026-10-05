@@ -157,6 +157,7 @@ interface StoreActions {
   setAgentPhase: (phase: 'idle' | 'concept_ready' | 'deriving_physical' | 'physical_ready' | 'reviewing') => void
   setTargetDialect: (dialect: DatabaseDialect) => void
   setReviewDrawerOpen: (open: boolean) => void
+  setReviewReport: (report: SchemaReviewReport | null) => void
   proposeConcepts: (input: string) => Promise<void>
   derivePhysical: (dialect?: DatabaseDialect) => Promise<void>
   reviewSchema: (dialect?: DatabaseDialect) => Promise<void>
@@ -425,6 +426,10 @@ export const useStore = create<Store>((set, get) => {
 
     setReviewDrawerOpen(open) {
       set({ reviewDrawerOpen: open })
+    },
+
+    setReviewReport(report) {
+      set({ reviewReport: report })
     },
 
     setAiSidebarOpen(open) {
