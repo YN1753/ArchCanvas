@@ -6,10 +6,10 @@ import (
 	{{- end }}
 )
 
-// {{ .Entity.StructName }} 映射数据库表「{{ .Entity.TableName }}」
+// {{ .Entity.StructName }} {{ if .Entity.Comment }}{{ .Entity.Comment }}{{ else }}映射数据库表「{{ .Entity.TableName }}」{{ end }}
 type {{ .Entity.StructName }} struct {
 	{{- range .Entity.Attributes }}
-	{{ .FieldName }} {{ .GoType }} `{{ .GormTag }} {{ .JsonTag }}`{{ if .Description }} // {{ .Description }}{{ end }}
+	{{ .FieldName }} {{ .GoType }} `{{ .GormTag }} {{ .JsonTag }}`{{ if .Comment }} // {{ .Comment }}{{ else if .Description }} // {{ .Description }}{{ end }}
 	{{- end }}
 	{{- range .Entity.Associations }}
 	{{ .FieldName }} {{ .FieldType }} `{{ .GormTag }} {{ .JsonTag }}`

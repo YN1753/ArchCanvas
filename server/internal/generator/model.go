@@ -66,6 +66,8 @@ type EntityData struct {
 	StructName   string
 	VarName      string
 	PluralName   string
+	Comment      string
+	Indexes      []domain.IndexDefinition
 	Attributes   []AttributeData
 	PrimaryKey   AttributeData
 	Associations []AssociationData
@@ -80,6 +82,7 @@ type AttributeData struct {
 	IsPrimaryKey bool
 	IsNullable   bool
 	IsUnique     bool
+	Comment      string
 	Description  string
 	GormTag      string
 	JsonTag      string
@@ -193,6 +196,11 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 	}
 }
 
+type colIndexInfo struct {
+	tag      string
+	isUnique bool
+}
+
 func buildEntityData(ent domain.Entity) EntityData {
 	tableName := strings.TrimSpace(ent.Name)
 	if tableName == "" {
@@ -203,19 +211,74 @@ func buildEntityData(ent domain.Entity) EntityData {
 	varName := ToCamelCase(singular)
 	pluralName := ToPascalCase(tableName)
 
+	// 构建列名到索引定义的映射（支持单列/复合索引与唯一索引）
+	colIndexesMap := make(map[string][]colIndexInfo)
+	for _, idx := range ent.Indexes {
+		idxName := strings.TrimSpace(idx.Name)
+		if idxName == "" {
+			continue
+		}
+		numCols := len(idx.Columns)
+		for colIdx, col := range idx.Columns {
+			cName := strings.ToLower(strings.TrimSpace(col))
+			if cName == "" {
+				continue
+			}
+			var tag string
+			if numCols > 1 {
+				// 复合索引携带 priority
+				if idx.IsUnique {
+					tag = fmt.Sprintf("uniqueIndex:%s,priority:%d", idxName, colIdx+1)
+				} else {
+					tag = fmt.Sprintf("index:%s,priority:%d", idxName, colIdx+1)
+				}
+			} else {
+				// 单列索引
+				if idx.IsUnique {
+					tag = fmt.Sprintf("uniqueIndex:%s", idxName)
+				} else {
+					tag = fmt.Sprintf("index:%s", idxName)
+				}
+			}
+			colIndexesMap[cName] = append(colIndexesMap[cName], colIndexInfo{
+				tag:      tag,
+				isUnique: idx.IsUnique,
+			})
+		}
+	}
+
 	var attrs []AttributeData
 	var primaryKey AttributeData
 
 	for _, attr := range ent.Attributes {
-		aData := buildAttributeData(attr)
+		attrNameLower := strings.ToLower(strings.TrimSpace(attr.Name))
+		idxInfos := colIndexesMap[attrNameLower]
+
+		// BaseModel 去重逻辑:
+		// 如果字段是 created_at, updated_at, deleted_at 且没有被显式索引，
+		// 则由内嵌的 BaseModel 统一声明，避免 Go 结构体字段冲突和 GORM 重复定义
+		if (attrNameLower == "created_at" || attrNameLower == "updated_at" || attrNameLower == "deleted_at") && len(idxInfos) == 0 {
+			continue
+		}
+
+		aData := buildAttributeData(attr, idxInfos)
 		attrs = append(attrs, aData)
 		if attr.IsPrimaryKey && primaryKey.FieldName == "" {
 			primaryKey = aData
 		}
 	}
 
-	if primaryKey.FieldName == "" && len(attrs) > 0 {
-		primaryKey = attrs[0]
+	if primaryKey.FieldName == "" {
+		if len(attrs) > 0 {
+			primaryKey = attrs[0]
+		} else {
+			primaryKey = AttributeData{
+				Name:      "id",
+				FieldName: "ID",
+				DBType:    "BIGINT",
+				GoType:    "uint64",
+			}
+		}
 	}
 
 	return EntityData{
@@ -224,13 +287,15 @@ func buildEntityData(ent domain.Entity) EntityData {
 		StructName:   structName,
 		VarName:      varName,
 		PluralName:   pluralName,
+		Comment:      strings.TrimSpace(ent.Comment),
+		Indexes:      ent.Indexes,
 		Attributes:   attrs,
 		PrimaryKey:   primaryKey,
 		Associations: make([]AssociationData, 0),
 	}
 }
 
-func buildAttributeData(attr domain.Attribute) AttributeData {
+func buildAttributeData(attr domain.Attribute, idxInfos []colIndexInfo) AttributeData {
 	fieldName := ToPascalCase(attr.Name)
 	goType := normalizeGoType(attr.CodeType, attr.DBType, attr.IsNullable)
 
@@ -247,13 +312,46 @@ func buildAttributeData(attr domain.Attribute) AttributeData {
 	if !attr.IsNullable && !attr.IsPrimaryKey {
 		gormTags = append(gormTags, "not null")
 	}
-	if attr.IsUnique {
+
+	// 索引标签与唯一性判定
+	hasUniqueIndex := false
+	for _, info := range idxInfos {
+		if info.tag != "" {
+			gormTags = append(gormTags, info.tag)
+		}
+		if info.isUnique {
+			hasUniqueIndex = true
+		}
+	}
+
+	// 若已有命名唯一索引，不再添加无名 unique 标签
+	if attr.IsUnique && !hasUniqueIndex {
 		gormTags = append(gormTags, "unique")
 	}
-	if attr.Description != "" {
-		cleanDesc := strings.ReplaceAll(attr.Description, ";", ",")
-		cleanDesc = strings.ReplaceAll(cleanDesc, `"`, "")
-		gormTags = append(gormTags, fmt.Sprintf("comment:%s", cleanDesc))
+
+	// 特殊审计字段携带 GORM 自动时间标签
+	attrLower := strings.ToLower(strings.TrimSpace(attr.Name))
+	if attrLower == "created_at" {
+		gormTags = append(gormTags, "autoCreateTime")
+	} else if attrLower == "updated_at" {
+		gormTags = append(gormTags, "autoUpdateTime")
+	}
+
+	// 注释优先使用 Comment，回退使用 Description
+	comment := strings.TrimSpace(attr.Comment)
+	if comment == "" {
+		comment = strings.TrimSpace(attr.Description)
+	}
+	if comment != "" {
+		cleanComment := strings.ReplaceAll(comment, ";", ",")
+		cleanComment = strings.ReplaceAll(cleanComment, `"`, "")
+		cleanComment = strings.ReplaceAll(cleanComment, "`", "")
+		cleanComment = strings.ReplaceAll(cleanComment, "\r", " ")
+		cleanComment = strings.ReplaceAll(cleanComment, "\n", " ")
+		cleanComment = strings.TrimSpace(cleanComment)
+		if cleanComment != "" {
+			gormTags = append(gormTags, fmt.Sprintf("comment:%s", cleanComment))
+		}
 	}
 
 	gormTagStr := fmt.Sprintf(`gorm:"%s"`, strings.Join(gormTags, ";"))
@@ -267,6 +365,7 @@ func buildAttributeData(attr domain.Attribute) AttributeData {
 		IsPrimaryKey: attr.IsPrimaryKey,
 		IsNullable:   attr.IsNullable,
 		IsUnique:     attr.IsUnique,
+		Comment:      comment,
 		Description:  attr.Description,
 		GormTag:      gormTagStr,
 		JsonTag:      jsonTagStr,
@@ -279,9 +378,21 @@ func normalizeGoType(codeType, dbType string, isNullable bool) string {
 		upperDB := strings.ToUpper(dbType)
 		switch {
 		case strings.Contains(upperDB, "BIGINT"):
-			raw = "uint64"
+			if strings.Contains(upperDB, "UNSIGNED") {
+				raw = "uint64"
+			} else {
+				raw = "int64"
+			}
+		case strings.Contains(upperDB, "TINYINT"):
+			raw = "int8"
+		case strings.Contains(upperDB, "SMALLINT"):
+			raw = "int16"
 		case strings.Contains(upperDB, "INT"):
-			raw = "int"
+			if strings.Contains(upperDB, "UNSIGNED") {
+				raw = "uint"
+			} else {
+				raw = "int"
+			}
 		case strings.Contains(upperDB, "BOOL"):
 			raw = "bool"
 		case strings.Contains(upperDB, "TIME"), strings.Contains(upperDB, "DATE"):
@@ -290,12 +401,14 @@ func normalizeGoType(codeType, dbType string, isNullable bool) string {
 			raw = "float64"
 		case strings.Contains(upperDB, "BLOB"), strings.Contains(upperDB, "BINARY"):
 			raw = "[]byte"
+		case strings.Contains(upperDB, "JSON"):
+			raw = "string"
 		default:
 			raw = "string"
 		}
 	}
 
-	if isNullable && !strings.HasPrefix(raw, "*") && raw != "[]byte" {
+	if isNullable && !strings.HasPrefix(raw, "*") && !strings.HasPrefix(raw, "[]") && raw != "any" && raw != "interface{}" {
 		return "*" + raw
 	}
 	return raw
