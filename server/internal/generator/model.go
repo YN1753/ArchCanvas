@@ -143,30 +143,79 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 			continue
 		}
 
+		// 0. 特殊处理同实体自引用（如 parent_id 树形自关联网）
+		if sourceEnt.ID == targetEnt.ID {
+			fkFieldName := "ParentID"
+			for _, a := range sourceEnt.Attributes {
+				aLower := strings.ToLower(a.Name)
+				if aLower == "parent_id" || aLower == "pid" {
+					fkFieldName = a.FieldName
+					break
+				}
+			}
+			pkFieldName := sourceEnt.PrimaryKey.FieldName
+			if pkFieldName == "" {
+				pkFieldName = "ID"
+			}
+
+			addAssociationSafe(&sourceEnt, AssociationData{
+				Type:      "HasMany",
+				FieldName: "Children",
+				FieldType: "[]" + sourceEnt.StructName,
+				GormTag:   fmt.Sprintf(`gorm:"foreignKey:%s;references:%s"`, fkFieldName, pkFieldName),
+				JsonTag:   `json:"children,omitempty"`,
+			})
+
+			addAssociationSafe(&sourceEnt, AssociationData{
+				Type:      "BelongsTo",
+				FieldName: "Parent",
+				FieldType: "*" + sourceEnt.StructName,
+				GormTag:   fmt.Sprintf(`gorm:"foreignKey:%s;references:%s"`, fkFieldName, pkFieldName),
+				JsonTag:   `json:"parent,omitempty"`,
+			})
+
+			entityMap[rel.SourceEntityID] = sourceEnt
+			if sourceEnt.TableName != "" {
+				entityMap[strings.ToLower(sourceEnt.TableName)] = sourceEnt
+			}
+			continue
+		}
+
 		// Source (如 User) 拥有多个 Target (如 Orders)
 		// 寻找 target 中匹配 source 的外键字段（如 user_id）
 		fkFieldName := sourceEnt.StructName + "ID"
+		for _, a := range targetEnt.Attributes {
+			aLower := strings.ToLower(a.Name)
+			if aLower == strings.ToLower(sourceEnt.TableName)+"_id" ||
+				aLower == strings.ToLower(ToSingular(sourceEnt.TableName))+"_id" {
+				fkFieldName = a.FieldName
+				break
+			}
+		}
+
 		pkFieldName := sourceEnt.PrimaryKey.FieldName
 		if pkFieldName == "" {
 			pkFieldName = "ID"
 		}
 
 		// 为 Source 增加 HasMany
-		sourceEnt.Associations = append(sourceEnt.Associations, AssociationData{
+		hasManyName := ToPascalCase(targetEnt.TableName)
+		addAssociationSafe(&sourceEnt, AssociationData{
 			Type:      "HasMany",
-			FieldName: ToPascalCase(targetEnt.TableName),
+			FieldName: hasManyName,
 			FieldType: "[]" + targetEnt.StructName,
 			GormTag:   fmt.Sprintf(`gorm:"foreignKey:%s;references:%s"`, fkFieldName, pkFieldName),
-			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(targetEnt.TableName)),
+			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(hasManyName)),
 		})
 
 		// 为 Target 增加 BelongsTo
-		targetEnt.Associations = append(targetEnt.Associations, AssociationData{
+		belongsToName := sourceEnt.StructName
+		addAssociationSafe(&targetEnt, AssociationData{
 			Type:      "BelongsTo",
-			FieldName: sourceEnt.StructName,
+			FieldName: belongsToName,
 			FieldType: "*" + sourceEnt.StructName,
 			GormTag:   fmt.Sprintf(`gorm:"foreignKey:%s;references:%s"`, fkFieldName, pkFieldName),
-			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(sourceEnt.StructName)),
+			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(belongsToName)),
 		})
 
 		entityMap[rel.SourceEntityID] = sourceEnt
@@ -194,6 +243,46 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 		EnableSoftDelete: req.EnableSoftDelete,
 		Entities:         entities,
 	}
+}
+
+// addAssociationSafe 安全添加 GORM 关联关系，进行同类型幂等去重并防范结构体字段名重名冲突
+func addAssociationSafe(ent *EntityData, assoc AssociationData) {
+	usedNames := make(map[string]bool)
+	usedNames["ID"] = true
+	usedNames["CreatedAt"] = true
+	usedNames["UpdatedAt"] = true
+	usedNames["DeletedAt"] = true
+	usedNames["BaseModel"] = true
+
+	for _, a := range ent.Attributes {
+		usedNames[strings.ToLower(a.FieldName)] = true
+	}
+
+	for _, existing := range ent.Associations {
+		// 完全相同关联（相同类型与相同字段类型与Tag），幂等跳过，防重复
+		if existing.Type == assoc.Type &&
+			existing.FieldType == assoc.FieldType &&
+			existing.GormTag == assoc.GormTag {
+			return
+		}
+		usedNames[strings.ToLower(existing.FieldName)] = true
+	}
+
+	// 若 FieldName 与已有属性名冲突，自动添加编号消歧
+	baseName := assoc.FieldName
+	if baseName == "" {
+		baseName = "Relation"
+	}
+	fieldName := baseName
+	counter := 2
+	for usedNames[strings.ToLower(fieldName)] {
+		fieldName = fmt.Sprintf("%s%d", baseName, counter)
+		counter++
+	}
+
+	assoc.FieldName = fieldName
+	assoc.JsonTag = fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(fieldName))
+	ent.Associations = append(ent.Associations, assoc)
 }
 
 type colIndexInfo struct {

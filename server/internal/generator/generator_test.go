@@ -265,3 +265,111 @@ func TestGenerateFileTreeFromDesign(t *testing.T) {
 		t.Errorf("expected DeletedAt in base.go when EnableSoftDelete is true, got:\n%s", baseModel)
 	}
 }
+
+func TestGenerateDuplicateAndSelfReferencingRelations(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_user",
+				Name:    "users",
+				Comment: "用户",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "name", DBType: "VARCHAR(64)", CodeType: "string"},
+				},
+			},
+			{
+				ID:      "ent_order",
+				Name:    "orders",
+				Comment: "订单",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					// 故意定义一个与关联同名的 attribute: User
+					{Name: "user", DBType: "VARCHAR(64)", CodeType: "string", Comment: "买家快照"},
+					{Name: "user_id", DBType: "BIGINT", CodeType: "uint64"},
+				},
+			},
+			{
+				ID:      "ent_category",
+				Name:    "categories",
+				Comment: "无限级分类",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "name", DBType: "VARCHAR(64)", CodeType: "string"},
+					{Name: "parent_id", DBType: "BIGINT", CodeType: "uint64"},
+				},
+			},
+		},
+		Relations: []domain.Relation{
+			// 1. 重复关系定义（模拟脏数据或重复传递同一关系）
+			{
+				ID:             "rel_user_orders_1",
+				SourceEntityID: "ent_user",
+				TargetEntityID: "ent_order",
+				RelationTypeID: "one_to_many",
+			},
+			{
+				ID:             "rel_user_orders_2",
+				SourceEntityID: "ent_user",
+				TargetEntityID: "ent_order",
+				RelationTypeID: "one_to_many",
+			},
+			// 2. 自引用树形关系（Category -> Category）
+			{
+				ID:             "rel_category_tree",
+				SourceEntityID: "ent_category",
+				TargetEntityID: "ent_category",
+				RelationTypeID: "one_to_many",
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:  "proj_tree",
+		ModuleName: "example.com/treeapp",
+		Port:       "8080",
+		DBDriver:   "mysql",
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	fileMap := make(map[string]string)
+	for _, f := range files {
+		fileMap[f.Path] = f.Content
+		if strings.HasSuffix(f.Path, ".go") {
+			_, parseErr := parser.ParseFile(fset, f.Path, f.Content, parser.AllErrors)
+			if parseErr != nil {
+				t.Fatalf("file %s failed AST parsing (potential duplicate fields): %v\nContent:\n%s", f.Path, parseErr, f.Content)
+			}
+		}
+	}
+
+	// 验证 Orders 结构体消歧：已有名为 User 的字段，关联字段不应重名
+	orderModel := fileMap["internal/model/orders.go"]
+	if !strings.Contains(orderModel, "User") || !strings.Contains(orderModel, "`gorm:\"column:user;") {
+		t.Errorf("orders.go should retain attribute User, got:\n%s", orderModel)
+	}
+	// 关联字段应当自动重命名消歧为 User2，绝不能重名产生 duplicate field
+	if !strings.Contains(orderModel, "User2") || !strings.Contains(orderModel, "*User") {
+		t.Errorf("orders.go should disambiguate association field to User2, got:\n%s", orderModel)
+	}
+
+	// 验证自引用分类模型包含 Children 和 Parent
+	catModel := fileMap["internal/model/categories.go"]
+	if !strings.Contains(catModel, "Children") || !strings.Contains(catModel, "[]Category") {
+		t.Errorf("categories.go should have Children []Category for self-reference, got:\n%s", catModel)
+	}
+	if !strings.Contains(catModel, "Parent") || !strings.Contains(catModel, "*Category") {
+		t.Errorf("categories.go should have Parent *Category for self-reference, got:\n%s", catModel)
+	}
+}
+
