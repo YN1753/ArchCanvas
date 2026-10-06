@@ -46,7 +46,13 @@ export interface Toast {
   text: string
 }
 
-export type DataDialogTab = 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
+export type DataDialogTab =
+  | 'export-sql'
+  | 'export-json'
+  | 'export-mermaid'
+  | 'export-image'
+  | 'import-sql'
+  | 'import-json'
 
 interface StoreState {
   ready: boolean
@@ -88,7 +94,7 @@ interface StoreState {
   dslView: 'canvas' | 'code'
   inspectorOpen: boolean
   dataDialogOpen: boolean
-  dataDialogTab: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json'
+  dataDialogTab: DataDialogTab
   canUndo: boolean
   canRedo: boolean
 
@@ -124,7 +130,7 @@ interface StoreActions {
   setHoveredRelationId: (id: string | null) => void
   setInspectorOpen: (open: boolean) => void
   toggleInspector: () => void
-  openDataDialog: (tab?: 'export-sql' | 'export-json' | 'export-mermaid' | 'import-sql' | 'import-json') => void
+  openDataDialog: (tab?: DataDialogTab) => void
   closeDataDialog: () => void
   dismissToast: () => void
   dismissAiResult: () => void
