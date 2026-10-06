@@ -75,6 +75,7 @@ function normalizeTypeForDialect(typeStr: string, dialect: DatabaseDialect, isPk
  */
 export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'): string {
   const lines: string[] = []
+  const sqliteColItems: Array<{ def: string; comment?: string }> = []
   const primaryKeys: string[] = []
   const tableComment = (entity.comment || '').trim()
   const qTable = quoteIdent(entity.name, dialect)
@@ -136,10 +137,10 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
         line += ' UNIQUE'
       }
 
-      if (comment) {
-        line += ` -- ${comment.replace(/\n/g, ' ')}`
-      }
-      lines.push(line)
+      sqliteColItems.push({
+        def: line,
+        comment: comment ? comment.replace(/\n/g, ' ') : undefined,
+      })
     }
   }
 
@@ -155,14 +156,25 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
     sqlChunks.push(`-- 表说明: ${tableComment.replace(/\n/g, ' ')}`)
   }
 
-  let createTableStmt = `CREATE TABLE ${dialect === 'sqlite' ? 'IF NOT EXISTS ' : ''}${qTable} (\n${lines.join(',\n')}\n)`
-  if (dialect === 'mysql') {
-    createTableStmt += ` ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-    if (tableComment) {
-      createTableStmt += ` COMMENT='${escapeSqlString(tableComment, 'mysql')}'`
-    }
-    createTableStmt += ';'
+  let createTableStmt = ''
+  if (dialect === 'sqlite') {
+    const formattedLines = sqliteColItems.map((item, idx) => {
+      const isLast = idx === sqliteColItems.length - 1
+      const comma = isLast ? '' : ','
+      if (item.comment) {
+        return `${item.def}${comma} -- ${item.comment}`
+      }
+      return `${item.def}${comma}`
+    })
+    createTableStmt = `CREATE TABLE IF NOT EXISTS ${qTable} (\n${formattedLines.join('\n')}\n);`
   } else {
+    createTableStmt = `CREATE TABLE ${qTable} (\n${lines.join(',\n')}\n)`
+    if (dialect === 'mysql') {
+      createTableStmt += ` ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+      if (tableComment) {
+        createTableStmt += ` COMMENT='${escapeSqlString(tableComment, 'mysql')}'`
+      }
+    }
     createTableStmt += ';'
   }
   sqlChunks.push(createTableStmt)
@@ -368,7 +380,107 @@ export function stripSQLComments(sql: string): string {
 }
 
 /**
- * 将 CREATE TABLE 内部字段及约束按顶级逗号拆分，忽略括号内参数（如 DECIMAL(10,2)）中的逗号
+ * 提取 SQL 列或约束条目中的行内注释（-- 或 /* ... *\/ 或 #），并返回纯净 SQL 与注释文本
+ */
+export function extractItemComment(rawItem: string): { cleanSql: string; comment?: string } {
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let inBacktick = false
+  let comment: string | undefined
+  let cleanSql = ''
+
+  for (let i = 0; i < rawItem.length; i++) {
+    const char = rawItem[i]
+    const next = rawItem[i + 1]
+
+    if (inSingleQuote) {
+      cleanSql += char
+      if (char === '\\' && i + 1 < rawItem.length) {
+        cleanSql += next
+        i++
+        continue
+      }
+      if (char === "'") {
+        if (next === "'") {
+          cleanSql += next
+          i++
+          continue
+        }
+        inSingleQuote = false
+      }
+      continue
+    }
+
+    if (inDoubleQuote) {
+      cleanSql += char
+      if (char === '\\' && i + 1 < rawItem.length) {
+        cleanSql += next
+        i++
+        continue
+      }
+      if (char === '"') {
+        if (next === '"') {
+          cleanSql += next
+          i++
+          continue
+        }
+        inDoubleQuote = false
+      }
+      continue
+    }
+
+    if (inBacktick) {
+      cleanSql += char
+      if (char === '`') inBacktick = false
+      continue
+    }
+
+    if (char === "'") {
+      inSingleQuote = true
+      cleanSql += char
+      continue
+    }
+    if (char === '"') {
+      inDoubleQuote = true
+      cleanSql += char
+      continue
+    }
+    if (char === '`') {
+      inBacktick = true
+      cleanSql += char
+      continue
+    }
+
+    // 块注释 /* ... */
+    if (char === '/' && next === '*') {
+      const closeIdx = rawItem.indexOf('*/', i + 2)
+      if (closeIdx !== -1) {
+        const c = rawItem.slice(i + 2, closeIdx).trim()
+        if (c && !comment) comment = c
+        i = closeIdx + 1
+        continue
+      }
+    }
+
+    // 行注释 -- 或 #
+    if ((char === '-' && next === '-') || char === '#') {
+      const startOffset = char === '#' ? 1 : 2
+      const c = rawItem.slice(i + startOffset).trim()
+      if (c && !comment) {
+        comment = c.replace(/,\s*$/, '').trim()
+      }
+      break
+    }
+
+    cleanSql += char
+  }
+
+  cleanSql = cleanSql.replace(/,\s*$/, '').trim()
+  return { cleanSql, comment }
+}
+
+/**
+ * 将 CREATE TABLE 内部字段及约束按顶级逗号拆分，忽略括号内参数中的逗号，且保留行尾注释归属
  */
 export function splitTableItems(body: string): string[] {
   const items: string[] = []
@@ -377,30 +489,291 @@ export function splitTableItems(body: string): string[] {
   let inSingleQuote = false
   let inDoubleQuote = false
   let inBacktick = false
+  let inBlockComment = false
+  let inLineComment = false
 
   for (let i = 0; i < body.length; i++) {
     const char = body[i]
-    if (char === "'" && !inDoubleQuote && !inBacktick) {
-      if (inSingleQuote && body[i - 1] !== '\\') inSingleQuote = false
-      else if (!inSingleQuote) inSingleQuote = true
-    } else if (char === '"' && !inSingleQuote && !inBacktick) {
-      if (inDoubleQuote && body[i - 1] !== '\\') inDoubleQuote = false
-      else if (!inDoubleQuote) inDoubleQuote = true
-    } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
-      inBacktick = !inBacktick
-    } else if (!inSingleQuote && !inDoubleQuote && !inBacktick) {
-      if (char === '(') depth++
-      else if (char === ')') depth--
-      else if (char === ',' && depth === 0) {
-        if (current.trim()) items.push(current.trim())
-        current = ''
+    const next = body[i + 1]
+
+    if (inBlockComment) {
+      current += char
+      if (char === '*' && next === '/') {
+        current += next
+        i++
+        inBlockComment = false
+      }
+      continue
+    }
+
+    if (inLineComment) {
+      current += char
+      if (char === '\n') {
+        inLineComment = false
+      }
+      continue
+    }
+
+    if (inSingleQuote) {
+      current += char
+      if (char === '\\' && i + 1 < body.length) {
+        current += next
+        i++
         continue
       }
+      if (char === "'") {
+        if (next === "'") {
+          current += next
+          i++
+          continue
+        }
+        inSingleQuote = false
+      }
+      continue
     }
+
+    if (inDoubleQuote) {
+      current += char
+      if (char === '\\' && i + 1 < body.length) {
+        current += next
+        i++
+        continue
+      }
+      if (char === '"') {
+        if (next === '"') {
+          current += next
+          i++
+          continue
+        }
+        inDoubleQuote = false
+      }
+      continue
+    }
+
+    if (inBacktick) {
+      current += char
+      if (char === '`') inBacktick = false
+      continue
+    }
+
+    if (char === "'") {
+      inSingleQuote = true
+      current += char
+      continue
+    }
+    if (char === '"') {
+      inDoubleQuote = true
+      current += char
+      continue
+    }
+    if (char === '`') {
+      inBacktick = true
+      current += char
+      continue
+    }
+
+    if (char === '/' && next === '*') {
+      inBlockComment = true
+      current += char + next
+      i++
+      continue
+    }
+
+    if ((char === '-' && next === '-') || char === '#') {
+      inLineComment = true
+      current += char
+      continue
+    }
+
+    if (char === '(') {
+      depth++
+      current += char
+      continue
+    }
+    if (char === ')') {
+      depth--
+      current += char
+      continue
+    }
+
+    if (char === ',' && depth === 0) {
+      // 检查逗号所在行后方是否紧跟行注释，若有则包含入当前 item
+      let lookahead = i + 1
+      let sawLineComment = false
+      while (lookahead < body.length && body[lookahead] !== '\n') {
+        const c = body[lookahead]
+        const n = body[lookahead + 1]
+        if ((c === '-' && n === '-') || c === '#') {
+          sawLineComment = true
+          break
+        }
+        if (c !== ' ' && c !== '\t' && c !== '\r') {
+          break
+        }
+        lookahead++
+      }
+
+      if (sawLineComment) {
+        while (lookahead < body.length && body[lookahead] !== '\n') {
+          lookahead++
+        }
+        const trailingCommentChunk = body.slice(i, lookahead)
+        current += trailingCommentChunk
+        i = lookahead
+      }
+
+      if (current.trim()) items.push(current.trim())
+      current = ''
+      continue
+    }
+
     current += char
   }
+
   if (current.trim()) items.push(current.trim())
   return items
+}
+
+/**
+ * 校验指定字符索引是否位于 SQL 字符串字面量或注释中
+ */
+export function isPositionInsideCommentOrString(sql: string, targetPos: number): boolean {
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let inBacktick = false
+  let inBlockComment = false
+  let inLineComment = false
+
+  for (let i = 0; i < targetPos && i < sql.length; i++) {
+    const char = sql[i]
+    const next = sql[i + 1]
+
+    if (inBlockComment) {
+      if (char === '*' && next === '/') {
+        inBlockComment = false
+        i++
+      }
+      continue
+    }
+
+    if (inLineComment) {
+      if (char === '\n') {
+        inLineComment = false
+      }
+      continue
+    }
+
+    if (inSingleQuote) {
+      if (char === '\\' && i + 1 < targetPos) {
+        i++
+        continue
+      }
+      if (char === "'") {
+        if (next === "'") {
+          i++
+          continue
+        }
+        inSingleQuote = false
+      }
+      continue
+    }
+
+    if (inDoubleQuote) {
+      if (char === '\\' && i + 1 < targetPos) {
+        i++
+        continue
+      }
+      if (char === '"') {
+        if (next === '"') {
+          i++
+          continue
+        }
+        inDoubleQuote = false
+      }
+      continue
+    }
+
+    if (inBacktick) {
+      if (char === '`') inBacktick = false
+      continue
+    }
+
+    if (char === "'") {
+      inSingleQuote = true
+      continue
+    }
+    if (char === '"') {
+      inDoubleQuote = true
+      continue
+    }
+    if (char === '`') {
+      inBacktick = true
+      continue
+    }
+    if (char === '/' && next === '*') {
+      inBlockComment = true
+      i++
+      continue
+    }
+    if ((char === '-' && next === '-') || char === '#') {
+      inLineComment = true
+      continue
+    }
+  }
+
+  return inSingleQuote || inDoubleQuote || inBacktick || inBlockComment || inLineComment
+}
+
+/**
+ * 从建表语句前缀文本中回溯提取表注释（兼容 SQLite 的 -- 表说明: xxx 以及单行注释）
+ */
+export function extractTableCommentFromPreamble(sqlBeforeTable: string): string {
+  const lines = sqlBeforeTable.trim().split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    const explicitMatch = line.match(/^--\s*(?:表说明|表注释|表描述|comment)\s*[:：]\s*(.+)$/i)
+    if (explicitMatch) {
+      return explicitMatch[1].trim()
+    }
+
+    const blockExplicitMatch = line.match(/^\/\*\s*(?:表说明|表注释|表描述|comment)\s*[:：]\s*(.+?)\s*\*\/$/i)
+    if (blockExplicitMatch) {
+      return blockExplicitMatch[1].trim()
+    }
+
+    if (/^--\s*[-=~_*#]{3,}/.test(line) || /^#\s*[-=~_*#]{3,}/.test(line)) {
+      continue
+    }
+
+    if (i >= lines.length - 2) {
+      const genericLineMatch = line.match(/^--\s*(.+)$/)
+      if (genericLineMatch) {
+        const text = genericLineMatch[1].trim()
+        if (
+          !text.includes('自动生成') &&
+          !text.includes('数据库方言') &&
+          !text.includes('导出时间') &&
+          !text.includes('实体总数')
+        ) {
+          return text
+        }
+      }
+      const genericBlockMatch = line.match(/^\/\*\s*(.+?)\s*\*\/$/)
+      if (genericBlockMatch) {
+        const text = genericBlockMatch[1].trim()
+        if (!text.includes('自动生成') && !text.includes('数据库方言')) {
+          return text
+        }
+      }
+    }
+
+    if (!line.startsWith('--') && !line.startsWith('#') && !line.startsWith('/*')) {
+      break
+    }
+  }
+  return ''
 }
 
 export interface SQLImportResult {
@@ -414,53 +787,125 @@ export interface SQLImportResult {
  * 逆向解析 SQL DDL 脚本为 ArchCanvas ER 领域模型
  */
 export function parseSQLToDesign(sqlText: string): SQLImportResult {
-  const clean = stripSQLComments(sqlText)
   const warnings: string[] = []
   const createTableRegex = /CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.]+)\s*\(/gi
 
   const rawTables: Array<{ name: string; body: string; comment?: string }> = []
   let match: RegExpExecArray | null
-  while ((match = createTableRegex.exec(clean)) !== null) {
+
+  while ((match = createTableRegex.exec(sqlText)) !== null) {
+    if (isPositionInsideCommentOrString(sqlText, match.index)) {
+      continue
+    }
+
     const rawTableName = match[1]
     const tableName = cleanIdentifier(rawTableName)
     const startIndex = match.index + match[0].length
+
+    const preamble = sqlText.slice(Math.max(0, match.index - 500), match.index)
+    let tblComment = extractTableCommentFromPreamble(preamble)
 
     let depth = 1
     let endIndex = -1
     let inSingleQuote = false
     let inDoubleQuote = false
     let inBacktick = false
+    let inBlockComment = false
+    let inLineComment = false
 
-    for (let i = startIndex; i < clean.length; i++) {
-      const char = clean[i]
-      if (char === "'" && !inDoubleQuote && !inBacktick) {
-        if (inSingleQuote && clean[i - 1] !== '\\') inSingleQuote = false
-        else if (!inSingleQuote) inSingleQuote = true
-      } else if (char === '"' && !inSingleQuote && !inBacktick) {
-        if (inDoubleQuote && clean[i - 1] !== '\\') inDoubleQuote = false
-        else if (!inDoubleQuote) inDoubleQuote = true
-      } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
-        inBacktick = !inBacktick
-      } else if (!inSingleQuote && !inDoubleQuote && !inBacktick) {
-        if (char === '(') depth++
-        else if (char === ')') {
-          depth--
-          if (depth === 0) {
-            endIndex = i
-            break
+    for (let i = startIndex; i < sqlText.length; i++) {
+      const char = sqlText[i]
+      const next = sqlText[i + 1]
+
+      if (inBlockComment) {
+        if (char === '*' && next === '/') {
+          inBlockComment = false
+          i++
+        }
+        continue
+      }
+
+      if (inLineComment) {
+        if (char === '\n') {
+          inLineComment = false
+        }
+        continue
+      }
+
+      if (inSingleQuote) {
+        if (char === '\\' && i + 1 < sqlText.length) {
+          i++
+          continue
+        }
+        if (char === "'") {
+          if (next === "'") {
+            i++
+            continue
           }
+          inSingleQuote = false
+        }
+        continue
+      }
+
+      if (inDoubleQuote) {
+        if (char === '\\' && i + 1 < sqlText.length) {
+          i++
+          continue
+        }
+        if (char === '"') {
+          if (next === '"') {
+            i++
+            continue
+          }
+          inDoubleQuote = false
+        }
+        continue
+      }
+
+      if (inBacktick) {
+        if (char === '`') inBacktick = false
+        continue
+      }
+
+      if (char === "'") {
+        inSingleQuote = true
+        continue
+      }
+      if (char === '"') {
+        inDoubleQuote = true
+        continue
+      }
+      if (char === '`') {
+        inBacktick = true
+        continue
+      }
+      if (char === '/' && next === '*') {
+        inBlockComment = true
+        i++
+        continue
+      }
+      if ((char === '-' && next === '-') || char === '#') {
+        inLineComment = true
+        continue
+      }
+
+      if (char === '(') depth++
+      else if (char === ')') {
+        depth--
+        if (depth === 0) {
+          endIndex = i
+          break
         }
       }
     }
 
     if (endIndex === -1) continue
 
-    const body = clean.slice(startIndex, endIndex)
-    const restAfterParen = clean.slice(
+    const body = sqlText.slice(startIndex, endIndex)
+    const restAfterParen = sqlText.slice(
       endIndex + 1,
-      clean.indexOf(';', endIndex + 1) !== -1 ? clean.indexOf(';', endIndex + 1) : endIndex + 200,
+      sqlText.indexOf(';', endIndex + 1) !== -1 ? sqlText.indexOf(';', endIndex + 1) : endIndex + 200,
     )
-    let tblComment = ''
     const commentMatch = restAfterParen.match(/\bCOMMENT\s*=\s*['"]([^'"]*)['"]/i)
     if (commentMatch) {
       tblComment = commentMatch[1].trim()
@@ -497,7 +942,11 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     const tableUniqueKeys = new Set<string>()
 
     for (const rawItem of items) {
-      const item = rawItem.trim()
+      const itemTrimmed = rawItem.trim()
+      if (!itemTrimmed) continue
+
+      const { cleanSql, comment: inlineComment } = extractItemComment(itemTrimmed)
+      const item = cleanSql.trim()
       if (!item) continue
 
       // PRIMARY KEY (col1, col2)
@@ -538,7 +987,7 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
           name: idxName,
           columns: cols,
           is_unique: true,
-          comment: ukMatch[3]?.trim(),
+          comment: ukMatch[3]?.trim() || inlineComment,
         })
         continue
       }
@@ -555,7 +1004,7 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
           name: idxName,
           columns: cols,
           is_unique: false,
-          comment: keyMatch[3]?.trim(),
+          comment: keyMatch[3]?.trim() || inlineComment,
         })
         continue
       }
@@ -586,11 +1035,13 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
       const isNotNull = /\bNOT\s+NULL\b/i.test(rest)
       const isNullable = isPk ? false : isNotNull ? false : true
 
-      // 提取 COMMENT '...' 或 COMMENT "..."
+      // 提取 COMMENT '...' 或 COMMENT "..."，若无则使用提取出的行内注释
       let description = ''
       const commentMatch = rest.match(/\bCOMMENT\s*['"]([^'"]*)['"]/i)
       if (commentMatch) {
         description = commentMatch[1].trim()
+      } else if (inlineComment) {
+        description = inlineComment.trim()
       }
 
       // 判定 PostgreSQL / SQLite 风格内联 REFERENCES
@@ -634,6 +1085,8 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     entities.push(entity)
     entityMap.set(entity.name.toLowerCase(), entity)
   }
+
+  const clean = stripSQLComments(sqlText)
 
   // 额外解析独立建索引语句：CREATE [UNIQUE] INDEX ... ON table (cols)
   const standaloneIndexRegex =
