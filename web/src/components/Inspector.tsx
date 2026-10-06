@@ -371,7 +371,7 @@ function ConceptInspector({ conceptID }: { conceptID: string }) {
       (c) =>
         c.id === conceptID ||
         c.name.toLowerCase() === conceptID.toLowerCase() ||
-        conceptID.toLowerCase().includes(c.name.toLowerCase()),
+        `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` === conceptID,
     ),
   )
   const updateConcept = useStore((state) => state.updateConcept)
@@ -379,7 +379,11 @@ function ConceptInspector({ conceptID }: { conceptID: string }) {
   const addConceptAttribute = useStore((state) => state.addConceptAttribute)
 
   if (!concept) {
-    return null
+    return (
+      <div className="rounded-xl border-[1.5px] border-stone-300 bg-white p-4 text-center text-xs text-stone-500">
+        未找到对应的业务概念实体，可能已被移除。
+      </div>
+    )
   }
 
   const cid = concept.id || conceptID
@@ -488,7 +492,11 @@ function EntityInspector({ entityID }: { entityID: string }) {
   const [copied, setCopied] = useState(false)
 
   if (!entity) {
-    return <ConceptInspector conceptID={entityID} />
+    return (
+      <div className="rounded-xl border-[1.5px] border-stone-300 bg-white p-4 text-center text-xs text-stone-500">
+        未找到对应的物理数据表实体，可能已被移除。
+      </div>
+    )
   }
 
   const entityChinese = getEntityChineseName(entity.name)
@@ -655,7 +663,11 @@ function ConceptRelationInspector({ relationID }: { relationID: string }) {
   const deleteConceptRelation = useStore((state) => state.deleteConceptRelation)
 
   if (!rel) {
-    return null
+    return (
+      <div className="rounded-xl border-[1.5px] border-stone-300 bg-white p-4 text-center text-xs text-stone-500">
+        未找到对应的业务概念联系，可能已被移除。
+      </div>
+    )
   }
 
   const relId = rel.id || relationID
@@ -760,7 +772,11 @@ function RelationInspector({ relationID }: { relationID: string }) {
   const deleteRelation = useStore((state) => state.deleteRelation)
 
   if (!relation) {
-    return <ConceptRelationInspector relationID={relationID} />
+    return (
+      <div className="rounded-xl border-[1.5px] border-stone-300 bg-white p-4 text-center text-xs text-stone-500">
+        未找到对应的物理关联关系，可能已被移除。
+      </div>
+    )
   }
 
   const entityOptions = entities.map((entity) => ({
@@ -915,13 +931,95 @@ function OverviewInspector() {
 
 export default function Inspector() {
   const selection = useStore((state) => state.selection)
+  const canvasViewMode = useStore((state) => state.canvasViewMode)
+  const isChenView = canvasViewMode === 'chen'
   const inspectorOpen = useStore((state) => state.inspectorOpen)
   const setInspectorOpen = useStore((state) => state.setInspectorOpen)
   const select = useStore((state) => state.select)
 
+  const hasConcept = useStore((state) =>
+    selection?.kind === 'entity'
+      ? state.conceptualDesign.concepts.some(
+          (c) =>
+            c.id === selection.id ||
+            c.name.toLowerCase() === selection.id.toLowerCase() ||
+            `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` === selection.id,
+        )
+      : false,
+  )
+  const hasPhysicalEntity = useStore((state) =>
+    selection?.kind === 'entity'
+      ? state.design.entities.some((e) => e.id === selection.id)
+      : false,
+  )
+
+  const hasConceptRelation = useStore((state) =>
+    selection?.kind === 'relation'
+      ? state.conceptualDesign.relations.some(
+          (r) =>
+            r.id === selection.id ||
+            `rel-${r.id}` === selection.id ||
+            (r.id && selection.id.includes(r.id)) ||
+            (r.source_concept &&
+              r.target_concept &&
+              selection.id.toLowerCase().includes(r.source_concept.toLowerCase()) &&
+              selection.id.toLowerCase().includes(r.target_concept.toLowerCase())),
+        )
+      : false,
+  )
+  const hasPhysicalRelation = useStore((state) =>
+    selection?.kind === 'relation'
+      ? state.design.relations.some((r) => r.id === selection.id)
+      : false,
+  )
+
   const handleClose = () => {
     setInspectorOpen(false)
     select(null)
+  }
+
+  const inspectorTitle = useMemo(() => {
+    if (!selection) return '项目设计诊断总览'
+    if (isChenView) {
+      if (selection.kind === 'entity') {
+        return hasConcept ? '业务概念属性检查器' : hasPhysicalEntity ? '数据实体表检查器' : '概念实体检查器'
+      }
+      if (selection.kind === 'relation') {
+        return hasConceptRelation ? '概念联系关系配置' : '关联关系属性配置'
+      }
+      return '业务概念检查器'
+    }
+    if (selection.kind === 'entity') {
+      return hasPhysicalEntity ? '物理表属性检查器' : hasConcept ? '业务概念属性检查器' : '实体属性检查器'
+    }
+    if (selection.kind === 'relation') {
+      return hasPhysicalRelation ? '物理外键与关联配置' : '关系属性配置'
+    }
+    return '架构检查器'
+  }, [selection, isChenView, hasConcept, hasPhysicalEntity, hasConceptRelation, hasPhysicalRelation])
+
+  const renderEntityContent = () => {
+    if (!selection || selection.kind !== 'entity') return null
+    if (isChenView) {
+      if (hasConcept) return <ConceptInspector conceptID={selection.id} />
+      if (hasPhysicalEntity) return <EntityInspector entityID={selection.id} />
+      return <ConceptInspector conceptID={selection.id} />
+    }
+    if (hasPhysicalEntity) return <EntityInspector entityID={selection.id} />
+    if (hasConcept) return <ConceptInspector conceptID={selection.id} />
+    return <EntityInspector entityID={selection.id} />
+  }
+
+  const renderRelationContent = () => {
+    if (!selection || selection.kind !== 'relation') return null
+    if (isChenView) {
+      if (hasConceptRelation) return <ConceptRelationInspector relationID={selection.id} />
+      if (hasPhysicalRelation) return <RelationInspector relationID={selection.id} />
+      return <ConceptRelationInspector relationID={selection.id} />
+    }
+    if (hasPhysicalRelation) return <RelationInspector relationID={selection.id} />
+    if (hasConceptRelation) return <ConceptRelationInspector relationID={selection.id} />
+    return <RelationInspector relationID={selection.id} />
   }
 
   return (
@@ -935,18 +1033,14 @@ export default function Inspector() {
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[#df4e3e]" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-[#1f1f1f]">
-              {selection?.kind === 'entity'
-                ? '实体属性检查器'
-                : selection?.kind === 'relation'
-                  ? '关系属性配置'
-                  : '项目设计诊断总览'}
+              {inspectorTitle}
             </h2>
           </div>
 
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-lg p-1 text-stone-500 hover:bg-stone-100 hover:text-[#1f1f1f] transition"
+            className="rounded-lg p-1 text-stone-500 hover:bg-stone-100 hover:text-[#1f1f1f] transition cursor-pointer"
             title="收起检查器"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -956,8 +1050,8 @@ export default function Inspector() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-3.5 space-y-4 no-scrollbar">
-          {selection?.kind === 'entity' ? <EntityInspector entityID={selection.id} /> : null}
-          {selection?.kind === 'relation' ? <RelationInspector relationID={selection.id} /> : null}
+          {selection?.kind === 'entity' ? renderEntityContent() : null}
+          {selection?.kind === 'relation' ? renderRelationContent() : null}
           {!selection ? <OverviewInspector /> : null}
         </div>
       </div>
