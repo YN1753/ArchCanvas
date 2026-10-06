@@ -21,59 +21,154 @@ import type { ChenEdgeType } from '../components/chen/ChenEdge'
 export type ChenNode = Node<ChenEntityNodeData | ChenRelationNodeData | ChenAttributeNodeData>
 
 /**
- * 识别是否为多对多纯技术中间表（Junction Table）
+ * 通用审计与技术运维字段名集合（不计入领域独立业务字段）
  */
-function detectJunctionTable(
+export const TECHNICAL_AUDIT_FIELDS = new Set([
+  'created_at',
+  'create_time',
+  'created_time',
+  'create_at',
+  'gmt_create',
+  'created_date',
+  'created_by',
+  'creator',
+  'updated_at',
+  'update_time',
+  'updated_time',
+  'update_at',
+  'gmt_modified',
+  'updated_date',
+  'updated_by',
+  'updater',
+  'deleted_at',
+  'delete_time',
+  'deleted_time',
+  'delete_at',
+  'is_deleted',
+  'deleted',
+  'del_flag',
+  'version',
+  'lock_version',
+  'revision',
+])
+
+/**
+ * 识别是否为多对多纯技术中间表（Junction Table）
+ *
+ * 核心判定法则：
+ * 1. 显式用户配置（最高优先级）：
+ *    - entity.is_junction_table === false：强制保留为实体与字段椭圆，绝不折叠；
+ *    - entity.is_junction_table === true：只要能识别出两个关联父实体，强制折叠为多对多联系菱形。
+ * 2. 必须能识别出至少 2 个不同的关联父实体（通过外键命名或组合表名）。
+ * 3. 统计除主键、两端关联外键、技术审计字段之外的独立业务字段数：
+ *    - 若业务字段数 > 1（例如包含 status, expire_at, amount, price, quantity 等），
+ *      判定为“关联实体（Associative Entity）”，保留实体矩形及其业务属性椭圆，不强行折叠；
+ *    - 若业务字段数 <= 1 且字段总数 <= 6，判定为轻量级/纯技术中间表，折叠为多对多联系。
+ */
+export function detectJunctionTable(
   entity: Entity,
   allEntities: Entity[],
-): { isJunction: boolean; leftEntity?: Entity; rightEntity?: Entity } {
-  const normName = entity.name.toLowerCase()
+): { isJunction: boolean; leftEntity?: Entity; rightEntity?: Entity; businessFieldCount?: number } {
+  // 1. 显式用户配置：若用户显式关闭中间表折叠，强制保留
+  if (entity.is_junction_table === false) {
+    return { isJunction: false, businessFieldCount: 0 }
+  }
 
-  // 1. 字段特征识别：含有两个不同实体的主键外键，且总字段较少（通常 <= 5 个）
-  const foreignKeys = entity.attributes.filter(
-    (a) => !a.is_primary_key && (a.name.endsWith('_id') || a.name.endsWith('id')) && a.name.toLowerCase() !== 'id',
+  const normName = entity.name.toLowerCase()
+  const attributes = entity.attributes || []
+
+  // 2. 识别两端外键候选字段并匹配父实体
+  const foreignKeys = attributes.filter(
+    (a) => (a.name.endsWith('_id') || a.name.endsWith('id')) && a.name.toLowerCase() !== 'id',
   )
 
-  if (foreignKeys.length >= 2 && entity.attributes.length <= 6) {
-    const matchedParents: Entity[] = []
-    for (const fk of foreignKeys) {
-      const base = fk.name.toLowerCase().replace(/_?id$/, '')
-      for (const candidate of allEntities) {
-        if (candidate.id === entity.id) continue
-        const cName = candidate.name.toLowerCase()
-        const cSingular = cName.endsWith('s') ? cName.slice(0, -1) : cName
-        if (cName === base || cSingular === base || cName.includes(base)) {
+  const matchedParents: Entity[] = []
+  const matchedFkAttrIds = new Set<string>()
+
+  for (const fk of foreignKeys) {
+    const base = fk.name.toLowerCase().replace(/_?id$/, '')
+    for (const candidate of allEntities) {
+      if (candidate.id === entity.id) continue
+      const cName = candidate.name.toLowerCase()
+      const cSingular = cName.endsWith('s') ? cName.slice(0, -1) : cName
+      if (cName === base || cSingular === base || cName.includes(base) || base.includes(cSingular)) {
+        if (!matchedParents.some((p) => p.id === candidate.id)) {
           matchedParents.push(candidate)
+          matchedFkAttrIds.add(fk.id)
           break
         }
       }
     }
-    if (matchedParents.length >= 2) {
-      return { isJunction: true, leftEntity: matchedParents[0], rightEntity: matchedParents[1] }
-    }
   }
 
-  // 2. 命名组合特征识别（如 article_tags, user_roles）
-  if (normName.includes('_')) {
+  // 3. 若通过外键未找齐 2 个父实体，尝试通过组合表名（如 user_roles, article_tags）兜底寻找
+  if (matchedParents.length < 2 && normName.includes('_')) {
     const parts = normName.split('_')
-    const found: Entity[] = []
     for (const part of parts) {
       for (const candidate of allEntities) {
         if (candidate.id === entity.id) continue
         const cName = candidate.name.toLowerCase()
         const cSingular = cName.endsWith('s') ? cName.slice(0, -1) : cName
         if (cName === part || cSingular === part) {
-          found.push(candidate)
-          break
+          if (!matchedParents.some((p) => p.id === candidate.id)) {
+            matchedParents.push(candidate)
+            break
+          }
         }
       }
     }
-    if (found.length >= 2) {
-      return { isJunction: true, leftEntity: found[0], rightEntity: found[1] }
+  }
+
+  // 若无法识别出至少 2 个不同的关联父实体，则绝非技术中间表
+  if (matchedParents.length < 2) {
+    return { isJunction: false, businessFieldCount: attributes.length }
+  }
+
+  // 4. 用户显式强制折叠为中间表
+  if (entity.is_junction_table === true) {
+    return { isJunction: true, leftEntity: matchedParents[0], rightEntity: matchedParents[1], businessFieldCount: 0 }
+  }
+
+  // 5. 自动判定：统计独立业务字段数
+  // 排除：主键、关联到父级的外键字段、通用审计运维字段
+  const businessAttrs = attributes.filter((a) => {
+    // 排除已匹配的外键
+    if (matchedFkAttrIds.has(a.id)) return false
+    // 排除主键
+    if (a.is_primary_key && (a.name.toLowerCase() === 'id' || a.name.endsWith('_id') || a.name.endsWith('id'))) return false
+    if (a.name.toLowerCase() === 'id') return false
+    // 排除审计技术字段
+    const aLower = a.name.toLowerCase()
+    if (TECHNICAL_AUDIT_FIELDS.has(aLower)) return false
+    return true
+  })
+
+  // 若业务字段数 > 1（例如包含 status, expire_at, amount 等），判定为关联实体，不折叠
+  if (businessAttrs.length > 1) {
+    return {
+      isJunction: false,
+      leftEntity: matchedParents[0],
+      rightEntity: matchedParents[1],
+      businessFieldCount: businessAttrs.length,
     }
   }
 
-  return { isJunction: false }
+  // 字段总数过多（> 6）也保守保留为实体
+  if (attributes.length > 6) {
+    return {
+      isJunction: false,
+      leftEntity: matchedParents[0],
+      rightEntity: matchedParents[1],
+      businessFieldCount: businessAttrs.length,
+    }
+  }
+
+  return {
+    isJunction: true,
+    leftEntity: matchedParents[0],
+    rightEntity: matchedParents[1],
+    businessFieldCount: businessAttrs.length,
+  }
 }
 
 /**

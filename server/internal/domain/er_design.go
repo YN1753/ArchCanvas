@@ -21,12 +21,13 @@ type IndexDefinition struct {
 }
 
 type Entity struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Comment    string            `json:"comment,omitempty"` // 表的中文业务注释
-	Position   *Position         `json:"position,omitempty"`
-	Attributes []Attribute       `json:"attributes"`
-	Indexes    []IndexDefinition `json:"indexes,omitempty"` // 表的索引清单
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Comment         string            `json:"comment,omitempty"` // 表的中文业务注释
+	Position        *Position         `json:"position,omitempty"`
+	Attributes      []Attribute       `json:"attributes"`
+	Indexes         []IndexDefinition `json:"indexes,omitempty"`           // 表的索引清单
+	IsJunctionTable *bool             `json:"is_junction_table,omitempty"` // 是否视为技术中间表并在概念图中折叠为联系
 }
 
 type Attribute struct {

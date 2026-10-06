@@ -69,6 +69,8 @@ export interface Entity {
   position?: Position
   attributes: Attribute[]
   indexes?: IndexDefinition[]
+  /** 显式声明是否视为多对多技术中间表并在陈氏概念图中折叠为联系 */
+  is_junction_table?: boolean
 }
 
 export interface Relation {

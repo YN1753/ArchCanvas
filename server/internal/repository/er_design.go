@@ -102,12 +102,13 @@ func (r *ERDesignRepository) GetByProjectID(
 		}
 
 		design.Entities = append(design.Entities, domain.Entity{
-			ID:         entity.ID,
-			Name:       entity.Name,
-			Comment:    entity.Comment,
-			Position:   pos,
-			Attributes: entityAttributes,
-			Indexes:    indexes,
+			ID:              entity.ID,
+			Name:            entity.Name,
+			Comment:         entity.Comment,
+			Position:        pos,
+			Attributes:      entityAttributes,
+			Indexes:         indexes,
+			IsJunctionTable: entity.IsJunctionTable,
 		})
 	}
 	for _, relation := range relations {
@@ -238,19 +239,21 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 
 			entModel := model.Entity{
-				ID:        entityID,
-				ProjectID: projectID,
-				Name:      e.Name,
-				Comment:   e.Comment,
-				Indexes:   indexesJSON,
-				PosX:      posX,
-				PosY:      posY,
+				ID:              entityID,
+				ProjectID:       projectID,
+				Name:            e.Name,
+				Comment:         e.Comment,
+				Indexes:         indexesJSON,
+				IsJunctionTable: e.IsJunctionTable,
+				PosX:            posX,
+				PosY:            posY,
 			}
 
 			if oldEnt, ok := oldEntitiesByID[entityID]; ok {
 				if oldEnt.Name != entModel.Name ||
 					oldEnt.Comment != entModel.Comment ||
 					oldEnt.Indexes != entModel.Indexes ||
+					!boolPtrEqual(oldEnt.IsJunctionTable, entModel.IsJunctionTable) ||
 					!float64PtrEqual(oldEnt.PosX, entModel.PosX) ||
 					!float64PtrEqual(oldEnt.PosY, entModel.PosY) {
 					entitiesToUpdate = append(entitiesToUpdate, entModel)
@@ -596,3 +599,12 @@ func toDomainAttribute(attribute model.Attribute) domain.Attribute {
 	}
 }
 
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}

@@ -20,6 +20,7 @@ import {
   getAttributeChineseName,
   getEntityChineseName,
 } from '../utils/chinese'
+import { detectJunctionTable } from '../flow/chenAdapter'
 import Combobox from './Combobox'
 import Select from './Select'
 
@@ -607,9 +608,15 @@ function EntityInspector({ entityID }: { entityID: string }) {
   const deleteEntity = useStore((state) => state.deleteEntity)
   const addAttribute = useStore((state) => state.addAttribute)
   const targetDialect = useStore((state) => state.targetDialect)
+  const allEntities = useStore((state) => state.design.entities)
   const [tab, setTab] = useState<'fields' | 'indexes' | 'sql'>('fields')
   const [previewDialect, setPreviewDialect] = useState<DatabaseDialect>(targetDialect || 'mysql')
   const [copied, setCopied] = useState(false)
+
+  const junctionCheck = useMemo(
+    () => (entity ? detectJunctionTable(entity, allEntities) : { isJunction: false, businessFieldCount: 0 }),
+    [entity, allEntities],
+  )
 
   if (!entity) {
     return (
@@ -680,6 +687,46 @@ function EntityInspector({ entityID }: { entityID: string }) {
           spellCheck={false}
           onChange={(event) => updateEntity(entity.id, { comment: event.target.value })}
         />
+
+        {/* 陈氏概念图中间表折叠选项 */}
+        <div className="mt-2.5 pt-2 border-t border-stone-200">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-[1.5px] border-[#1f1f1f] text-[#df4e3e] focus:ring-0 cursor-pointer accent-[#df4e3e]"
+                checked={
+                  entity.is_junction_table !== undefined
+                    ? entity.is_junction_table
+                    : junctionCheck.isJunction
+                }
+                onChange={(e) =>
+                  updateEntity(entity.id, { is_junction_table: e.target.checked })
+                }
+              />
+              <span className="text-xs font-bold text-[#1f1f1f]">
+                视为技术中间表并在概念图中折叠为联系
+              </span>
+            </label>
+            {entity.is_junction_table !== undefined && (
+              <button
+                type="button"
+                onClick={() => updateEntity(entity.id, { is_junction_table: undefined })}
+                className="text-[10px] text-stone-400 hover:text-[#df4e3e] underline cursor-pointer ml-2 shrink-0"
+                title="重置为根据字段特征自动判断"
+              >
+                重置为自动
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[10px] text-stone-400 pl-5.5 leading-normal">
+            {entity.is_junction_table !== undefined
+              ? (entity.is_junction_table ? '已手动设置：强制折叠为多对多菱形联系' : '已手动设置：强制保留实体与独立字段椭圆')
+              : (junctionCheck.isJunction
+                  ? '系统已根据外键特征自动识别为技术中间表（将折叠为菱形）'
+                  : `系统识别到包含 ${junctionCheck.businessFieldCount ?? 0} 个独立业务字段，已保留为关联实体`)}
+          </p>
+        </div>
 
         {isLocalID(entity.id) ? (
           <p className="mt-1.5 text-[10px] text-amber-700 font-medium">本地草稿：尚未保存至服务器数据库</p>
