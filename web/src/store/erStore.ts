@@ -138,6 +138,7 @@ interface StoreActions {
   resetChenPositions: () => void
   addEntity: (position?: { x: number; y: number }) => void
   renameEntity: (id: string, name: string) => void
+  updateEntity: (id: string, patch: Partial<Entity>) => void
   deleteEntity: (id: string) => void
 
   addAttribute: (entityID: string) => void
@@ -926,6 +927,13 @@ export const useStore = create<Store>((set, get) => {
       withEntities(
         (entities) => entities.map((entity) => (entity.id === id ? { ...entity, name } : entity)),
         `rename_${id}`,
+      )
+    },
+
+    updateEntity(id, patch) {
+      withEntities(
+        (entities) => entities.map((entity) => (entity.id === id ? { ...entity, ...patch } : entity)),
+        `update_entity_${id}`,
       )
     },
 
