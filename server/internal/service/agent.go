@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -518,31 +519,184 @@ func (a *AgentService) buildSchemaDesignMessages(input SchemaDesignInput) []*sch
 	}
 }
 
-func tryParseRequirementJSON(content string) (*RequirementOutput, error) {
-	content = strings.TrimSpace(content)
-	if strings.Contains(content, "```json") {
-		parts := strings.Split(content, "```json")
-		if len(parts) > 1 {
-			jsonBlock, _, _ := strings.Cut(parts[1], "```")
-			var out RequirementOutput
-			if err := json.Unmarshal([]byte(strings.TrimSpace(jsonBlock)), &out); err == nil {
-				return &out, nil
+var codeBlockRegex = regexp.MustCompile("(?s)```(?:json|JSON)?\\s*(.*?)\\s*```")
+
+// ExtractBalancedJSONObjects 从包含任意前置/后置文本的内容中，基于栈与引号/转义状态机扫描提取所有完整闭合的最外层 JSON 对象
+func ExtractBalancedJSONObjects(content string) []string {
+	var objects []string
+	runes := []rune(content)
+	n := len(runes)
+
+	inString := false
+	escaped := false
+	depth := 0
+	startIdx := -1
+
+	for i := 0; i < n; i++ {
+		ch := runes[i]
+
+		if inString {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			continue
+		}
+
+		if ch == '{' {
+			if depth == 0 {
+				startIdx = i
+			}
+			depth++
+		} else if ch == '}' {
+			if depth > 0 {
+				depth--
+				if depth == 0 && startIdx != -1 {
+					obj := string(runes[startIdx : i+1])
+					objects = append(objects, strings.TrimSpace(obj))
+					startIdx = -1
+				}
 			}
 		}
 	}
-	var out RequirementOutput
-	if err := json.Unmarshal([]byte(content), &out); err == nil {
-		return &out, nil
+
+	return objects
+}
+
+// CleanJSONSyntax 状态机清洗非标准 LLM 输出中的语法瑕疵（如对象/数组末尾多余逗号），同时确保完全不污染字符串字面量内部内容
+func CleanJSONSyntax(raw string) string {
+	var sb strings.Builder
+	sb.Grow(len(raw))
+	inString := false
+	escaped := false
+
+	runes := []rune(raw)
+	n := len(runes)
+
+	for i := 0; i < n; i++ {
+		ch := runes[i]
+
+		if inString {
+			sb.WriteRune(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			sb.WriteRune(ch)
+			continue
+		}
+
+		if ch == ',' {
+			// 向前查找紧邻的下一个非空白字符
+			j := i + 1
+			for j < n && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\r' || runes[j] == '\n') {
+				j++
+			}
+			if j < n && (runes[j] == '}' || runes[j] == ']') {
+				// 闭合括号/方括号前的尾随逗号：跳过写入
+				continue
+			}
+		}
+
+		sb.WriteRune(ch)
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// extractJSONCandidates 综合提取所有可能的 JSON 候选文本（按优先级：Markdown 代码块、代码块内平衡花括号、全文平衡花括号、全文原始内容）
+func extractJSONCandidates(content string) []string {
+	var candidates []string
+	seen := make(map[string]bool)
+
+	addCandidate := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		candidates = append(candidates, s)
+	}
+
+	// 1. Markdown 代码块优先提取 (```json ... ``` 或 ``` ... ```)
+	matches := codeBlockRegex.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		if len(m) > 1 {
+			block := strings.TrimSpace(m[1])
+			if block != "" {
+				addCandidate(block)
+				// 若代码块内混杂了自然语言说明，进一步扫描平衡括号
+				for _, obj := range ExtractBalancedJSONObjects(block) {
+					addCandidate(obj)
+				}
+			}
+		}
+	}
+
+	// 2. 扫描全文中最外层平衡花括号闭合对象
+	for _, obj := range ExtractBalancedJSONObjects(content) {
+		addCandidate(obj)
+	}
+
+	// 3. 全文原始内容作为兜底
+	trimmed := strings.TrimSpace(content)
+	if trimmed != "" {
+		addCandidate(trimmed)
+	}
+
+	return candidates
+}
+
+func tryParseRequirementJSON(content string) (*RequirementOutput, error) {
+	candidates := extractJSONCandidates(content)
+	for _, cand := range candidates {
+		// 1. 尝试直接反序列化
+		var out RequirementOutput
+		if err := json.Unmarshal([]byte(cand), &out); err == nil && isRequirementOutputValid(&out) {
+			return &out, nil
+		}
+
+		// 2. 若失败，尝试清洗尾随逗号等语法瑕疵后再反序列化
+		cleaned := CleanJSONSyntax(cand)
+		if cleaned != cand {
+			var outClean RequirementOutput
+			if err := json.Unmarshal([]byte(cleaned), &outClean); err == nil && isRequirementOutputValid(&outClean) {
+				return &outClean, nil
+			}
+		}
 	}
 	return nil, errors.New("cannot parse RequirementOutput JSON")
+}
+
+func isRequirementOutputValid(out *RequirementOutput) bool {
+	if out == nil {
+		return false
+	}
+	return len(out.Concepts) > 0 || len(out.ClarificationCards) > 0 || len(out.Questions) > 0 || strings.TrimSpace(out.Summary) != ""
 }
 
 func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
 	cleanOut := func(out *domain.ERDesign) *domain.ERDesign {
 		cleanRelations := make([]domain.Relation, 0, len(out.Relations))
 		for _, r := range out.Relations {
-			if strings.TrimSpace(r.SourceEntityID) != "" &&
-				!strings.EqualFold(strings.TrimSpace(r.SourceEntityID), strings.TrimSpace(r.TargetEntityID)) {
+			// 保留合法关联（同时保留自引用关系，如分类层级自连）
+			if strings.TrimSpace(r.SourceEntityID) != "" && strings.TrimSpace(r.TargetEntityID) != "" {
 				cleanRelations = append(cleanRelations, r)
 			}
 		}
@@ -550,20 +704,23 @@ func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
 		return out
 	}
 
-	content = strings.TrimSpace(content)
-	if strings.Contains(content, "```json") {
-		parts := strings.Split(content, "```json")
-		if len(parts) > 1 {
-			jsonBlock, _, _ := strings.Cut(parts[1], "```")
-			var out domain.ERDesign
-			if err := json.Unmarshal([]byte(strings.TrimSpace(jsonBlock)), &out); err == nil && len(out.Entities) > 0 {
-				return cleanOut(&out), nil
+	candidates := extractJSONCandidates(content)
+	for _, cand := range candidates {
+		// 1. 尝试直接反序列化
+		var out domain.ERDesign
+		if err := json.Unmarshal([]byte(cand), &out); err == nil && len(out.Entities) > 0 {
+			return cleanOut(&out), nil
+		}
+
+		// 2. 若失败，尝试清洗尾随逗号等语法瑕疵后再反序列化
+		cleaned := CleanJSONSyntax(cand)
+		if cleaned != cand {
+			var outClean domain.ERDesign
+			if err := json.Unmarshal([]byte(cleaned), &outClean); err == nil && len(outClean.Entities) > 0 {
+				return cleanOut(&outClean), nil
 			}
 		}
 	}
-	var out domain.ERDesign
-	if err := json.Unmarshal([]byte(content), &out); err == nil && len(out.Entities) > 0 {
-		return cleanOut(&out), nil
-	}
 	return nil, errors.New("cannot parse ERDesign JSON")
 }
+
