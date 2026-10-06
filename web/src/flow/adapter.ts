@@ -155,13 +155,13 @@ export function toFlowEdges(
   return design.relations
     .filter(
       (relation) =>
-        relation.source_entity_id !== relation.target_entity_id &&
         nameByID.has(relation.source_entity_id) &&
         nameByID.has(relation.target_entity_id),
     )
     .map((relation) => {
       const srcEnt = entityMap.get(relation.source_entity_id)
       const tgtEnt = entityMap.get(relation.target_entity_id)
+      const isSelf = relation.source_entity_id === relation.target_entity_id
 
       const laneIndex = outCountByEntity.get(relation.source_entity_id) ?? 0
       outCountByEntity.set(relation.source_entity_id, laneIndex + 1)
@@ -173,7 +173,16 @@ export function toFlowEdges(
         usedFkByEntity.set(relation.target_entity_id, new Set())
       }
       const usedSet = usedFkByEntity.get(relation.target_entity_id)!
-      const targetAttr = srcEnt && tgtEnt ? findTargetForeignKeyAttribute(srcEnt, tgtEnt, usedSet) : undefined
+      let targetAttr: Attribute | undefined
+      if (isSelf) {
+        targetAttr = srcEnt?.attributes?.find((a) => {
+          if (a.is_primary_key || usedSet.has(a.id)) return false
+          const n = a.name.toLowerCase()
+          return n.startsWith('parent_') || n.includes('parent') || n.includes('pid') || n.endsWith('_id') || n.endsWith('id')
+        })
+      } else {
+        targetAttr = srcEnt && tgtEnt ? findTargetForeignKeyAttribute(srcEnt, tgtEnt, usedSet) : undefined
+      }
 
       if (targetAttr) {
         usedSet.add(targetAttr.id)

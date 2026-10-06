@@ -32,11 +32,18 @@ function ChenRelationNode({ data, selected }: NodeProps<ChenRelationNodeType>) {
       onClick={handleClick}
       className="group relative flex h-[74px] w-[114px] cursor-pointer items-center justify-center select-none"
     >
-      {/* 4 顶点精确锚点：Top, Right, Bottom, Left */}
+      {/* 4 顶点精确锚点：Top, Right, Bottom, Left（支持双向源/宿对接） */}
       <Handle type="target" position={Position.Top} id="top" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Top} id="top-source" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="source" position={Position.Right} id="right" className="!right-0 !h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Right} id="right-target" className="!right-0 !h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="source" position={Position.Bottom} id="bottom" className="!bottom-0 !h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Bottom} id="bottom-target" className="!bottom-0 !h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="target" position={Position.Left} id="left" className="!left-0 !h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Left} id="left-source" className="!left-0 !h-2 !w-2 !border-none !bg-transparent" />
 
       {/* 经典陈氏菱形 SVG 矢量绘制（带暖纸野兽派硬阴影） */}
       <svg

@@ -83,6 +83,36 @@ function getRelationshipVerb(srcName: string, tgtName: string, cardinality?: str
   const s = srcName.toLowerCase()
   const t = tgtName.toLowerCase()
 
+  if (s === t) {
+    if (
+      s.includes('category') ||
+      s.includes('tag') ||
+      s.includes('menu') ||
+      s.includes('dept') ||
+      s.includes('department') ||
+      s.includes('org') ||
+      s.includes('node') ||
+      s.includes('tree') ||
+      s.includes('folder') ||
+      s.includes('catalog')
+    ) {
+      return '层级包含'
+    }
+    if (
+      s.includes('user') ||
+      s.includes('employee') ||
+      s.includes('member') ||
+      s.includes('staff') ||
+      s.includes('manager')
+    ) {
+      return '上下级汇报'
+    }
+    if (s.includes('comment') || s.includes('reply') || s.includes('message')) {
+      return '引用回复'
+    }
+    return '层级包含'
+  }
+
   const match = (a: string, b: string) =>
     (s.includes(a) && t.includes(b)) || (s.includes(b) && t.includes(a))
 
@@ -113,6 +143,50 @@ function getRowXOffsets(count: number): number[] {
   if (count === 2) return [-44, 44]
   if (count === 3) return [-64, 0, 64]
   return [-68, -22, 22, 68]
+}
+
+/**
+ * 计算自引用关系的专用回折平滑弧线（确保不遮挡节点文字且语义清晰）
+ */
+export function getSelfLoopPath(
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+  dir: 'top' | 'bottom' = 'top',
+): [string, number, number] {
+  const dx = tx - sx
+  const dy = ty - sy
+  const dist = Math.hypot(dx, dy) || 1
+  const offset = Math.max(38, Math.min(dist * 0.28, 75))
+
+  let cp1x: number
+  let cp1y: number
+  let cp2x: number
+  let cp2y: number
+
+  if (Math.abs(dx) < 40) {
+    // 纵向布局：向左右两侧分流弧线
+    const sign = dir === 'top' ? -1 : 1
+    cp1x = sx + dx * 0.25 + sign * offset
+    cp1y = sy + dy * 0.25
+    cp2x = sx + dx * 0.75 + sign * offset
+    cp2y = sy + dy * 0.75
+  } else {
+    // 横向布局：向上下两侧分流弧线
+    const sign = dir === 'top' ? -1 : 1
+    cp1x = sx + dx * 0.25
+    cp1y = sy + dy * 0.25 + sign * offset
+    cp2x = sx + dx * 0.75
+    cp2y = sy + dy * 0.75 + sign * offset
+  }
+
+  // 贝塞尔曲线在 t = 0.5 处的精确坐标（用于居中呈现基数徽标）
+  const lx = 0.125 * sx + 0.375 * cp1x + 0.375 * cp2x + 0.125 * tx
+  const ly = 0.125 * sy + 0.375 * cp1y + 0.375 * cp2y + 0.125 * ty
+  const path = `M ${sx} ${sy} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${tx} ${ty}`
+
+  return [path, lx, ly]
 }
 
 /**
@@ -232,25 +306,25 @@ export function toChenFlowElements(
     g.setEdge(junc.id, `ent-${junc.rightEntity.id}`, { minlen: 1, weight: 2 })
   }
 
-  // 添加常规关系转换的菱形联系到 Dagre
+  // 添加常规关系与自引用关系转换的菱形联系到 Dagre
   const regularDiamonds: Array<{
     id: string
     relation: Relation
     source: Entity
     target: Entity
     verb: string
+    isSelf?: boolean
   }> = []
 
   for (const rel of design.relations) {
-    // 忽略自环及涉及已处理中间表的关系
-    if (rel.source_entity_id === rel.target_entity_id) continue
     if (junctionEntityIds.has(rel.source_entity_id) || junctionEntityIds.has(rel.target_entity_id)) continue
 
     const src = entityMap.get(rel.source_entity_id)
     const tgt = entityMap.get(rel.target_entity_id)
     if (!src || !tgt) continue
 
-    const pairKey = [src.id, tgt.id].sort().join('--')
+    const isSelf = src.id === tgt.id
+    const pairKey = isSelf ? `self--${src.id}--${rel.id}` : [src.id, tgt.id].sort().join('--')
     if (processedPairKeys.has(pairKey)) continue
     processedPairKeys.add(pairKey)
 
@@ -263,6 +337,7 @@ export function toChenFlowElements(
       source: src,
       target: tgt,
       verb,
+      isSelf,
     })
 
     g.setNode(diaId, { width: RELATION_W, height: RELATION_H })
@@ -463,31 +538,70 @@ export function toChenFlowElements(
     // 宿端基数标签：1 或 N
     const tgtCard = is1to1 ? '1' : 'N'
 
-    edges.push({
-      id: `edge-${reg.source.id}-${reg.id}`,
-      type: 'chenEdge',
-      source: reg.source.id,
-      target: reg.id,
-      sourceHandle: 'right',
-      targetHandle: 'left',
-      data: {
-        cardinalityLabel: srcCard,
-        isAttributeEdge: false,
-      },
-    })
+    const isRelSelected = reg.id === selectedId || reg.relation.id === selectedId
 
-    edges.push({
-      id: `edge-${reg.id}-${reg.target.id}`,
-      type: 'chenEdge',
-      source: reg.id,
-      target: reg.target.id,
-      sourceHandle: 'right',
-      targetHandle: 'left',
-      data: {
-        cardinalityLabel: tgtCard,
-        isAttributeEdge: false,
-      },
-    })
+    if (reg.isSelf) {
+      // 自引用自环拓扑：顶部弧线出入菱形，底部弧线回折接入实体，双弧分流零重叠
+      edges.push({
+        id: `edge-${reg.source.id}-${reg.id}`,
+        type: 'chenEdge',
+        source: reg.source.id,
+        target: reg.id,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: srcCard,
+          isAttributeEdge: false,
+          isSelfLoop: true,
+          loopDirection: 'top',
+        },
+        selected: isRelSelected,
+      })
+
+      edges.push({
+        id: `edge-${reg.id}-${reg.target.id}`,
+        type: 'chenEdge',
+        source: reg.id,
+        target: reg.target.id,
+        sourceHandle: 'left-source',
+        targetHandle: 'right-target',
+        data: {
+          cardinalityLabel: tgtCard,
+          isAttributeEdge: false,
+          isSelfLoop: true,
+          loopDirection: 'bottom',
+        },
+        selected: isRelSelected,
+      })
+    } else {
+      edges.push({
+        id: `edge-${reg.source.id}-${reg.id}`,
+        type: 'chenEdge',
+        source: reg.source.id,
+        target: reg.id,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: srcCard,
+          isAttributeEdge: false,
+        },
+        selected: isRelSelected,
+      })
+
+      edges.push({
+        id: `edge-${reg.id}-${reg.target.id}`,
+        type: 'chenEdge',
+        source: reg.id,
+        target: reg.target.id,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: tgtCard,
+          isAttributeEdge: false,
+        },
+        selected: isRelSelected,
+      })
+    }
   }
 
   return { nodes, edges }
@@ -597,6 +711,7 @@ export function conceptualToChenFlowElements(
     sourceId: string
     targetId: string
     position?: Position
+    isSelf?: boolean
   }
 
   const resolvedRelations: ResolvedRelation[] = []
@@ -609,9 +724,9 @@ export function conceptualToChenFlowElements(
 
     const srcId = src.id || `concept_${src.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
     const tgtId = tgt.id || `concept_${tgt.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-    if (srcId === tgtId) continue
+    const isSelf = srcId === tgtId
 
-    const pairKey = [srcId, tgtId].sort().join('--')
+    const pairKey = isSelf ? `self--${srcId}--${rel.id || rel.name || 'self'}` : [srcId, tgtId].sort().join('--')
     if (processedPairs.has(pairKey)) continue
     processedPairs.add(pairKey)
 
@@ -630,6 +745,7 @@ export function conceptualToChenFlowElements(
       sourceId: srcId,
       targetId: tgtId,
       position: rel.position,
+      isSelf,
     })
 
     g.setNode(diaId, { width: RELATION_W, height: RELATION_H })
@@ -834,31 +950,70 @@ export function conceptualToChenFlowElements(
     const srcCard = isM2M ? 'M' : '1'
     const tgtCard = is1to1 ? '1' : 'N'
 
-    edges.push({
-      id: `edge-${rel.sourceId}-${rel.id}`,
-      type: 'chenEdge',
-      source: rel.sourceId,
-      target: rel.id,
-      sourceHandle: 'right',
-      targetHandle: 'left',
-      data: {
-        cardinalityLabel: srcCard,
-        isAttributeEdge: false,
-      },
-    })
+    const isRelSelected = rel.id === selectedId || rel.rawId === selectedId
 
-    edges.push({
-      id: `edge-${rel.id}-${rel.targetId}`,
-      type: 'chenEdge',
-      source: rel.id,
-      target: rel.targetId,
-      sourceHandle: 'right',
-      targetHandle: 'left',
-      data: {
-        cardinalityLabel: tgtCard,
-        isAttributeEdge: false,
-      },
-    })
+    if (rel.isSelf) {
+      // 自引用自环拓扑：顶部弧线出入菱形，底部弧线回折接入实体，双弧分流零重叠
+      edges.push({
+        id: `edge-${rel.sourceId}-${rel.id}`,
+        type: 'chenEdge',
+        source: rel.sourceId,
+        target: rel.id,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: srcCard,
+          isAttributeEdge: false,
+          isSelfLoop: true,
+          loopDirection: 'top',
+        },
+        selected: isRelSelected,
+      })
+
+      edges.push({
+        id: `edge-${rel.id}-${rel.targetId}`,
+        type: 'chenEdge',
+        source: rel.id,
+        target: rel.targetId,
+        sourceHandle: 'left-source',
+        targetHandle: 'right-target',
+        data: {
+          cardinalityLabel: tgtCard,
+          isAttributeEdge: false,
+          isSelfLoop: true,
+          loopDirection: 'bottom',
+        },
+        selected: isRelSelected,
+      })
+    } else {
+      edges.push({
+        id: `edge-${rel.sourceId}-${rel.id}`,
+        type: 'chenEdge',
+        source: rel.sourceId,
+        target: rel.id,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: srcCard,
+          isAttributeEdge: false,
+        },
+        selected: isRelSelected,
+      })
+
+      edges.push({
+        id: `edge-${rel.id}-${rel.targetId}`,
+        type: 'chenEdge',
+        source: rel.id,
+        target: rel.targetId,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          cardinalityLabel: tgtCard,
+          isAttributeEdge: false,
+        },
+        selected: isRelSelected,
+      })
+    }
   }
 
   return { nodes, edges }

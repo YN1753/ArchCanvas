@@ -45,11 +45,18 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
           : 'border-[#1f1f1f] shadow-[3px_3px_0px_#1f1f1f] hover:shadow-[4px_4px_0px_#1f1f1f]'
       }`}
     >
-      {/* 4 方向隐式锚点，供菱形联系与属性椭圆对接 */}
+      {/* 4 方向隐式锚点，供菱形联系、自引用回折与属性椭圆对接 */}
       <Handle type="source" position={Position.Top} id="top" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Top} id="top-target" className="!h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="source" position={Position.Right} id="right" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Right} id="right-target" className="!h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="source" position={Position.Bottom} id="bottom" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Bottom} id="bottom-target" className="!h-2 !w-2 !border-none !bg-transparent" />
+
       <Handle type="target" position={Position.Left} id="left" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Left} id="left-source" className="!h-2 !w-2 !border-none !bg-transparent" />
 
       {/* 核心概念名与英文表名 */}
       <div className="text-center">

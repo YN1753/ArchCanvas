@@ -1062,16 +1062,13 @@ export const useStore = create<Store>((set, get) => {
 
     addRelation(sourceEntityID, targetEntityID) {
       const { design } = get()
-      if (sourceEntityID === targetEntityID) {
-        set({ toast: { kind: 'error', text: '暂不支持把实体连到自己，请先在 Inspector 里手工确认自引用是否必要' } })
-        return
-      }
+      const isSelf = sourceEntityID === targetEntityID
       const duplicate = design.relations.some(
         (relation) =>
           relation.source_entity_id === sourceEntityID && relation.target_entity_id === targetEntityID,
       )
       if (duplicate) {
-        set({ toast: { kind: 'error', text: '这两个实体之间已经存在同方向的关系' } })
+        set({ toast: { kind: 'error', text: isSelf ? '该实体已存在自引用关系' : '这两个实体之间已经存在同方向的关系' } })
         return
       }
 
@@ -1574,20 +1571,31 @@ export const useStore = create<Store>((set, get) => {
         )
       const srcConcept = findConcept(sourceID)
       const tgtConcept = findConcept(targetID)
-      if (!srcConcept || !tgtConcept || srcConcept === tgtConcept) return
+      if (!srcConcept || !tgtConcept) return
 
-      const existing = (conceptualDesign.relations || []).some(
-        (r) =>
+      const isSelf = srcConcept === tgtConcept
+
+      const existing = (conceptualDesign.relations || []).some((r) => {
+        if (isSelf) {
+          return (
+            r.source_concept.toLowerCase() === srcConcept.name.toLowerCase() &&
+            r.target_concept.toLowerCase() === srcConcept.name.toLowerCase()
+          )
+        }
+        return (
           (r.source_concept.toLowerCase() === srcConcept.name.toLowerCase() &&
             r.target_concept.toLowerCase() === tgtConcept.name.toLowerCase()) ||
           (r.source_concept.toLowerCase() === tgtConcept.name.toLowerCase() &&
-            r.target_concept.toLowerCase() === srcConcept.name.toLowerCase()),
-      )
+            r.target_concept.toLowerCase() === srcConcept.name.toLowerCase())
+        )
+      })
       if (existing) {
         set({
           toast: {
             kind: 'info',
-            text: `概念「${srcConcept.display_name || srcConcept.name}」与「${tgtConcept.display_name || tgtConcept.name}」已存在联系`,
+            text: isSelf
+              ? `概念「${srcConcept.display_name || srcConcept.name}」已存在自引用关系`
+              : `概念「${srcConcept.display_name || srcConcept.name}」与「${tgtConcept.display_name || tgtConcept.name}」已存在联系`,
           },
         })
         return
@@ -1595,11 +1603,11 @@ export const useStore = create<Store>((set, get) => {
 
       const newRel: ConceptRelation = {
         id: localID('rel'),
-        name: '关联',
+        name: isSelf ? '层级包含' : '关联',
         source_concept: srcConcept.name,
         target_concept: tgtConcept.name,
         cardinality,
-        description: '',
+        description: isSelf ? '自引用层级结构' : '',
       }
 
       const nextConceptual: ConceptualDesign = {
