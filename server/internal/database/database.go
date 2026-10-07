@@ -47,6 +47,13 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 		return nil, fmt.Errorf("auto migrate database: %w", err)
 	}
 
+	// 针对 SQLite 启用 WAL 模式、繁忙等待与 NORMAL 同步，大幅提升并发读写吞吐并杜绝并发锁表
+	if cfg.Path != ":memory:" {
+		_ = db.Exec("PRAGMA journal_mode = WAL;").Error
+		_ = db.Exec("PRAGMA busy_timeout = 5000;").Error
+		_ = db.Exec("PRAGMA synchronous = NORMAL;").Error
+	}
+
 	return db, nil
 }
 

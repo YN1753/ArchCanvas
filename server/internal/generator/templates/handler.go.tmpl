@@ -32,14 +32,14 @@ func (h *{{ .Entity.StructName }}Handler) Create(c *gin.Context) {
 
 func (h *{{ .Entity.StructName }}Handler) GetDetail(c *gin.Context) {
 	idStr := c.Param("id")
-	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") }}
+	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		response.Fail(c, 400, "无效的 ID 参数")
 		return
 	}
 	item, err := h.svc.GetDetail(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") }}
+	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		response.Fail(c, 400, "无效的 ID 参数")
@@ -82,14 +82,14 @@ func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
 
 func (h *{{ .Entity.StructName }}Handler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
-	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") }}
+	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		response.Fail(c, 400, "无效的 ID 参数")
 		return
 	}
 	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") }}
+	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		response.Fail(c, 400, "无效的 ID 参数")

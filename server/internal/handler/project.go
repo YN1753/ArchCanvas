@@ -235,4 +235,3 @@ func (h *ProjectHandler) ClearMessages(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"cleared": true, "project_id": req.ProjectID})
 }
-

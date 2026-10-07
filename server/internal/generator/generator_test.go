@@ -108,26 +108,26 @@ func TestGenerateFileTreeFromDesign(t *testing.T) {
 						IsPrimaryKey: true,
 					},
 					{
-						ID:           "attr_o2",
-						Name:         "order_no",
-						Comment:      "订单流水号",
-						DBType:       "VARCHAR(64)",
-						CodeType:     "string",
-						IsUnique:     true,
+						ID:       "attr_o2",
+						Name:     "order_no",
+						Comment:  "订单流水号",
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+						IsUnique: true,
 					},
 					{
-						ID:           "attr_o3",
-						Name:         "user_id",
-						Comment:      "用户ID外键",
-						DBType:       "BIGINT UNSIGNED",
-						CodeType:     "uint64",
+						ID:       "attr_o3",
+						Name:     "user_id",
+						Comment:  "用户ID外键",
+						DBType:   "BIGINT UNSIGNED",
+						CodeType: "uint64",
 					},
 					{
-						ID:           "attr_o4",
-						Name:         "created_at",
-						Comment:      "下单时间",
-						DBType:       "DATETIME",
-						CodeType:     "time.Time",
+						ID:       "attr_o4",
+						Name:     "created_at",
+						Comment:  "下单时间",
+						DBType:   "DATETIME",
+						CodeType: "time.Time",
 					},
 				},
 				Indexes: []domain.IndexDefinition{
@@ -503,3 +503,100 @@ func TestGenerateManyToManyAssociations(t *testing.T) {
 	}
 }
 
+func TestGenerateIntegerPrimaryKeyVariants(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:   "ent_device",
+				Name: "devices",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_d1",
+						Name:         "device_id",
+						DBType:       "INT UNSIGNED",
+						CodeType:     "uint32",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_d2",
+						Name:     "sn",
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+					},
+				},
+			},
+			{
+				ID:   "ent_log",
+				Name: "system_logs",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_l1",
+						Name:         "log_id",
+						DBType:       "INT",
+						CodeType:     "int32",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_l2",
+						Name:     "content",
+						DBType:   "TEXT",
+						CodeType: "string",
+					},
+				},
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:  "proj_pk_variants",
+		ModuleName: "example.com/pkapp",
+		Port:       "8080",
+		DBDriver:   "mysql",
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	fileMap := make(map[string]string)
+	for _, f := range files {
+		fileMap[f.Path] = f.Content
+		if strings.HasSuffix(f.Path, ".go") {
+			_, parseErr := parser.ParseFile(fset, f.Path, f.Content, parser.AllErrors)
+			if parseErr != nil {
+				t.Fatalf("file %s failed AST parsing: %v\nContent:\n%s", f.Path, parseErr, f.Content)
+			}
+		}
+	}
+
+	// 验证 devices (uint32 主键) 的 handler 中有 uint32 转换
+	deviceHandler, ok := fileMap["internal/handler/devices_handler.go"]
+	if !ok {
+		t.Fatal("missing internal/handler/devices_handler.go")
+	}
+	if !strings.Contains(deviceHandler, "strconv.ParseUint") {
+		t.Errorf("devices_handler.go should use strconv.ParseUint for uint32, got:\n%s", deviceHandler)
+	}
+	if !strings.Contains(deviceHandler, "uint32(id)") {
+		t.Errorf("devices_handler.go should cast to uint32(id), got:\n%s", deviceHandler)
+	}
+
+	// 验证 system_logs (int32 主键) 的 handler 中有 int32 转换
+	logHandler, ok := fileMap["internal/handler/system_logs_handler.go"]
+	if !ok {
+		t.Fatal("missing internal/handler/system_logs_handler.go")
+	}
+	if !strings.Contains(logHandler, "strconv.ParseInt") {
+		t.Errorf("system_logs_handler.go should use strconv.ParseInt for int32, got:\n%s", logHandler)
+	}
+	if !strings.Contains(logHandler, "int32(id)") {
+		t.Errorf("system_logs_handler.go should cast to int32(id), got:\n%s", logHandler)
+	}
+}

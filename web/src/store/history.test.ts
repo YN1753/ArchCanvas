@@ -81,4 +81,69 @@ useStore.setState({
   console.log('✓ 实体删除与撤销完整性集成测试通过')
 }
 
+// 4. 测试概念模型（陈氏 ER）的新增与撤销/重做
+{
+  useStore.getState().resetHistory()
+  useStore.setState({
+    conceptualDesign: { concepts: [], relations: [] },
+    selection: null,
+  })
+
+  assert.equal(useStore.getState().canUndo, false)
+  assert.equal(useStore.getState().canRedo, false)
+
+  // 添加业务概念
+  useStore.getState().addConcept({ x: 200, y: 200 })
+  assert.equal(useStore.getState().conceptualDesign.concepts.length, 1)
+  assert.equal(useStore.getState().canUndo, true)
+  assert.equal(useStore.getState().canRedo, false)
+
+  const conceptId = useStore.getState().conceptualDesign.concepts[0].id
+
+  // 撤销添加业务概念
+  useStore.getState().undo()
+  assert.equal(useStore.getState().conceptualDesign.concepts.length, 0)
+  assert.equal(useStore.getState().canUndo, false)
+  assert.equal(useStore.getState().canRedo, true)
+
+  // 重做添加业务概念
+  useStore.getState().redo()
+  assert.equal(useStore.getState().conceptualDesign.concepts.length, 1)
+  assert.equal(useStore.getState().conceptualDesign.concepts[0].id, conceptId)
+  assert.equal(useStore.getState().canUndo, true)
+
+  // 连续修改概念展示名（测试概念级防抖合并）
+  useStore.getState().updateConcept(conceptId!, { display_name: '用户A' })
+  useStore.getState().updateConcept(conceptId!, { display_name: '用户B' })
+  useStore.getState().updateConcept(conceptId!, { display_name: '用户最终态' })
+  assert.equal(useStore.getState().conceptualDesign.concepts[0].display_name, '用户最终态')
+
+  // 撤销应回到修改前
+  useStore.getState().undo()
+  assert.equal(useStore.getState().conceptualDesign.concepts[0].display_name, '新概念')
+
+  // 重做恢复为用户最终态
+  useStore.getState().redo()
+  assert.equal(useStore.getState().conceptualDesign.concepts[0].display_name, '用户最终态')
+
+  // 添加第二个概念并建立关联
+  useStore.getState().addConcept({ x: 400, y: 200 })
+  assert.equal(useStore.getState().conceptualDesign.concepts.length, 2)
+  const concept2Name = useStore.getState().conceptualDesign.concepts[1].name
+  const concept1Name = useStore.getState().conceptualDesign.concepts[0].name
+
+  useStore.getState().addConceptRelation(concept1Name, concept2Name)
+  assert.equal(useStore.getState().conceptualDesign.relations.length, 1)
+
+  // 撤销关系添加
+  useStore.getState().undo()
+  assert.equal(useStore.getState().conceptualDesign.relations.length, 0)
+
+  // 重做关系添加
+  useStore.getState().redo()
+  assert.equal(useStore.getState().conceptualDesign.relations.length, 1)
+
+  console.log('✓ 概念模型（陈氏 ER）新增/修改/关联与撤销/重做集成测试通过')
+}
+
 console.log('History Slice 全部集成测试通过！\n')

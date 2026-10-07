@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -70,6 +70,7 @@ export default function Canvas() {
   const [zoomLevel, setZoomLevel] = useState(100)
   const [toolMode, setToolMode] = useState<'select' | 'pan'>('select')
   const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const initialFittedKeyRef = useRef<string | null>(null)
 
   const { fitView, screenToFlowPosition, zoomIn, zoomOut } = useReactFlow()
 
@@ -157,9 +158,14 @@ export default function Canvas() {
     if (!projectID) return
     const count =
       canvasViewMode === 'chen'
-        ? conceptualDesign?.concepts?.length || design.entities.length
+        ? (conceptualDesign?.concepts?.length ?? 0) || design.entities.length
         : design.entities.length
     if (count === 0) return
+
+    const key = `${projectID}:${canvasViewMode}`
+    if (initialFittedKeyRef.current === key) return
+
+    initialFittedKeyRef.current = key
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.18, maxZoom: 1 })
     }, 120)

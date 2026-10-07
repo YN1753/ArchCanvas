@@ -66,6 +66,7 @@ export interface HistorySlice {
   recordSnapshot: (debounceKey?: string) => void
   resetHistory: () => void
   mutate: (next: ERDesign, debounceKey?: string) => void
+  mutateConceptual: (next: ConceptualDesign, debounceKey?: string, extras?: Partial<Store>) => void
   withEntities: (updater: (entities: Entity[]) => Entity[], debounceKey?: string) => void
 }
 

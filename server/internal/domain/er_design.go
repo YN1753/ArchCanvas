@@ -95,4 +95,3 @@ func (r Relation) MarshalJSON() ([]byte, error) {
 		Cardinality:    relType,
 	})
 }
-

@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 
 import AiSidebar from './components/AiSidebar'
 import Canvas from './components/Canvas'
-import DataDialog from './components/DataDialog'
 import Inspector from './components/Inspector'
-import ScaffoldDialog from './components/ScaffoldDialog'
-import SchemaReviewDrawer from './components/SchemaReviewDrawer'
 import Toast from './components/Toast'
 import Toolbar from './components/Toolbar'
 import { useStore } from './store/erStore'
+
+const DataDialog = lazy(() => import('./components/DataDialog'))
+const ScaffoldDialog = lazy(() => import('./components/ScaffoldDialog'))
+const SchemaReviewDrawer = lazy(() => import('./components/SchemaReviewDrawer'))
 
 export default function App() {
   const bootstrap = useStore((state) => state.bootstrap)
@@ -132,9 +133,11 @@ export default function App() {
         </div>
       </div>
 
-      {dataDialogOpen ? <DataDialog onClose={closeDataDialog} /> : null}
-      {scaffoldDialogOpen ? <ScaffoldDialog onClose={() => setScaffoldDialogOpen(false)} /> : null}
-      {reviewDrawerOpen ? <SchemaReviewDrawer onClose={() => setReviewDrawerOpen(false)} /> : null}
+      <Suspense fallback={null}>
+        {dataDialogOpen ? <DataDialog onClose={closeDataDialog} /> : null}
+        {scaffoldDialogOpen ? <ScaffoldDialog onClose={() => setScaffoldDialogOpen(false)} /> : null}
+        {reviewDrawerOpen ? <SchemaReviewDrawer onClose={() => setReviewDrawerOpen(false)} /> : null}
+      </Suspense>
       <Toast />
     </ReactFlowProvider>
   )

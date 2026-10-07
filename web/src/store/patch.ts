@@ -17,8 +17,10 @@ export interface Patch {
 }
 
 export interface HistoryEntry {
-  undo: Patch[]
-  redo: Patch[]
+  undo?: Patch[]
+  redo?: Patch[]
+  conceptualUndo?: Patch[]
+  conceptualRedo?: Patch[]
   debounceKey?: string
 }
 

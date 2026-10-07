@@ -41,5 +41,3 @@ type SaveModelReq struct {
 	APIKey       string `json:"api_key,omitempty"`
 	SetAsDefault bool   `json:"set_as_default"`
 }
-
-

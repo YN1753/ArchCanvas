@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,7 +67,7 @@ func NewModelManager(
 			break
 		}
 		if !ok {
-			panic(fmt.Errorf("default provider not found: %s", defaultProvider))
+			log.Printf("警告: configs 中未配置任何大模型提供商 (default provider: %s)。服务将以离线基础模式启动，请在设置中配置模型。", defaultProvider)
 		}
 	}
 	manager := &ModelManager{
@@ -77,8 +78,10 @@ func NewModelManager(
 		ConfigDir:       configDir,
 	}
 
-	if _, err := manager.GetChatModel(ctx, defaultProvider, defaultModelConfig.DefaultModel); err != nil {
-		panic(err)
+	if defaultModelConfig.DefaultModel != "" {
+		if _, err := manager.GetChatModel(ctx, defaultProvider, defaultModelConfig.DefaultModel); err != nil {
+			log.Printf("警告: 预初始化默认大模型客户端失败 (%s::%s): %v。服务仍将正常启动，待配置正确后将动态生效。", defaultProvider, defaultModelConfig.DefaultModel, err)
+		}
 	}
 
 	return manager

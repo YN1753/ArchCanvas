@@ -292,8 +292,7 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
             } else if (event.type === 'result') {
               rawResult = event.data
               if (event.data?.conceptual_design) {
-                set({
-                  conceptualDesign: event.data.conceptual_design,
+                get().mutateConceptual(event.data.conceptual_design, undefined, {
                   agentPhase: 'concept_ready',
                   canvasViewMode: 'chen',
                 })

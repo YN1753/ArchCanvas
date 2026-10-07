@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"archcanvas/internal/generator"
@@ -57,8 +58,24 @@ func (h *GeneratorHandler) Download(c *gin.Context) {
 	if idx := strings.LastIndex(fileName, "/"); idx >= 0 {
 		fileName = fileName[idx+1:]
 	}
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		fileName = "archcanvas-app"
+	}
 
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, fileName))
+	// 遵循 RFC 5987 / RFC 6266 标准，同时输出 ASCII fallback 与 UTF-8 编码文件名
+	asciiFallback := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, fileName)
+	if asciiFallback == "" {
+		asciiFallback = "archcanvas-app"
+	}
+
+	encodedFileName := url.PathEscape(fileName + ".zip")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"; filename*=UTF-8''%s`, asciiFallback, encodedFileName))
 	c.Header("Content-Type", "application/zip")
 	c.Data(http.StatusOK, "application/zip", buf.Bytes())
 }

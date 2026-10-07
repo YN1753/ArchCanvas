@@ -422,7 +422,7 @@ export const api = {
     }),
 
   getConceptualDesign: (id: string) =>
-    request<ConceptualDesign>(`/projects/get-conceptual-design?id=${id}`),
+    request<ConceptualDesign>(`/projects/get-conceptual-design?id=${encodeURIComponent(id)}`),
 
   saveConceptualDesign: (id: string, design: ConceptualDesign) =>
     request<string>('/projects/save-conceptual-design', {

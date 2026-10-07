@@ -190,5 +190,3 @@ func (s *ProjectService) ClearProjectMessages(ctx context.Context, projectID str
 	}
 	return s.MessageRepo.ClearMessagesByProject(ctx, projectID)
 }
-
-

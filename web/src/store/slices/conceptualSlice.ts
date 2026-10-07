@@ -51,15 +51,15 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     })
 
     if (conceptualChanged) {
-      set({
-        chenPositions: nextPositions,
-        conceptualDesign: {
+      get().mutateConceptual(
+        {
           ...conceptualDesign,
           concepts: nextConcepts,
           relations: nextRelations,
         },
-      })
-      get().scheduleSaveConceptual()
+        undefined,
+        { chenPositions: nextPositions },
+      )
     } else {
       set({ chenPositions: nextPositions })
     }
@@ -80,8 +80,7 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   async saveConceptualDesign(design: ConceptualDesign) {
     const { project } = get()
     if (!project) return
-    set({ conceptualDesign: design })
-    get().scheduleSaveConceptual()
+    get().mutateConceptual(design)
   },
 
   addConcept(customPosition) {
@@ -117,12 +116,10 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       concepts: [...concepts, newConcept],
     }
 
-    set({
-      conceptualDesign: nextConceptual,
+    get().mutateConceptual(nextConceptual, undefined, {
       selection: { kind: 'entity', id: newConcept.id! },
       inspectorOpen: true,
     })
-    get().scheduleSaveConceptual()
   },
 
   updateConcept(id, patch) {
@@ -135,13 +132,13 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     const nextConcepts = (conceptualDesign.concepts || []).map((c) =>
       matchesConcept(c, id) ? { ...c, ...patch } : c,
     )
-    set({
-      conceptualDesign: {
+    get().mutateConceptual(
+      {
         ...conceptualDesign,
         concepts: nextConcepts,
       },
-    })
-    get().scheduleSaveConceptual()
+      `concept-update-${id}`,
+    )
   },
 
   deleteConcept(id) {
@@ -181,23 +178,23 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       saveChenPositions(project.id, nextChenPositions)
     }
 
-    set({
-      conceptualDesign: {
+    get().mutateConceptual(
+      {
         ...conceptualDesign,
         concepts: nextConcepts,
         relations: nextRelations,
       },
-      chenPositions: nextChenPositions,
-      selection:
-        selection?.kind === 'entity' &&
-        (selection.id === id || selection.id === targetId)
-          ? null
-          : selection,
-    })
-    get().scheduleSaveConceptual()
-    set({
-      toast: { kind: 'info', text: `已删除业务概念「${target?.display_name || targetName || id}」` },
-    })
+      undefined,
+      {
+        chenPositions: nextChenPositions,
+        selection:
+          selection?.kind === 'entity' &&
+          (selection.id === id || selection.id === targetId)
+            ? null
+            : selection,
+        toast: { kind: 'info', text: `已删除业务概念「${target?.display_name || targetName || id}」` },
+      },
+    )
   },
 
   addConceptAttribute(conceptID) {
@@ -226,13 +223,10 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       }
       return c
     })
-    set({
-      conceptualDesign: {
-        ...conceptualDesign,
-        concepts: nextConcepts,
-      },
+    get().mutateConceptual({
+      ...conceptualDesign,
+      concepts: nextConcepts,
     })
-    get().scheduleSaveConceptual()
   },
 
   updateConceptAttribute(conceptID, attributeID, patch) {
@@ -251,13 +245,13 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       }
       return c
     })
-    set({
-      conceptualDesign: {
+    get().mutateConceptual(
+      {
         ...conceptualDesign,
         concepts: nextConcepts,
       },
-    })
-    get().scheduleSaveConceptual()
+      `concept-attr-${conceptID}-${attributeID}`,
+    )
   },
 
   deleteConceptAttribute(conceptID, attributeID) {
@@ -276,13 +270,10 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       }
       return c
     })
-    set({
-      conceptualDesign: {
-        ...conceptualDesign,
-        concepts: nextConcepts,
-      },
+    get().mutateConceptual({
+      ...conceptualDesign,
+      concepts: nextConcepts,
     })
-    get().scheduleSaveConceptual()
   },
 
   moveConceptAttribute(conceptID, attributeID, direction) {
@@ -306,13 +297,10 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       }
       return c
     })
-    set({
-      conceptualDesign: {
-        ...conceptualDesign,
-        concepts: nextConcepts,
-      },
+    get().mutateConceptual({
+      ...conceptualDesign,
+      concepts: nextConcepts,
     })
-    get().scheduleSaveConceptual()
   },
 
   addConceptRelation(sourceID, targetID, cardinality: ConceptCardinality = 'one_to_many') {
@@ -369,12 +357,10 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       ...conceptualDesign,
       relations: [...(conceptualDesign.relations || []), newRel],
     }
-    set({
-      conceptualDesign: nextConceptual,
+    get().mutateConceptual(nextConceptual, undefined, {
       selection: { kind: 'relation', id: newRel.id! },
       inspectorOpen: true,
     })
-    get().scheduleSaveConceptual()
   },
 
   updateConceptRelation(relationID, patch) {
@@ -388,13 +374,13 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
           relationID.toLowerCase().includes(r.target_concept.toLowerCase()))
       return matches ? { ...r, ...patch } : r
     })
-    set({
-      conceptualDesign: {
+    get().mutateConceptual(
+      {
         ...conceptualDesign,
         relations: nextRelations,
       },
-    })
-    get().scheduleSaveConceptual()
+      `concept-rel-${relationID}`,
+    )
   },
 
   deleteConceptRelation(relationID) {
@@ -408,18 +394,20 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
           relationID.toLowerCase().includes(r.target_concept.toLowerCase()))
       return !matches
     })
-    set({
-      conceptualDesign: {
+    get().mutateConceptual(
+      {
         ...conceptualDesign,
         relations: nextRelations,
       },
-      selection:
-        selection?.kind === 'relation' &&
-        (selection.id === relationID || (selection.id && relationID.includes(selection.id)))
-          ? null
-          : selection,
-    })
-    get().scheduleSaveConceptual()
-    set({ toast: { kind: 'info', text: '已删除业务概念联系' } })
+      undefined,
+      {
+        selection:
+          selection?.kind === 'relation' &&
+          (selection.id === relationID || (selection.id && relationID.includes(selection.id)))
+            ? null
+            : selection,
+        toast: { kind: 'info', text: '已删除业务概念联系' },
+      },
+    )
   },
 })

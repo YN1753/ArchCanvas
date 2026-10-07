@@ -166,6 +166,16 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
   },
 
   async selectProject(id) {
+    if (get().project?.id === id) return
+    // 1. 切换前先尝试将当前项目未落库的防抖变更立即保存
+    if (get().project) {
+      try {
+        await get().saveNow()
+      } catch (err) {
+        console.warn('切换项目前自动保存失败:', err)
+      }
+    }
+
     try {
       const [detail, design] = await Promise.all([api.getProject(id), api.getERDesign(id)])
       const conceptualDesign =
@@ -195,6 +205,15 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
   },
 
   async createProject(name, description = '') {
+    // 1. 创建新项目前先尝试将当前项目未落库的变更立即保存
+    if (get().project) {
+      try {
+        await get().saveNow()
+      } catch (err) {
+        console.warn('新建项目前自动保存失败:', err)
+      }
+    }
+
     try {
       const project = await api.createProject(name, description)
       const projects = await api.listProjects()
@@ -218,6 +237,10 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
   },
 
   async deleteProject(id) {
+    // 若当前正在删除活动项目，立即清理其历史与防抖定时器，防止已删除项目异步回写
+    if (get().project?.id === id) {
+      get().resetHistory()
+    }
     try {
       await api.deleteProject(id)
       try {

@@ -71,12 +71,18 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
     tab === 'export-sql' ? `_${exportDialect}.sql` : tab === 'export-mermaid' ? '.mmd' : '.json'
   }`
 
-  // 获取当前画布节点并安全计算几何包围盒
-  const rawNodes = getNodes()
-  const rawEdges = getEdges()
+  // 仅在图片导出标签激活时按需获取画布图元并安全计算几何包围盒
+  const { nodeCount, edgeCount, bounds } = useMemo(() => {
+    if (tab !== 'export-image') {
+      return { nodeCount: 0, edgeCount: 0, bounds: null }
+    }
+    const rawNodes = getNodes()
+    const rawEdges = getEdges()
+    if (rawNodes.length === 0) {
+      return { nodeCount: 0, edgeCount: rawEdges.length, bounds: null }
+    }
 
-  const safeNodes = useMemo(() => {
-    return rawNodes.map((n) => {
+    const safeNodes = rawNodes.map((n) => {
       const width =
         n.measured?.width ??
         n.width ??
@@ -92,12 +98,12 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
         measured: { width, height },
       }
     })
-  }, [rawNodes])
-
-  const bounds = useMemo(() => {
-    if (safeNodes.length === 0) return null
-    return getNodesBounds(safeNodes)
-  }, [safeNodes])
+    return {
+      nodeCount: safeNodes.length,
+      edgeCount: rawEdges.length,
+      bounds: getNodesBounds(safeNodes),
+    }
+  }, [tab, getNodes, getEdges])
 
   const PADDING = 64
   const imageWidth = bounds ? Math.max(Math.round(bounds.width + PADDING * 2), 320) : 0
@@ -481,7 +487,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                     {canvasViewMode === 'chen' ? '陈氏概念模型' : '物理表模型'}
                   </span>
                   <span className="text-[11px] font-mono text-stone-500">
-                    {safeNodes.length} 节点 · {rawEdges.length} 连线 ·{' '}
+                    {nodeCount} 节点 · {edgeCount} 连线 ·{' '}
                     {imageFormat === 'png'
                       ? `${imageWidth * imageScale} × ${imageHeight * imageScale} px`
                       : `${imageWidth} × ${imageHeight} px (矢量)`}
@@ -509,7 +515,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                   }}
                 />
 
-                {safeNodes.length === 0 ? (
+                {nodeCount === 0 ? (
                   <div className="relative z-10 flex flex-col items-center justify-center gap-2 text-stone-500">
                     <svg className="w-8 h-8 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -557,7 +563,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     onClick={refreshPreview}
-                    disabled={previewLoading || safeNodes.length === 0}
+                    disabled={previewLoading || nodeCount === 0}
                     className={buttonClass}
                     title="重新计算并生成预览"
                   >
@@ -566,7 +572,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
 
                   <button
                     type="button"
-                    disabled={copyingImage || exportingImage || safeNodes.length === 0}
+                    disabled={copyingImage || exportingImage || nodeCount === 0}
                     onClick={handleCopyImage}
                     className={buttonClass}
                     title="将高清 PNG 图片直接复制到系统剪贴板，可直接粘贴到微信/飞书/文档中"
@@ -576,7 +582,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
 
                   <button
                     type="button"
-                    disabled={exportingImage || copyingImage || safeNodes.length === 0}
+                    disabled={exportingImage || copyingImage || nodeCount === 0}
                     onClick={handleDownloadImage}
                     className="flex items-center gap-1.5 rounded-lg bg-[#df4e3e] border-[1.5px] border-[#1f1f1f] px-4 py-1.5 text-xs font-bold text-white transition hover:bg-[#d04232] disabled:cursor-not-allowed disabled:opacity-40 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
                   >

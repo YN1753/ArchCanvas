@@ -1,10 +1,10 @@
 package model
 
 type Entity struct {
-	ID        string   `gorm:"primaryKey" json:"id"`
-	ProjectID string   `gorm:"not null;index;uniqueIndex:name_project" json:"project_id"`
-	Name      string   `gorm:"not null;uniqueIndex:name_project" json:"name"`
-	Comment   string   `gorm:"column:comment" json:"comment"`
+	ID              string   `gorm:"primaryKey" json:"id"`
+	ProjectID       string   `gorm:"not null;index;uniqueIndex:name_project" json:"project_id"`
+	Name            string   `gorm:"not null;uniqueIndex:name_project" json:"name"`
+	Comment         string   `gorm:"column:comment" json:"comment"`
 	Indexes         string   `gorm:"column:indexes;type:text" json:"indexes"`
 	IsJunctionTable *bool    `gorm:"column:is_junction_table" json:"is_junction_table,omitempty"`
 	PosX            *float64 `gorm:"column:pos_x" json:"pos_x"`

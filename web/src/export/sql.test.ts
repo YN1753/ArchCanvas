@@ -246,4 +246,68 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
     assert.ok(importedTitle)
     assert.strictEqual(importedTitle.comment, '商品标题')
   })
+
+  it('round-trip symmetry: PostgreSQL export and import preserves schema, comments with quotes, and index comments', () => {
+    const originalDesign: ERDesign = {
+      entities: [
+        {
+          id: 'ent_accounts',
+          name: 'accounts',
+          comment: "User's Account 表",
+          attributes: [
+            {
+              id: 'attr_1',
+              name: 'id',
+              db_type: 'BIGSERIAL',
+              code_type: 'uint64',
+              is_primary_key: true,
+              is_nullable: false,
+              is_unique: false,
+              comment: '主键自增',
+            },
+            {
+              id: 'attr_2',
+              name: 'email',
+              db_type: 'VARCHAR(128)',
+              code_type: 'string',
+              is_primary_key: false,
+              is_nullable: false,
+              is_unique: true,
+              comment: "Owner's Email 地址",
+            },
+          ],
+          indexes: [
+            {
+              name: 'idx_accounts_email',
+              columns: ['email'],
+              is_unique: true,
+              comment: '邮箱唯一检索索引',
+            },
+          ],
+        },
+      ],
+      relations: [],
+    }
+
+    const exportedSql = designToSQL(originalDesign, 'postgres')
+    assert.ok(exportedSql.includes("COMMENT ON TABLE \"accounts\" IS 'User''s Account 表';"))
+    assert.ok(exportedSql.includes("COMMENT ON COLUMN \"accounts\".\"email\" IS 'Owner''s Email 地址';"))
+    assert.ok(exportedSql.includes("COMMENT ON INDEX \"idx_accounts_email\" IS '邮箱唯一检索索引';"))
+
+    const importedResult = parseSQLToDesign(exportedSql)
+    assert.strictEqual(importedResult.design.entities.length, 1)
+    const importedEntity = importedResult.design.entities[0]
+    assert.strictEqual(importedEntity.name, 'accounts')
+    assert.strictEqual(importedEntity.comment, "User's Account 表")
+
+    const importedEmail = importedEntity.attributes.find((a) => a.name === 'email')
+    assert.ok(importedEmail)
+    assert.strictEqual(importedEmail.comment, "Owner's Email 地址")
+
+    assert.ok(importedEntity.indexes && importedEntity.indexes.length > 0)
+    const importedIdx = importedEntity.indexes.find((i) => i.name === 'idx_accounts_email')
+    assert.ok(importedIdx)
+    assert.strictEqual(importedIdx.comment, '邮箱唯一检索索引')
+  })
 })
+

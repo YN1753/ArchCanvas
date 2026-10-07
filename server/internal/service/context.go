@@ -44,8 +44,8 @@ type ClarificationCard = domain.ClarificationCard
 type AgentContext struct {
 	ProjectID       string           `json:"project_id"`
 	CurrentERDesign *domain.ERDesign `json:"current_er_design,omitempty"`
-	Constraints     []string         `json:"constraints,omitempty"`     // 历史已识别的永久硬约束与用户红线
-	Decisions       []string         `json:"decisions,omitempty"`       // 历史已达成的核心架构与设计决策
+	Constraints     []string         `json:"constraints,omitempty"`    // 历史已识别的永久硬约束与用户红线
+	Decisions       []string         `json:"decisions,omitempty"`      // 历史已达成的核心架构与设计决策
 	ModelProvider   string           `json:"model_provider,omitempty"` // 可选：指定模型提供商
 	ModelName       string           `json:"model_name,omitempty"`     // 可选：指定模型名称
 }

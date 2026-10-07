@@ -723,4 +723,3 @@ func tryParseSchemaJSON(content string) (*domain.ERDesign, error) {
 	}
 	return nil, errors.New("cannot parse ERDesign JSON")
 }
-

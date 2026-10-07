@@ -1113,31 +1113,51 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     }
   }
 
-  // 额外解析 PostgreSQL 风格的 COMMENT ON TABLE
-  const commentTableRegex = /COMMENT\s+ON\s+TABLE\s+([`"\[\]\w.]+)\s+IS\s+['"]([^'"]*)['"]/gi
+  // 额外解析 PostgreSQL 风格的 COMMENT ON TABLE / COLUMN / INDEX
+  function extractQuotedComment(singleQuoteMatch?: string, doubleQuoteMatch?: string): string {
+    const raw = singleQuoteMatch ?? doubleQuoteMatch ?? ''
+    return raw.replace(/''/g, "'").replace(/\\'/g, "'").replace(/""/g, '"').replace(/\\"/g, '"').trim()
+  }
+
+  const commentTableRegex = /COMMENT\s+ON\s+TABLE\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
   let tcMatch: RegExpExecArray | null
   while ((tcMatch = commentTableRegex.exec(clean)) !== null) {
     const tbl = cleanIdentifier(tcMatch[1]).toLowerCase()
-    const comm = tcMatch[2].trim()
+    const comm = extractQuotedComment(tcMatch[2], tcMatch[3])
     const ent = entityMap.get(tbl)
     if (ent && !ent.comment) {
       ent.comment = comm
     }
   }
 
-  // 额外解析 PostgreSQL 风格的 COMMENT ON COLUMN
-  const commentColRegex = /COMMENT\s+ON\s+COLUMN\s+([`"\[\]\w.]+)\.([`"\[\]\w.]+)\s+IS\s+['"]([^'"]*)['"]/gi
+  const commentColRegex = /COMMENT\s+ON\s+COLUMN\s+([`"\[\]\w.]+)\.([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
   let ccMatch: RegExpExecArray | null
   while ((ccMatch = commentColRegex.exec(clean)) !== null) {
     const tbl = cleanIdentifier(ccMatch[1]).toLowerCase()
     const col = cleanIdentifier(ccMatch[2]).toLowerCase()
-    const comm = ccMatch[3].trim()
+    const comm = extractQuotedComment(ccMatch[3], ccMatch[4])
     const ent = entityMap.get(tbl)
     if (ent) {
       const attr = ent.attributes.find((a) => a.name.toLowerCase() === col)
       if (attr) {
         attr.comment = comm
         if (!attr.description) attr.description = comm
+      }
+    }
+  }
+
+  const commentIdxRegex = /COMMENT\s+ON\s+INDEX\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
+  let icMatch: RegExpExecArray | null
+  while ((icMatch = commentIdxRegex.exec(clean)) !== null) {
+    const idxName = cleanIdentifier(icMatch[1]).toLowerCase()
+    const comm = extractQuotedComment(icMatch[2], icMatch[3])
+    for (const ent of entityMap.values()) {
+      if (ent.indexes) {
+        const foundIdx = ent.indexes.find((i) => i.name.toLowerCase() === idxName)
+        if (foundIdx && !foundIdx.comment) {
+          foundIdx.comment = comm
+          break
+        }
       }
     }
   }
