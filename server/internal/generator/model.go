@@ -181,7 +181,36 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 			continue
 		}
 
-		// Source (如 User) 拥有多个 Target (如 Orders)
+		// 1. 特殊处理显式声明的多对多关联 (M:N / many_to_many)
+		if isManyToMany(rel.Cardinality) || isManyToMany(rel.RelationTypeID) {
+			junctionTable := strings.ToLower(sourceEnt.TableName) + "_" + strings.ToLower(targetEnt.TableName)
+			addAssociationSafe(&sourceEnt, AssociationData{
+				Type:      "ManyToMany",
+				FieldName: ToPascalCase(targetEnt.TableName),
+				FieldType: "[]" + targetEnt.StructName,
+				GormTag:   fmt.Sprintf(`gorm:"many2many:%s;"`, junctionTable),
+				JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(ToPascalCase(targetEnt.TableName))),
+			})
+			addAssociationSafe(&targetEnt, AssociationData{
+				Type:      "ManyToMany",
+				FieldName: ToPascalCase(sourceEnt.TableName),
+				FieldType: "[]" + sourceEnt.StructName,
+				GormTag:   fmt.Sprintf(`gorm:"many2many:%s;"`, junctionTable),
+				JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(ToPascalCase(sourceEnt.TableName))),
+			})
+
+			entityMap[rel.SourceEntityID] = sourceEnt
+			entityMap[rel.TargetEntityID] = targetEnt
+			if sourceEnt.TableName != "" {
+				entityMap[strings.ToLower(sourceEnt.TableName)] = sourceEnt
+			}
+			if targetEnt.TableName != "" {
+				entityMap[strings.ToLower(targetEnt.TableName)] = targetEnt
+			}
+			continue
+		}
+
+		// 2. 常规 1:N 关联推导：Source (如 User) 拥有多个 Target (如 Orders)
 		// 寻找 target 中匹配 source 的外键字段（如 user_id）
 		fkFieldName := sourceEnt.StructName + "ID"
 		for _, a := range targetEnt.Attributes {
@@ -227,6 +256,9 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 			entityMap[strings.ToLower(targetEnt.TableName)] = targetEnt
 		}
 	}
+
+	// 3. 自动识别技术中间表拓扑结构（如 articles <-> article_tags <-> tags），为两端主模型补全 many2many 关联
+	applyJunctionTableManyToMany(design, entityMap)
 
 	for _, ent := range design.Entities {
 		if eData, ok := entityMap[ent.ID]; ok {
@@ -283,6 +315,172 @@ func addAssociationSafe(ent *EntityData, assoc AssociationData) {
 	assoc.FieldName = fieldName
 	assoc.JsonTag = fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(fieldName))
 	ent.Associations = append(ent.Associations, assoc)
+}
+
+func isManyToMany(card string) bool {
+	cardLower := strings.ToLower(strings.TrimSpace(card))
+	return cardLower == "many_to_many" ||
+		cardLower == "many-to-many" ||
+		cardLower == "m:n" ||
+		cardLower == "n:m" ||
+		cardLower == "n:n" ||
+		cardLower == "m:m"
+}
+
+type junctionTriplet struct {
+	EntityA       EntityData
+	JunctionTable EntityData
+	EntityB       EntityData
+}
+
+// findReferencedEntityForAttr 检查属性名是否引用了某个实体（如 article_id 引用 articles）
+func findReferencedEntityForAttr(attrName string, candidates map[string]EntityData) (EntityData, bool) {
+	nameLower := strings.ToLower(strings.TrimSpace(attrName))
+	if !strings.HasSuffix(nameLower, "_id") {
+		return EntityData{}, false
+	}
+	prefix := strings.TrimSuffix(nameLower, "_id")
+	for _, ent := range candidates {
+		entTableLower := strings.ToLower(ent.TableName)
+		entSingularLower := strings.ToLower(ToSingular(ent.TableName))
+		if prefix == entTableLower || prefix == entSingularLower {
+			return ent, true
+		}
+	}
+	return EntityData{}, false
+}
+
+// detectJunctionTables 智能检测模型拓扑中的多对多技术中间表三元组 (EntityA <-> JunctionTable <-> EntityB)
+func detectJunctionTables(design *domain.ERDesign, entityMap map[string]EntityData) []junctionTriplet {
+	var triplets []junctionTriplet
+	processed := make(map[string]bool)
+
+	// 构筑实体间关系连接表
+	relationsByEntity := make(map[string][]string)
+	for _, rel := range design.Relations {
+		if strings.TrimSpace(rel.SourceEntityID) == "" || strings.TrimSpace(rel.TargetEntityID) == "" {
+			continue
+		}
+		if rel.SourceEntityID == rel.TargetEntityID {
+			continue
+		}
+		relationsByEntity[rel.SourceEntityID] = append(relationsByEntity[rel.SourceEntityID], rel.TargetEntityID)
+		relationsByEntity[rel.TargetEntityID] = append(relationsByEntity[rel.TargetEntityID], rel.SourceEntityID)
+	}
+
+	for _, ent := range design.Entities {
+		entData, ok := entityMap[ent.ID]
+		if !ok {
+			continue
+		}
+
+		connectedMap := make(map[string]EntityData)
+
+		// 检查 1: 扫描外键命名字段 (如 xxx_id)
+		for _, attr := range ent.Attributes {
+			if refEnt, matched := findReferencedEntityForAttr(attr.Name, entityMap); matched {
+				if refEnt.ID != ent.ID {
+					connectedMap[refEnt.ID] = refEnt
+				}
+			}
+		}
+
+		// 检查 2: 扫描显式声明的关系
+		for _, connID := range relationsByEntity[ent.ID] {
+			if refEnt, matched := entityMap[connID]; matched {
+				if refEnt.ID != ent.ID {
+					connectedMap[refEnt.ID] = refEnt
+				}
+			}
+		}
+
+		// 中间表必须恰好连接两个不同的主体业务实体
+		if len(connectedMap) != 2 {
+			continue
+		}
+
+		var connectedList []EntityData
+		for _, c := range connectedMap {
+			connectedList = append(connectedList, c)
+		}
+		entA := connectedList[0]
+		entB := connectedList[1]
+		if entA.ID == entB.ID {
+			continue
+		}
+
+		// 判定是否符合中间表特征：
+		// 1. 用户显式标注 IsJunctionTable == true
+		// 2. 表名包含 A 与 B 两者的表名或单数词根 (如 article_tags, user_roles)
+		// 3. 字段总数较小 (<= 7，主键+双外键+少量时间戳等技术审计列)
+		isExplicit := ent.IsJunctionTable != nil && *ent.IsJunctionTable
+		tableNameLower := strings.ToLower(ent.Name)
+		nameA := strings.ToLower(entA.TableName)
+		nameSingA := strings.ToLower(ToSingular(entA.TableName))
+		nameB := strings.ToLower(entB.TableName)
+		nameSingB := strings.ToLower(ToSingular(entB.TableName))
+
+		nameMatches := (strings.Contains(tableNameLower, nameA) || strings.Contains(tableNameLower, nameSingA)) &&
+			(strings.Contains(tableNameLower, nameB) || strings.Contains(tableNameLower, nameSingB))
+
+		fewAttributes := len(ent.Attributes) <= 7
+
+		if isExplicit || nameMatches || fewAttributes {
+			key := fmt.Sprintf("%s-%s-%s", entA.ID, ent.ID, entB.ID)
+			revKey := fmt.Sprintf("%s-%s-%s", entB.ID, ent.ID, entA.ID)
+			if !processed[key] && !processed[revKey] {
+				processed[key] = true
+				processed[revKey] = true
+				triplets = append(triplets, junctionTriplet{
+					EntityA:       entA,
+					JunctionTable: entData,
+					EntityB:       entB,
+				})
+			}
+		}
+	}
+
+	return triplets
+}
+
+// applyJunctionTableManyToMany 在识别到的中间表两端主体模型中自动补全 GORM many2many 关联声明
+func applyJunctionTableManyToMany(design *domain.ERDesign, entityMap map[string]EntityData) {
+	triplets := detectJunctionTables(design, entityMap)
+	for _, trip := range triplets {
+		entA, okA := entityMap[trip.EntityA.ID]
+		entB, okB := entityMap[trip.EntityB.ID]
+		if !okA || !okB {
+			continue
+		}
+		junctionTable := trip.JunctionTable.TableName
+
+		// 为 EntityA 注入指向 EntityB 的 ManyToMany 关联
+		addAssociationSafe(&entA, AssociationData{
+			Type:      "ManyToMany",
+			FieldName: ToPascalCase(entB.TableName),
+			FieldType: "[]" + entB.StructName,
+			GormTag:   fmt.Sprintf(`gorm:"many2many:%s;"`, junctionTable),
+			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(ToPascalCase(entB.TableName))),
+		})
+
+		// 为 EntityB 注入指向 EntityA 的 ManyToMany 关联
+		addAssociationSafe(&entB, AssociationData{
+			Type:      "ManyToMany",
+			FieldName: ToPascalCase(entA.TableName),
+			FieldType: "[]" + entA.StructName,
+			GormTag:   fmt.Sprintf(`gorm:"many2many:%s;"`, junctionTable),
+			JsonTag:   fmt.Sprintf(`json:"%s,omitempty"`, strings.ToLower(ToPascalCase(entA.TableName))),
+		})
+
+		entityMap[entA.ID] = entA
+		entityMap[entB.ID] = entB
+		if entA.TableName != "" {
+			entityMap[strings.ToLower(entA.TableName)] = entA
+		}
+		if entB.TableName != "" {
+			entityMap[strings.ToLower(entB.TableName)] = entB
+		}
+	}
 }
 
 type colIndexInfo struct {

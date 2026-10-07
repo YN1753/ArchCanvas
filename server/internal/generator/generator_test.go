@@ -373,3 +373,133 @@ func TestGenerateDuplicateAndSelfReferencingRelations(t *testing.T) {
 	}
 }
 
+func TestGenerateManyToManyAssociations(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	trueVal := true
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_article",
+				Name:    "articles",
+				Comment: "文章表",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "title", DBType: "VARCHAR(255)", CodeType: "string"},
+				},
+			},
+			{
+				ID:      "ent_tag",
+				Name:    "tags",
+				Comment: "标签表",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "name", DBType: "VARCHAR(64)", CodeType: "string"},
+				},
+			},
+			{
+				ID:              "ent_article_tag",
+				Name:            "article_tags",
+				Comment:         "文章与标签技术中间表",
+				IsJunctionTable: &trueVal,
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "article_id", DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "tag_id", DBType: "BIGINT", CodeType: "uint64"},
+				},
+			},
+			{
+				ID:      "ent_user",
+				Name:    "users",
+				Comment: "用户表",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "username", DBType: "VARCHAR(64)", CodeType: "string"},
+				},
+			},
+			{
+				ID:      "ent_role",
+				Name:    "roles",
+				Comment: "角色表",
+				Attributes: []domain.Attribute{
+					{Name: "id", IsPrimaryKey: true, DBType: "BIGINT", CodeType: "uint64"},
+					{Name: "role_name", DBType: "VARCHAR(64)", CodeType: "string"},
+				},
+			},
+		},
+		Relations: []domain.Relation{
+			// 1. 中间表 article_tags 拓扑连接
+			{
+				ID:             "rel_art_to_tag",
+				SourceEntityID: "ent_article",
+				TargetEntityID: "ent_article_tag",
+				Cardinality:    "1:N",
+			},
+			{
+				ID:             "rel_tag_to_art",
+				SourceEntityID: "ent_tag",
+				TargetEntityID: "ent_article_tag",
+				Cardinality:    "1:N",
+			},
+			// 2. 直接多对多关系 (users <-> roles)
+			{
+				ID:             "rel_user_role",
+				SourceEntityID: "ent_user",
+				TargetEntityID: "ent_role",
+				Cardinality:    "many_to_many",
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:  "proj_m2m",
+		ModuleName: "example.com/m2mapp",
+		Port:       "8080",
+		DBDriver:   "mysql",
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	fileMap := make(map[string]string)
+	for _, f := range files {
+		fileMap[f.Path] = f.Content
+		if strings.HasSuffix(f.Path, ".go") {
+			_, parseErr := parser.ParseFile(fset, f.Path, f.Content, parser.AllErrors)
+			if parseErr != nil {
+				t.Fatalf("file %s failed AST parsing: %v\nContent:\n%s", f.Path, parseErr, f.Content)
+			}
+		}
+	}
+
+	// 1. 验证中间表 article_tags 自动为 articles 注入 Tags []Tag gorm:"many2many:article_tags;"
+	articleModel := fileMap["internal/model/articles.go"]
+	if !strings.Contains(articleModel, "Tags") || !strings.Contains(articleModel, "[]Tag") || !strings.Contains(articleModel, "`gorm:\"many2many:article_tags;\"") {
+		t.Errorf("articles.go should have many2many Tags []Tag, got:\n%s", articleModel)
+	}
+
+	// 2. 验证中间表 article_tags 自动为 tags 注入 Articles []Article gorm:"many2many:article_tags;"
+	tagModel := fileMap["internal/model/tags.go"]
+	if !strings.Contains(tagModel, "Articles") || !strings.Contains(tagModel, "[]Article") || !strings.Contains(tagModel, "`gorm:\"many2many:article_tags;\"") {
+		t.Errorf("tags.go should have many2many Articles []Article, got:\n%s", tagModel)
+	}
+
+	// 3. 验证显式多对多关联为 users 和 roles 分别注入 many2many:users_roles
+	userModel := fileMap["internal/model/users.go"]
+	if !strings.Contains(userModel, "Roles") || !strings.Contains(userModel, "[]Role") || !strings.Contains(userModel, "`gorm:\"many2many:users_roles;\"") {
+		t.Errorf("users.go should have many2many Roles []Role, got:\n%s", userModel)
+	}
+
+	roleModel := fileMap["internal/model/roles.go"]
+	if !strings.Contains(roleModel, "Users") || !strings.Contains(roleModel, "[]User") || !strings.Contains(roleModel, "`gorm:\"many2many:users_roles;\"") {
+		t.Errorf("roles.go should have many2many Users []User, got:\n%s", roleModel)
+	}
+}
+
