@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "jiti src/export/sql.test.ts && jiti src/flow/chenAdapter.test.ts",
+    "test": "jiti src/export/sql.test.ts && jiti src/flow/chenAdapter.test.ts && jiti src/store/patch.test.ts && jiti src/store/history.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },

@@ -13,9 +13,11 @@ export function errorMessage(error: unknown): string {
 
 export function loadChenPositions(projectId: string): Record<string, Position> {
   try {
-    const raw = localStorage.getItem(`archcanvas_chen_pos_${projectId}`)
-    if (raw) {
-      return JSON.parse(raw)
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`archcanvas_chen_pos_${projectId}`)
+      if (raw) {
+        return JSON.parse(raw)
+      }
     }
   } catch {}
   return {}
@@ -23,7 +25,9 @@ export function loadChenPositions(projectId: string): Record<string, Position> {
 
 export function saveChenPositions(projectId: string, positions: Record<string, Position>) {
   try {
-    localStorage.setItem(`archcanvas_chen_pos_${projectId}`, JSON.stringify(positions))
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`archcanvas_chen_pos_${projectId}`, JSON.stringify(positions))
+    }
   } catch {}
 }
 
