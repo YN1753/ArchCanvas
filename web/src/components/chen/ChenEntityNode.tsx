@@ -47,15 +47,19 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
     >
       {/* 4 方向隐式锚点，供菱形联系、自引用回折与属性椭圆对接 */}
       <Handle type="source" position={Position.Top} id="top" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Top} id="top-source" className="!h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Top} id="top-target" className="!h-2 !w-2 !border-none !bg-transparent" />
 
       <Handle type="source" position={Position.Right} id="right" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Right} id="right-source" className="!h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Right} id="right-target" className="!h-2 !w-2 !border-none !bg-transparent" />
 
       <Handle type="source" position={Position.Bottom} id="bottom" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="source" position={Position.Bottom} id="bottom-source" className="!h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Bottom} id="bottom-target" className="!h-2 !w-2 !border-none !bg-transparent" />
 
       <Handle type="target" position={Position.Left} id="left" className="!h-2 !w-2 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Left} id="left-target" className="!h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="source" position={Position.Left} id="left-source" className="!h-2 !w-2 !border-none !bg-transparent" />
 
       {/* 核心概念名与英文表名 */}

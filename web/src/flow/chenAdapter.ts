@@ -1,4 +1,3 @@
-import dagre from 'dagre'
 import type { Node } from '@xyflow/react'
 
 import type {
@@ -230,14 +229,342 @@ function getRelationshipVerb(srcName: string, tgtName: string, cardinality?: str
 }
 
 /**
- * 计算属性行在水平方向的居中对称偏移量
+ * 计算属性行在水平方向的居中对称偏移量（支持至多 6 个属性优雅延展）
  */
-function getRowXOffsets(count: number): number[] {
+export function getRowXOffsets(count: number, width: number = 76, gap: number = 10): number[] {
   if (count <= 0) return []
   if (count === 1) return [0]
-  if (count === 2) return [-44, 44]
-  if (count === 3) return [-64, 0, 64]
-  return [-68, -22, 22, 68]
+  if (count === 2) return [-46, 46]
+  if (count === 3) return [-86, 0, 86]
+  if (count === 4) return [-126, -42, 42, 126]
+  if (count === 5) return [-170, -85, 0, 85, 170]
+  const total = count * width + (count - 1) * gap
+  const start = -total / 2 + width / 2
+  return Array.from({ length: count }, (_, i) => start + i * (width + gap))
+}
+
+export interface ChenLayoutInputEntity {
+  id: string
+  name: string
+}
+
+export interface ChenLayoutInputRelation {
+  id: string
+  sourceId: string
+  targetId: string
+  isSelf?: boolean
+}
+
+export interface ChenLayoutOutput {
+  entityPositions: Map<string, { x: number; y: number }>
+  relationPositions: Map<string, { x: number; y: number }>
+  freeFaces: Map<string, { preferTop: boolean; preferBottom: boolean }>
+}
+
+/**
+ * 拓扑感知 2D 紧凑聚类排版引擎（彻底替代一维单向拉伸的 Dagre 排版）
+ * 1. 自动识别中心枢纽实体 (Hub Entity，如度数最高的用户表) 并置顶居中
+ * 2. 自动聚类关联子图为 2D 紧凑网格（左侧组织架构，右侧权限体系），控制宽高比在 1.5 ~ 1.8 舒适视野
+ * 3. 关系菱形自动在其所连接的两实体几何中心插值定位
+ * 4. 智能推算实体外侧空闲面供属性椭圆向外吸附，杜绝穿插
+ */
+export function computeChen2DLayout(
+  entities: ChenLayoutInputEntity[],
+  relations: ChenLayoutInputRelation[],
+  options?: {
+    entityW?: number
+    entityH?: number
+    relationW?: number
+    relationH?: number
+    colGap?: number
+    rowGap?: number
+    originX?: number
+    originY?: number
+  },
+): ChenLayoutOutput {
+  const EW = options?.entityW ?? 150
+  const EH = options?.entityH ?? 52
+  const RW = options?.relationW ?? 108
+  const RH = options?.relationH ?? 68
+  const COL_GAP = options?.colGap ?? 460
+  const ROW_GAP = options?.rowGap ?? 320
+  const ORIGIN_X = options?.originX ?? 80
+  const ORIGIN_Y = options?.originY ?? 100
+
+  const entityPositions = new Map<string, { x: number; y: number }>()
+  const relationPositions = new Map<string, { x: number; y: number }>()
+  const freeFaces = new Map<string, { preferTop: boolean; preferBottom: boolean }>()
+
+  if (entities.length === 0) {
+    return { entityPositions, relationPositions, freeFaces }
+  }
+
+  // 1. 构建邻接关系与连接度统计
+  const adj = new Map<string, Set<string>>()
+  const entityMap = new Map<string, ChenLayoutInputEntity>()
+  for (const ent of entities) {
+    adj.set(ent.id, new Set())
+    entityMap.set(ent.id, ent)
+  }
+
+  const validRelations = relations.filter(
+    (r) => !r.isSelf && r.sourceId !== r.targetId && entityMap.has(r.sourceId) && entityMap.has(r.targetId),
+  )
+
+  for (const rel of validRelations) {
+    adj.get(rel.sourceId)!.add(rel.targetId)
+    adj.get(rel.targetId)!.add(rel.sourceId)
+  }
+
+  // 2. 统计各实体的连接度数
+  const degrees = new Map<string, number>()
+  for (const ent of entities) {
+    degrees.set(ent.id, adj.get(ent.id)?.size || 0)
+  }
+
+  // 按度数降序排序
+  const sortedEntities = [...entities].sort(
+    (a, b) => (degrees.get(b.id) || 0) - (degrees.get(a.id) || 0),
+  )
+
+  // 实体网格单元格映射：entId -> { row, col }
+  const gridCoords = new Map<string, { row: number; col: number }>()
+
+  // 特判 5 实体典型企业架构模型（如：租户、部门、用户、角色、权限）
+  const topHub = sortedEntities[0]
+  const hubNeighbors = adj.get(topHub.id) || new Set()
+
+  if (entities.length === 5 && (degrees.get(topHub.id) || 0) >= 3) {
+    const nonHubs = entities.filter((e) => e.id !== topHub.id)
+    let leftCluster: ChenLayoutInputEntity[] = []
+    let rightCluster: ChenLayoutInputEntity[] = []
+
+    for (let i = 0; i < nonHubs.length; i++) {
+      for (let j = i + 1; j < nonHubs.length; j++) {
+        const e1 = nonHubs[i]
+        const e2 = nonHubs[j]
+        if (adj.get(e1.id)?.has(e2.id)) {
+          const rest = nonHubs.filter((e) => e.id !== e1.id && e.id !== e2.id)
+          leftCluster = [e1, e2]
+          rightCluster = rest
+          break
+        }
+      }
+      if (leftCluster.length > 0) break
+    }
+
+    if (leftCluster.length === 2 && rightCluster.length === 2) {
+      // 靠近 Hub 的节点排在 row 0
+      if (!hubNeighbors.has(leftCluster[0].id) && hubNeighbors.has(leftCluster[1].id)) {
+        leftCluster.reverse()
+      }
+      if (!hubNeighbors.has(rightCluster[0].id) && hubNeighbors.has(rightCluster[1].id)) {
+        rightCluster.reverse()
+      }
+
+      // Top Hub 居中置顶
+      gridCoords.set(topHub.id, { row: 0, col: 1 })
+      // 左侧组织架构子簇：row 0, col 0 与 row 1, col 0
+      gridCoords.set(leftCluster[0].id, { row: 0, col: 0 })
+      gridCoords.set(leftCluster[1].id, { row: 1, col: 0 })
+      // 右侧权限控制子簇：row 0, col 2 与 row 1, col 2
+      gridCoords.set(rightCluster[0].id, { row: 0, col: 2 })
+      gridCoords.set(rightCluster[1].id, { row: 1, col: 2 })
+    }
+  }
+
+  // 通用自适应 2D 紧凑网格嵌入算法（适用于任意数量实体模型）
+  if (gridCoords.size < entities.length) {
+    gridCoords.clear()
+    const N = entities.length
+    if (N === 1) {
+      gridCoords.set(entities[0].id, { row: 0, col: 0 })
+    } else if (N === 2) {
+      gridCoords.set(entities[0].id, { row: 0, col: 0 })
+      gridCoords.set(entities[1].id, { row: 0, col: 1 })
+    } else if (N === 3) {
+      gridCoords.set(sortedEntities[0].id, { row: 0, col: 1 })
+      gridCoords.set(sortedEntities[1].id, { row: 1, col: 0 })
+      gridCoords.set(sortedEntities[2].id, { row: 1, col: 2 })
+    } else if (N === 4) {
+      gridCoords.set(sortedEntities[0].id, { row: 0, col: 0 })
+      gridCoords.set(sortedEntities[1].id, { row: 0, col: 1 })
+      gridCoords.set(sortedEntities[2].id, { row: 1, col: 0 })
+      gridCoords.set(sortedEntities[3].id, { row: 1, col: 1 })
+    } else {
+      // N >= 5 通用紧凑网格布局：横向列数 C 保持 1.5 ~ 1.8 宽屏黄金比例
+      const C = Math.max(2, Math.min(4, Math.ceil(Math.sqrt(N * 1.4))))
+      const R = Math.ceil(N / C)
+
+      const occupied = new Set<string>()
+      const getCellKey = (r: number, c: number) => `${r},${c}`
+
+      const hubCol = Math.floor(C / 2)
+      gridCoords.set(sortedEntities[0].id, { row: 0, col: hubCol })
+      occupied.add(getCellKey(0, hubCol))
+
+      const placed = new Set<string>([sortedEntities[0].id])
+
+      while (placed.size < N) {
+        let bestCandidate: ChenLayoutInputEntity | null = null
+        let bestScore = -1
+
+        for (const ent of sortedEntities) {
+          if (placed.has(ent.id)) continue
+          let placedNeighborsCount = 0
+          for (const nId of adj.get(ent.id) || []) {
+            if (placed.has(nId)) placedNeighborsCount++
+          }
+          const score = placedNeighborsCount * 100 + (degrees.get(ent.id) || 0)
+          if (score > bestScore) {
+            bestScore = score
+            bestCandidate = ent
+          }
+        }
+
+        if (!bestCandidate) {
+          const remaining = sortedEntities.find((e) => !placed.has(e.id))
+          if (!remaining) break
+          bestCandidate = remaining
+        }
+
+        let bestCell = { row: 0, col: 0 }
+        let minCost = Infinity
+
+        for (let r = 0; r < R + 2; r++) {
+          for (let c = 0; c < C; c++) {
+            const key = getCellKey(r, c)
+            if (occupied.has(key)) continue
+
+            let cost = 0
+            for (const nId of adj.get(bestCandidate.id) || []) {
+              if (placed.has(nId)) {
+                const nPos = gridCoords.get(nId)!
+                cost += Math.abs(r - nPos.row) * 1.5 + Math.abs(c - nPos.col)
+              }
+            }
+            cost += r * 0.2 + Math.abs(c - hubCol) * 0.1
+
+            if (cost < minCost) {
+              minCost = cost
+              bestCell = { row: r, col: c }
+            }
+          }
+        }
+
+        gridCoords.set(bestCandidate.id, bestCell)
+        occupied.add(getCellKey(bestCell.row, bestCell.col))
+        placed.add(bestCandidate.id)
+      }
+    }
+  }
+
+  // 3. 将网格行列映射为像素绝对坐标 (Pixel Coordinates)
+  for (const ent of entities) {
+    const cell = gridCoords.get(ent.id) || { row: 0, col: 0 }
+    const x = ORIGIN_X + cell.col * COL_GAP
+    const y = ORIGIN_Y + cell.row * ROW_GAP
+    entityPositions.set(ent.id, { x, y })
+  }
+
+  // 4. 分析每个实体的空闲朝向面 (Free Faces)，供属性椭圆向外吸附
+  for (const ent of entities) {
+    const myPos = entityPositions.get(ent.id)!
+    let hasAbove = false
+    let hasBelow = false
+
+    for (const nId of adj.get(ent.id) || []) {
+      const nPos = entityPositions.get(nId)
+      if (!nPos) continue
+      if (nPos.y < myPos.y - 40) hasAbove = true
+      if (nPos.y > myPos.y + 40) hasBelow = true
+    }
+
+    freeFaces.set(ent.id, {
+      preferTop: !hasAbove,
+      preferBottom: !hasBelow && hasAbove,
+    })
+  }
+
+  // 5. 计算联系菱形节点坐标（相连两实体中心的几何中点插值）
+  const processedPairCounts = new Map<string, number>()
+
+  for (const rel of relations) {
+    if (rel.isSelf || rel.sourceId === rel.targetId) {
+      const srcPos = entityPositions.get(rel.sourceId)
+      if (srcPos) {
+        relationPositions.set(rel.id, {
+          x: srcPos.x + EW + 60,
+          y: srcPos.y - 10,
+        })
+      }
+      continue
+    }
+
+    const srcPos = entityPositions.get(rel.sourceId)
+    const tgtPos = entityPositions.get(rel.targetId)
+    if (!srcPos || !tgtPos) continue
+
+    const srcCenter = { x: srcPos.x + EW / 2, y: srcPos.y + EH / 2 }
+    const tgtCenter = { x: tgtPos.x + EW / 2, y: tgtPos.y + EH / 2 }
+
+    const pairKey = [rel.sourceId, rel.targetId].sort().join('--')
+    const count = processedPairCounts.get(pairKey) || 0
+    processedPairCounts.set(pairKey, count + 1)
+
+    let midX = (srcCenter.x + tgtCenter.x) / 2
+    let midY = (srcCenter.y + tgtCenter.y) / 2
+
+    // 同一对实体间存在多个关系时施加法向微移，防止重合
+    if (count > 0) {
+      const dx = tgtCenter.x - srcCenter.x
+      const dy = tgtCenter.y - srcCenter.y
+      const len = Math.hypot(dx, dy) || 1
+      const sign = count % 2 === 1 ? 1 : -1
+      midX += (-dy / len) * 45 * sign
+      midY += (dx / len) * 45 * sign
+    }
+
+    relationPositions.set(rel.id, {
+      x: midX - RW / 2,
+      y: midY - RH / 2,
+    })
+  }
+
+  return { entityPositions, relationPositions, freeFaces }
+}
+
+/**
+ * 根据源节点与宿节点的相对中心几何位置，动态推导最优的最近出入 Handle 标识
+ * 杜绝传统 LR 强行拉扯导致的横跨全图与回折绕圈
+ */
+export function getNearestChenHandles(
+  sourceCenter: { x: number; y: number },
+  targetCenter: { x: number; y: number },
+): { sourceHandle: string; targetHandle: string } {
+  const dx = targetCenter.x - sourceCenter.x
+  const dy = targetCenter.y - sourceCenter.y
+
+  if (Math.abs(dx) >= Math.abs(dy) * 1.4) {
+    // 显著水平关系：源端走左右，宿端走左右
+    return dx >= 0
+      ? { sourceHandle: 'right-source', targetHandle: 'left-target' }
+      : { sourceHandle: 'left-source', targetHandle: 'right-target' }
+  } else if (Math.abs(dy) >= Math.abs(dx) * 1.4) {
+    // 显著垂直关系：源端走上下，宿端走上下
+    return dy >= 0
+      ? { sourceHandle: 'bottom-source', targetHandle: 'top-target' }
+      : { sourceHandle: 'top-source', targetHandle: 'bottom-target' }
+  } else {
+    // 斜向关系（如 部门 ↗ 菱形 ↗ 用户）
+    if (dy < 0) {
+      // 宿端在源端上方
+      return { sourceHandle: 'top-source', targetHandle: 'bottom-target' }
+    } else {
+      // 宿端在源端下方
+      return { sourceHandle: 'bottom-source', targetHandle: 'top-target' }
+    }
+  }
 }
 
 /**
@@ -333,75 +660,27 @@ export function toChenFlowElements(
   const ATTR_H = 28
   const ATTR_Y_OFFSET = 50
 
-  // 提前为每个实体精选属性并分列上下两排
-  interface EntityAttrLayout {
-    topAttrs: Attribute[]
-    bottomAttrs: Attribute[]
-  }
-  const entityAttrMap = new Map<string, EntityAttrLayout>()
+  // 提前收集参与布局的实体与联系
+  const layoutEntities: ChenLayoutInputEntity[] = normalEntities.map((e) => ({
+    id: e.id,
+    name: e.name,
+  }))
 
-  for (const entity of normalEntities) {
-    // 过滤出适合陈氏图展示的核心属性：
-    // - 保留主键（PK）
-    // - 剔除外键（如 user_id, category_id），因为陈氏图中外键由菱形连线表达，不作为属性椭圆！
-    // - 最多精选 4 个核心业务属性，保证画布优雅不重叠
-    const pkAttrs = entity.attributes.filter((a) => a.is_primary_key)
-    const bizAttrs = entity.attributes.filter(
-      (a) =>
-        !a.is_primary_key &&
-        !a.name.toLowerCase().endsWith('_id') &&
-        !a.name.toLowerCase().endsWith('id'),
-    )
-
-    const selectedAttrs: Attribute[] = [...pkAttrs, ...bizAttrs.slice(0, 3)]
-    if (selectedAttrs.length === 0 && entity.attributes.length > 0) {
-      selectedAttrs.push(entity.attributes[0])
-    }
-
-    const topCount = Math.ceil(selectedAttrs.length / 2)
-    entityAttrMap.set(entity.id, {
-      topAttrs: selectedAttrs.slice(0, topCount),
-      bottomAttrs: selectedAttrs.slice(topCount),
-    })
-  }
-
-  // 3. 构建陈氏主干 Dagre 拓扑图（实体矩形 + 联系菱形）
-  const g = new dagre.graphlib.Graph()
-  g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({
-    rankdir: 'LR',
-    nodesep: 100, // 实体与实体同层净空（计入上下属性包围盒后留足 100px 绝对净空）
-    ranksep: 200, // 实体 ⇄ 菱形层间距（留足 200px 充裕空间展示连线与基数徽标）
-    marginx: 80,
-    marginy: 80,
-  })
-
-  // 添加实体节点到 Dagre（赋予包含上下属性的完整虚拟包围盒，杜绝同层重叠）
-  for (const entity of normalEntities) {
-    const attrInfo = entityAttrMap.get(entity.id)!
-    const hasTop = attrInfo.topAttrs.length > 0
-    const hasBottom = attrInfo.bottomAttrs.length > 0
-    const virtualHeight =
-      ENTITY_H + (hasTop ? ATTR_Y_OFFSET + 8 : 0) + (hasBottom ? ATTR_Y_OFFSET + 8 : 0)
-    const maxAttrsInRow = Math.max(attrInfo.topAttrs.length, attrInfo.bottomAttrs.length)
-    const virtualWidth = Math.max(ENTITY_W, maxAttrsInRow * (ATTR_W + 12))
-
-    g.setNode(`ent-${entity.id}`, { width: virtualWidth, height: virtualHeight })
-  }
-
-  // 添加中间表提升的菱形联系到 Dagre
   const processedPairKeys = new Set<string>()
+  const layoutRelations: ChenLayoutInputRelation[] = []
 
+  // 中间表菱形联系
   for (const junc of junctionDiamonds) {
     const pairKey = [junc.leftEntity.id, junc.rightEntity.id].sort().join('--')
     processedPairKeys.add(pairKey)
-
-    g.setNode(junc.id, { width: RELATION_W, height: RELATION_H })
-    g.setEdge(`ent-${junc.leftEntity.id}`, junc.id, { minlen: 1, weight: 2 })
-    g.setEdge(junc.id, `ent-${junc.rightEntity.id}`, { minlen: 1, weight: 2 })
+    layoutRelations.push({
+      id: junc.id,
+      sourceId: junc.leftEntity.id,
+      targetId: junc.rightEntity.id,
+    })
   }
 
-  // 添加常规关系与自引用关系转换的菱形联系到 Dagre
+  // 常规外键联系与自引用联系
   const regularDiamonds: Array<{
     id: string
     relation: Relation
@@ -435,37 +714,77 @@ export function toChenFlowElements(
       isSelf,
     })
 
-    g.setNode(diaId, { width: RELATION_W, height: RELATION_H })
-    g.setEdge(`ent-${src.id}`, diaId, { minlen: 1, weight: 2 })
-    g.setEdge(diaId, `ent-${tgt.id}`, { minlen: 1, weight: 2 })
+    layoutRelations.push({
+      id: diaId,
+      sourceId: src.id,
+      targetId: tgt.id,
+      isSelf,
+    })
   }
 
-  // 执行主干排版
-  dagre.layout(g)
+  // 3. 执行 2D 拓扑紧凑聚类自动排版
+  const layout = computeChen2DLayout(layoutEntities, layoutRelations, {
+    entityW: ENTITY_W,
+    entityH: ENTITY_H,
+    relationW: RELATION_W,
+    relationH: RELATION_H,
+    colGap: 460,
+    rowGap: 320,
+    originX: 80,
+    originY: 100,
+  })
 
-  // 4. 生成实体矩形节点与上下属性椭圆（彻底杜绝横向穿越与纵向重叠）
+  // 4. 为每个实体精选属性并根据 freeFaces 智能安排在空闲外侧
+  interface EntityAttrLayout {
+    topAttrs: Attribute[]
+    bottomAttrs: Attribute[]
+  }
+  const entityAttrMap = new Map<string, EntityAttrLayout>()
+
   for (const entity of normalEntities) {
-    const laid = g.node(`ent-${entity.id}`)
-    const attrInfo = entityAttrMap.get(entity.id)!
-    const hasTop = attrInfo.topAttrs.length > 0
-    const hasBottom = attrInfo.bottomAttrs.length > 0
+    const pkAttrs = entity.attributes.filter((a) => a.is_primary_key)
+    const bizAttrs = entity.attributes.filter(
+      (a) =>
+        !a.is_primary_key &&
+        !a.name.toLowerCase().endsWith('_id') &&
+        !a.name.toLowerCase().endsWith('id'),
+    )
 
-    let ecy = laid ? laid.y : 100
-    if (hasTop && !hasBottom) {
-      ecy += (ATTR_Y_OFFSET + 8) / 2
-    } else if (!hasTop && hasBottom) {
-      ecy -= (ATTR_Y_OFFSET + 8) / 2
+    const selectedAttrs: Attribute[] = [...pkAttrs, ...bizAttrs.slice(0, 4)]
+    if (selectedAttrs.length === 0 && entity.attributes.length > 0) {
+      selectedAttrs.push(entity.attributes[0])
     }
-    const ecx = laid ? laid.x : 100
 
-    const defaultEntityX = ecx - ENTITY_W / 2
-    const defaultEntityY = ecy - ENTITY_H / 2
+    const face = layout.freeFaces.get(entity.id)
+    if (face?.preferTop) {
+      // 上方空闲：所有属性归拢于上方，下方留给关系连线
+      entityAttrMap.set(entity.id, {
+        topAttrs: selectedAttrs,
+        bottomAttrs: [],
+      })
+    } else if (face?.preferBottom) {
+      // 下方空闲：所有属性归拢于下方，上方留给关系连线
+      entityAttrMap.set(entity.id, {
+        topAttrs: [],
+        bottomAttrs: selectedAttrs,
+      })
+    } else {
+      // 默认上下均分
+      const topCount = Math.ceil(selectedAttrs.length / 2)
+      entityAttrMap.set(entity.id, {
+        topAttrs: selectedAttrs.slice(0, topCount),
+        bottomAttrs: selectedAttrs.slice(topCount),
+      })
+    }
+  }
+
+  // 5. 生成实体矩形节点与外侧属性椭圆
+  for (const entity of normalEntities) {
+    const defaultPos = layout.entityPositions.get(entity.id) || { x: 100, y: 100 }
     const customEntityPos = customPositions?.[entity.id]
+    const entityX = customEntityPos ? customEntityPos.x : defaultPos.x
+    const entityY = customEntityPos ? customEntityPos.y : defaultPos.y
 
-    const entityX = customEntityPos ? customEntityPos.x : defaultEntityX
-    const entityY = customEntityPos ? customEntityPos.y : defaultEntityY
-
-    // 动态锚点：若实体发生位置微调，上下属性椭圆默认跟随其实体移动
     const baseEcx = entityX + ENTITY_W / 2
     const baseEcy = entityY + ENTITY_H / 2
 
@@ -479,9 +798,11 @@ export function toChenFlowElements(
       selected: entity.id === selectedId,
     })
 
+    const attrInfo = entityAttrMap.get(entity.id)!
+
     // 生成上方属性椭圆
     if (attrInfo.topAttrs.length > 0) {
-      const topY = baseEcy - ATTR_Y_OFFSET
+      const topY = baseEcy - (ATTR_Y_OFFSET + 6)
       const offsets = getRowXOffsets(attrInfo.topAttrs.length)
       for (let i = 0; i < attrInfo.topAttrs.length; i++) {
         const attr = attrInfo.topAttrs[i]
@@ -506,8 +827,8 @@ export function toChenFlowElements(
           type: 'chenEdge',
           source: entity.id,
           target: attrNodeId,
-          sourceHandle: 'top',
-          targetHandle: 'bottom',
+          sourceHandle: 'top-source',
+          targetHandle: 'bottom-target',
           data: {
             isAttributeEdge: true,
           },
@@ -517,7 +838,7 @@ export function toChenFlowElements(
 
     // 生成下方属性椭圆
     if (attrInfo.bottomAttrs.length > 0) {
-      const bottomY = baseEcy + ATTR_Y_OFFSET
+      const bottomY = baseEcy + (ATTR_Y_OFFSET + 6)
       const offsets = getRowXOffsets(attrInfo.bottomAttrs.length)
       for (let i = 0; i < attrInfo.bottomAttrs.length; i++) {
         const attr = attrInfo.bottomAttrs[i]
@@ -542,8 +863,8 @@ export function toChenFlowElements(
           type: 'chenEdge',
           source: entity.id,
           target: attrNodeId,
-          sourceHandle: 'bottom',
-          targetHandle: 'top',
+          sourceHandle: 'bottom-source',
+          targetHandle: 'top-target',
           data: {
             isAttributeEdge: true,
           },
@@ -552,17 +873,15 @@ export function toChenFlowElements(
     }
   }
 
-  // 5. 生成中间表提升的菱形联系节点与边
+  // 6. 生成中间表提升的菱形联系节点
   for (const junc of junctionDiamonds) {
-    const laid = g.node(junc.id)
-    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
-    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
+    const defaultPos = layout.relationPositions.get(junc.id) || { x: 250, y: 250 }
     const customPos = customPositions?.[junc.id]
 
     nodes.push({
       id: junc.id,
       type: 'chenRelation',
-      position: customPos ?? { x: defaultX, y: defaultY },
+      position: customPos ?? defaultPos,
       data: {
         relationId: junc.entity.id,
         name: getEntityChineseName(junc.entity.name),
@@ -573,6 +892,47 @@ export function toChenFlowElements(
       },
       selected: junc.id === selectedId || junc.entity.id === selectedId,
     })
+  }
+
+  // 7. 生成常规外键关系的菱形联系节点
+  for (const reg of regularDiamonds) {
+    const defaultPos = layout.relationPositions.get(reg.id) || { x: 250, y: 250 }
+    const customPos = customPositions?.[reg.id]
+    const card = (reg.relation.cardinality || (reg.relation as any).relation_type_id || 'one_to_many') as Cardinality
+
+    nodes.push({
+      id: reg.id,
+      type: 'chenRelation',
+      position: customPos ?? defaultPos,
+      data: {
+        relationId: reg.relation.id,
+        name: reg.verb,
+        cardinality: card,
+        sourceEntityId: reg.source.id,
+        targetEntityId: reg.target.id,
+      },
+      selected: reg.id === selectedId || reg.relation.id === selectedId,
+    })
+  }
+
+  // 8. 建立全节点几何中心坐标缓存，用于动态计算最优出入 Handle
+  const nodeCenterMap = new Map<string, { x: number; y: number }>()
+  for (const n of nodes) {
+    const isEnt = n.type === 'chenEntity'
+    const isRel = n.type === 'chenRelation'
+    const w = isEnt ? ENTITY_W : isRel ? RELATION_W : ATTR_W
+    const h = isEnt ? ENTITY_H : isRel ? RELATION_H : ATTR_H
+    nodeCenterMap.set(n.id, { x: n.position.x + w / 2, y: n.position.y + h / 2 })
+  }
+
+  // 9. 生成中间表提升的边（就近几何 Handle 对接）
+  for (const junc of junctionDiamonds) {
+    const leftCenter = nodeCenterMap.get(junc.leftEntity.id) || { x: 0, y: 0 }
+    const juncCenter = nodeCenterMap.get(junc.id) || { x: 0, y: 0 }
+    const rightCenter = nodeCenterMap.get(junc.rightEntity.id) || { x: 0, y: 0 }
+
+    const h1 = getNearestChenHandles(leftCenter, juncCenter)
+    const h2 = getNearestChenHandles(juncCenter, rightCenter)
 
     // 实体 ──(M)── 菱形
     edges.push({
@@ -580,8 +940,8 @@ export function toChenFlowElements(
       type: 'chenEdge',
       source: junc.leftEntity.id,
       target: junc.id,
-      sourceHandle: 'right',
-      targetHandle: 'left',
+      sourceHandle: h1.sourceHandle,
+      targetHandle: h1.targetHandle,
       data: {
         cardinalityLabel: 'M',
         isAttributeEdge: false,
@@ -594,8 +954,8 @@ export function toChenFlowElements(
       type: 'chenEdge',
       source: junc.id,
       target: junc.rightEntity.id,
-      sourceHandle: 'right',
-      targetHandle: 'left',
+      sourceHandle: h2.sourceHandle,
+      targetHandle: h2.targetHandle,
       data: {
         cardinalityLabel: 'N',
         isAttributeEdge: false,
@@ -603,47 +963,24 @@ export function toChenFlowElements(
     })
   }
 
-  // 6. 生成普通外键关系的菱形联系节点与边
+  // 10. 生成常规外键关系与自引用关系的边（就近几何 Handle 对接）
   for (const reg of regularDiamonds) {
-    const laid = g.node(reg.id)
-    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
-    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
-    const customPos = customPositions?.[reg.id]
     const card = (reg.relation.cardinality || (reg.relation as any).relation_type_id || 'one_to_many') as Cardinality
-
-    nodes.push({
-      id: reg.id,
-      type: 'chenRelation',
-      position: customPos ?? { x: defaultX, y: defaultY },
-      data: {
-        relationId: reg.relation.id,
-        name: reg.verb,
-        cardinality: card,
-        sourceEntityId: reg.source.id,
-        targetEntityId: reg.target.id,
-      },
-      selected: reg.id === selectedId || reg.relation.id === selectedId,
-    })
-
     const is1to1 = card === 'one_to_one'
     const isM2M = card === 'many_to_many'
-
-    // 源端基数标签：1 或 M
     const srcCard = isM2M ? 'M' : '1'
-    // 宿端基数标签：1 或 N
     const tgtCard = is1to1 ? '1' : 'N'
-
     const isRelSelected = reg.id === selectedId || reg.relation.id === selectedId
 
     if (reg.isSelf) {
-      // 自引用自环拓扑：顶部弧线出入菱形，底部弧线回折接入实体，双弧分流零重叠
+      // 自引用自环拓扑：顶部弧线出入菱形，底部弧线回折接入实体
       edges.push({
         id: `edge-${reg.source.id}-${reg.id}`,
         type: 'chenEdge',
         source: reg.source.id,
         target: reg.id,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: 'right-source',
+        targetHandle: 'left-target',
         data: {
           cardinalityLabel: srcCard,
           isAttributeEdge: false,
@@ -669,13 +1006,20 @@ export function toChenFlowElements(
         selected: isRelSelected,
       })
     } else {
+      const srcCenter = nodeCenterMap.get(reg.source.id) || { x: 0, y: 0 }
+      const diaCenter = nodeCenterMap.get(reg.id) || { x: 0, y: 0 }
+      const tgtCenter = nodeCenterMap.get(reg.target.id) || { x: 0, y: 0 }
+
+      const h1 = getNearestChenHandles(srcCenter, diaCenter)
+      const h2 = getNearestChenHandles(diaCenter, tgtCenter)
+
       edges.push({
         id: `edge-${reg.source.id}-${reg.id}`,
         type: 'chenEdge',
         source: reg.source.id,
         target: reg.id,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: h1.sourceHandle,
+        targetHandle: h1.targetHandle,
         data: {
           cardinalityLabel: srcCard,
           isAttributeEdge: false,
@@ -688,8 +1032,8 @@ export function toChenFlowElements(
         type: 'chenEdge',
         source: reg.id,
         target: reg.target.id,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: h2.sourceHandle,
+        targetHandle: h2.targetHandle,
         data: {
           cardinalityLabel: tgtCard,
           isAttributeEdge: false,
@@ -771,31 +1115,7 @@ export function conceptualToChenFlowElements(
     })
   }
 
-  // 3. 构建 Dagre 拓扑图
-  const g = new dagre.graphlib.Graph()
-  g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({
-    rankdir: 'LR',
-    nodesep: 100,
-    ranksep: 200,
-    marginx: 80,
-    marginy: 80,
-  })
-
-  for (const c of concepts) {
-    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-    const attrInfo = conceptAttrMap.get(cid)!
-    const hasTop = attrInfo.topAttrs.length > 0
-    const hasBottom = attrInfo.bottomAttrs.length > 0
-    const virtualHeight =
-      ENTITY_H + (hasTop ? ATTR_Y_OFFSET + 8 : 0) + (hasBottom ? ATTR_Y_OFFSET + 8 : 0)
-    const maxAttrsInRow = Math.max(attrInfo.topAttrs.length, attrInfo.bottomAttrs.length)
-    const virtualWidth = Math.max(ENTITY_W, maxAttrsInRow * (ATTR_W + 12))
-
-    g.setNode(`ent-${cid}`, { width: virtualWidth, height: virtualHeight })
-  }
-
-  // 4. 解析关系并加入 Dagre
+  // 3. 解析概念关联关系
   interface ResolvedRelation {
     id: string
     rawId: string
@@ -842,37 +1162,76 @@ export function conceptualToChenFlowElements(
       position: rel.position,
       isSelf,
     })
-
-    g.setNode(diaId, { width: RELATION_W, height: RELATION_H })
-    g.setEdge(`ent-${srcId}`, diaId, { minlen: 1, weight: 2 })
-    g.setEdge(diaId, `ent-${tgtId}`, { minlen: 1, weight: 2 })
   }
 
-  // 执行自动排版
-  dagre.layout(g)
+  // 4. 执行 2D 拓扑感知紧凑聚类排版
+  const layoutEntities: ChenLayoutInputEntity[] = concepts.map((c) => {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    return { id: cid, name: c.name }
+  })
 
-  // 5. 生成实体矩形节点与上下属性椭圆
+  const layoutRelations: ChenLayoutInputRelation[] = resolvedRelations.map((rel) => ({
+    id: rel.id,
+    sourceId: rel.sourceId,
+    targetId: rel.targetId,
+    isSelf: rel.isSelf,
+  }))
+
+  const layout = computeChen2DLayout(layoutEntities, layoutRelations, {
+    entityW: ENTITY_W,
+    entityH: ENTITY_H,
+    relationW: RELATION_W,
+    relationH: RELATION_H,
+    colGap: 460,
+    rowGap: 320,
+    originX: 80,
+    originY: 100,
+  })
+
+  // 5. 根据 freeFaces 智能安排属性在实体空闲外侧
   for (const c of concepts) {
     const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-    const laid = g.node(`ent-${cid}`)
-    const attrInfo = conceptAttrMap.get(cid)!
-    const hasTop = attrInfo.topAttrs.length > 0
-    const hasBottom = attrInfo.bottomAttrs.length > 0
+    const attrs = c.attributes || []
 
-    let ecy = laid ? laid.y : 100
-    if (hasTop && !hasBottom) {
-      ecy += (ATTR_Y_OFFSET + 8) / 2
-    } else if (!hasTop && hasBottom) {
-      ecy -= (ATTR_Y_OFFSET + 8) / 2
+    const keyAttrs = attrs.filter((a) => a.is_business_key)
+    const bizAttrs = attrs.filter((a) => !a.is_business_key)
+
+    const selectedAttrs: ConceptAttribute[] = [
+      ...keyAttrs,
+      ...bizAttrs.slice(0, Math.max(0, 5 - keyAttrs.length)),
+    ]
+    if (selectedAttrs.length === 0 && attrs.length > 0) {
+      selectedAttrs.push(attrs[0])
     }
-    const ecx = laid ? laid.x : 100
 
-    const defaultEntityX = ecx - ENTITY_W / 2
-    const defaultEntityY = ecy - ENTITY_H / 2
+    const face = layout.freeFaces.get(cid)
+    if (face?.preferTop) {
+      conceptAttrMap.set(cid, {
+        topAttrs: selectedAttrs,
+        bottomAttrs: [],
+      })
+    } else if (face?.preferBottom) {
+      conceptAttrMap.set(cid, {
+        topAttrs: [],
+        bottomAttrs: selectedAttrs,
+      })
+    } else {
+      const topCount = Math.ceil(selectedAttrs.length / 2)
+      conceptAttrMap.set(cid, {
+        topAttrs: selectedAttrs.slice(0, topCount),
+        bottomAttrs: selectedAttrs.slice(topCount),
+      })
+    }
+  }
+
+  // 6. 生成实体矩形节点与外侧属性椭圆
+  for (const c of concepts) {
+    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+    const defaultPos = layout.entityPositions.get(cid) || { x: 100, y: 100 }
     const customEntityPos = customPositions?.[cid] ?? c.position
 
-    const entityX = customEntityPos ? customEntityPos.x : defaultEntityX
-    const entityY = customEntityPos ? customEntityPos.y : defaultEntityY
+    const entityX = customEntityPos ? customEntityPos.x : defaultPos.x
+    const entityY = customEntityPos ? customEntityPos.y : defaultPos.y
 
     const baseEcx = entityX + ENTITY_W / 2
     const baseEcy = entityY + ENTITY_H / 2
@@ -909,9 +1268,11 @@ export function conceptualToChenFlowElements(
       selected: cid === selectedId || c.id === selectedId,
     })
 
+    const attrInfo = conceptAttrMap.get(cid)!
+
     // 生成上方属性椭圆
     if (attrInfo.topAttrs.length > 0) {
-      const topY = baseEcy - ATTR_Y_OFFSET
+      const topY = baseEcy - (ATTR_Y_OFFSET + 6)
       const offsets = getRowXOffsets(attrInfo.topAttrs.length)
       for (let i = 0; i < attrInfo.topAttrs.length; i++) {
         const attr = attrInfo.topAttrs[i]
@@ -954,8 +1315,8 @@ export function conceptualToChenFlowElements(
           type: 'chenEdge',
           source: cid,
           target: attrNodeId,
-          sourceHandle: 'top',
-          targetHandle: 'bottom',
+          sourceHandle: 'top-source',
+          targetHandle: 'bottom-target',
           data: {
             isAttributeEdge: true,
           },
@@ -965,7 +1326,7 @@ export function conceptualToChenFlowElements(
 
     // 生成下方属性椭圆
     if (attrInfo.bottomAttrs.length > 0) {
-      const bottomY = baseEcy + ATTR_Y_OFFSET
+      const bottomY = baseEcy + (ATTR_Y_OFFSET + 6)
       const offsets = getRowXOffsets(attrInfo.bottomAttrs.length)
       for (let i = 0; i < attrInfo.bottomAttrs.length; i++) {
         const attr = attrInfo.bottomAttrs[i]
@@ -1008,8 +1369,8 @@ export function conceptualToChenFlowElements(
           type: 'chenEdge',
           source: cid,
           target: attrNodeId,
-          sourceHandle: 'bottom',
-          targetHandle: 'top',
+          sourceHandle: 'bottom-source',
+          targetHandle: 'top-target',
           data: {
             isAttributeEdge: true,
           },
@@ -1018,17 +1379,15 @@ export function conceptualToChenFlowElements(
     }
   }
 
-  // 6. 生成联系菱形节点与边
+  // 7. 生成联系菱形节点
   for (const rel of resolvedRelations) {
-    const laid = g.node(rel.id)
-    const defaultX = laid ? laid.x - RELATION_W / 2 : 250
-    const defaultY = laid ? laid.y - RELATION_H / 2 : 250
+    const defaultPos = layout.relationPositions.get(rel.id) || { x: 250, y: 250 }
     const customPos = customPositions?.[rel.id] ?? customPositions?.[rel.rawId] ?? rel.position
 
     nodes.push({
       id: rel.id,
       type: 'chenRelation',
-      position: customPos ?? { x: defaultX, y: defaultY },
+      position: customPos ?? defaultPos,
       data: {
         relationId: rel.rawId,
         name: rel.name,
@@ -1038,7 +1397,20 @@ export function conceptualToChenFlowElements(
       },
       selected: rel.id === selectedId || rel.rawId === selectedId,
     })
+  }
 
+  // 8. 建立全节点几何中心坐标缓存，用于动态计算最优出入 Handle
+  const nodeCenterMap = new Map<string, { x: number; y: number }>()
+  for (const n of nodes) {
+    const isEnt = n.type === 'chenEntity'
+    const isRel = n.type === 'chenRelation'
+    const w = isEnt ? ENTITY_W : isRel ? RELATION_W : ATTR_W
+    const h = isEnt ? ENTITY_H : isRel ? RELATION_H : ATTR_H
+    nodeCenterMap.set(n.id, { x: n.position.x + w / 2, y: n.position.y + h / 2 })
+  }
+
+  // 9. 生成联系菱形边（就近几何 Handle 对接）
+  for (const rel of resolvedRelations) {
     const is1to1 = rel.cardinality === 'one_to_one'
     const isM2M = rel.cardinality === 'many_to_many'
 
@@ -1048,14 +1420,13 @@ export function conceptualToChenFlowElements(
     const isRelSelected = rel.id === selectedId || rel.rawId === selectedId
 
     if (rel.isSelf) {
-      // 自引用自环拓扑：顶部弧线出入菱形，底部弧线回折接入实体，双弧分流零重叠
       edges.push({
         id: `edge-${rel.sourceId}-${rel.id}`,
         type: 'chenEdge',
         source: rel.sourceId,
         target: rel.id,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: 'right-source',
+        targetHandle: 'left-target',
         data: {
           cardinalityLabel: srcCard,
           isAttributeEdge: false,
@@ -1081,13 +1452,20 @@ export function conceptualToChenFlowElements(
         selected: isRelSelected,
       })
     } else {
+      const srcCenter = nodeCenterMap.get(rel.sourceId) || { x: 0, y: 0 }
+      const diaCenter = nodeCenterMap.get(rel.id) || { x: 0, y: 0 }
+      const tgtCenter = nodeCenterMap.get(rel.targetId) || { x: 0, y: 0 }
+
+      const h1 = getNearestChenHandles(srcCenter, diaCenter)
+      const h2 = getNearestChenHandles(diaCenter, tgtCenter)
+
       edges.push({
         id: `edge-${rel.sourceId}-${rel.id}`,
         type: 'chenEdge',
         source: rel.sourceId,
         target: rel.id,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: h1.sourceHandle,
+        targetHandle: h1.targetHandle,
         data: {
           cardinalityLabel: srcCard,
           isAttributeEdge: false,
@@ -1100,8 +1478,8 @@ export function conceptualToChenFlowElements(
         type: 'chenEdge',
         source: rel.id,
         target: rel.targetId,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle: h2.sourceHandle,
+        targetHandle: h2.targetHandle,
         data: {
           cardinalityLabel: tgtCard,
           isAttributeEdge: false,

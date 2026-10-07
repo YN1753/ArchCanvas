@@ -39,9 +39,13 @@ function ChenAttributeNode({ data, selected }: NodeProps<ChenAttributeNodeType>)
     >
       {/* 4 方向锚点 */}
       <Handle type="target" position={Position.Top} id="top" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Top} id="top-target" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Right} id="right" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Right} id="right-target" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Bottom} id="bottom" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Bottom} id="bottom-target" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Left} id="left" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
+      <Handle type="target" position={Position.Left} id="left-target" className="!h-1.5 !w-1.5 !border-none !bg-transparent" />
 
       <div className="flex items-center justify-center overflow-hidden text-center">
         {isKey ? (

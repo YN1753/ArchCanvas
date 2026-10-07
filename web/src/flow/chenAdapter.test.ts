@@ -273,6 +273,123 @@ function testDetectJunctionTableUserOverride() {
   console.log('✓ detectJunctionTable 用户显式覆盖配置测试通过')
 }
 
+function testChen2DCompactLayout() {
+  const design: ERDesign = {
+    entities: [
+      {
+        id: 'ent_tenant',
+        name: 'tenants',
+        attributes: [
+          { id: 't_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '租户主键' },
+          { id: 't_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '租户名称' },
+        ],
+      },
+      {
+        id: 'ent_dept',
+        name: 'departments',
+        attributes: [
+          { id: 'd_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '部门主键' },
+          { id: 'd_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '部门名称' },
+        ],
+      },
+      {
+        id: 'ent_user',
+        name: 'users',
+        attributes: [
+          { id: 'u_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '用户主键' },
+          { id: 'u_name', name: 'username', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '用户名' },
+          { id: 'u_phone', name: 'phone', db_type: 'varchar(32)', code_type: 'string', is_primary_key: false, is_nullable: true, is_unique: false, description: '手机号' },
+          { id: 'u_email', name: 'email', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: true, is_unique: false, description: '邮箱' },
+        ],
+      },
+      {
+        id: 'ent_role',
+        name: 'roles',
+        attributes: [
+          { id: 'r_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '角色主键' },
+          { id: 'r_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '角色名称' },
+        ],
+      },
+      {
+        id: 'ent_perm',
+        name: 'permissions',
+        attributes: [
+          { id: 'p_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '权限主键' },
+          { id: 'p_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '权限名称' },
+        ],
+      },
+    ],
+    relations: [
+      { id: 'rel_t_u', source_entity_id: 'ent_tenant', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
+      { id: 'rel_t_d', source_entity_id: 'ent_tenant', target_entity_id: 'ent_dept', cardinality: 'one_to_many' },
+      { id: 'rel_d_u', source_entity_id: 'ent_dept', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
+      { id: 'rel_u_r', source_entity_id: 'ent_user', target_entity_id: 'ent_role', cardinality: 'many_to_many' },
+      { id: 'rel_r_p', source_entity_id: 'ent_role', target_entity_id: 'ent_perm', cardinality: 'many_to_many' },
+    ],
+  }
+
+  const { nodes, edges } = toChenFlowElements(design)
+
+  // 1. 验证实体与菱形全部生成
+  const userNode = nodes.find((n) => n.id === 'ent_user')!
+  const tenantNode = nodes.find((n) => n.id === 'ent_tenant')!
+  const deptNode = nodes.find((n) => n.id === 'ent_dept')!
+  const roleNode = nodes.find((n) => n.id === 'ent_role')!
+  const permNode = nodes.find((n) => n.id === 'ent_perm')!
+
+  assert.ok(userNode && tenantNode && deptNode && roleNode && permNode, '所有 5 个核心实体存在')
+
+  // 2. 验证 2D 拓扑聚类排版（用户居中置顶，左侧组织，右侧权限）
+  assert.equal(userNode.position.y, tenantNode.position.y, '用户与租户在第一排')
+  assert.equal(userNode.position.y, roleNode.position.y, '用户与角色在第一排')
+  assert.ok(tenantNode.position.x < userNode.position.x, '租户在用户左侧')
+  assert.ok(userNode.position.x < roleNode.position.x, '角色在用户右侧')
+
+  assert.ok(deptNode.position.y > tenantNode.position.y, '部门在租户正下方')
+  assert.equal(deptNode.position.x, tenantNode.position.x, '部门与租户同列')
+
+  assert.ok(permNode.position.y > roleNode.position.y, '权限在角色正下方')
+  assert.equal(permNode.position.x, roleNode.position.x, '权限与角色同列')
+
+  // 3. 验证 2D 画布视口紧凑，彻底告别单向流水线拉伸（宽度在 1200px 以内，高在 600px 以内，宽高比 ~1.8）
+  const xs = nodes.map((n) => n.position.x)
+  const ys = nodes.map((n) => n.position.y)
+  const minX = Math.min(...xs), maxX = Math.max(...xs)
+  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  const totalWidth = maxX - minX + 150
+  const totalHeight = maxY - minY + 52
+  const aspectRatio = totalWidth / totalHeight
+
+  assert.ok(totalWidth <= 1300, `画布总宽度紧凑: ${totalWidth}px <= 1300px`)
+  assert.ok(aspectRatio >= 1.4 && aspectRatio <= 2.5, `宽高比符合宽屏舒适视野: ${aspectRatio.toFixed(2)}`)
+
+  // 4. 验证就近动态 Handle：纵向关系走上下，横向关系走左右
+  // 租户 ── 下属部门 ── 部门（垂直向下）
+  const edgeTenantToDia = edges.find((e) => e.source === 'ent_tenant' && e.target === 'rel-rel_t_d')!
+  const edgeDiaToDept = edges.find((e) => e.source === 'rel-rel_t_d' && e.target === 'ent_dept')!
+  assert.equal(edgeTenantToDia.sourceHandle, 'bottom-source', '垂直关系源端从底部出')
+  assert.equal(edgeTenantToDia.targetHandle, 'top-target', '垂直关系菱形从顶部入')
+  assert.equal(edgeDiaToDept.sourceHandle, 'bottom-source', '垂直关系菱形从底部出')
+  assert.equal(edgeDiaToDept.targetHandle, 'top-target', '垂直关系宿端从顶部入')
+
+  // 租户 ── 所属租户 ── 用户（水平向右）
+  const edgeTenantToRelU = edges.find((e) => e.source === 'ent_tenant' && e.target === 'rel-rel_t_u')!
+  const edgeRelUToUser = edges.find((e) => e.source === 'rel-rel_t_u' && e.target === 'ent_user')!
+  assert.equal(edgeTenantToRelU.sourceHandle, 'right-source', '水平关系源端从右侧出')
+  assert.equal(edgeTenantToRelU.targetHandle, 'left-target', '水平关系菱形从左侧入')
+  assert.equal(edgeRelUToUser.sourceHandle, 'right-source', '水平关系菱形从右侧出')
+  assert.equal(edgeRelUToUser.targetHandle, 'left-target', '水平关系宿端从左侧入')
+
+  // 5. 验证外侧属性吸附（用户属性在正上方，不遮挡下方去往各表的连线）
+  const userAttrNodes = nodes.filter((n) => n.type === 'chenAttribute' && (n.data as any).entityId === 'ent_user')
+  assert.ok(userAttrNodes.length > 0, '用户属性存在')
+  for (const an of userAttrNodes) {
+    assert.ok(an.position.y < userNode.position.y, '用户属性全部整齐排布在用户实体正上方')
+  }
+
+  console.log('✓ toChenFlowElements 2D 拓扑感知聚类布局与动态最近 Handle 测试通过')
+}
+
 function runAllTests() {
   console.log('--- 运行陈氏概念视图自引用关系与中间表判定单元测试 ---')
   testGetSelfLoopPath()
@@ -281,6 +398,7 @@ function runAllTests() {
   testDetectJunctionTableTechnical()
   testDetectJunctionTableAssociativeEntity()
   testDetectJunctionTableUserOverride()
+  testChen2DCompactLayout()
   console.log('所有测试全部通过！\n')
 }
 
