@@ -55,9 +55,13 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     set({ messagesLoading: true })
     try {
       const messages = await api.getProjectMessages(projectId)
-      set({ messages, messagesLoading: false })
+      if (get().project?.id === projectId) {
+        set({ messages: Array.isArray(messages) ? messages : [], messagesLoading: false })
+      }
     } catch {
-      set({ messagesLoading: false })
+      if (get().project?.id === projectId) {
+        set({ messages: [], messagesLoading: false })
+      }
     }
   },
 

@@ -84,12 +84,12 @@ func (r *MessageRepository) ListMessagesByProject(ctx context.Context, projectID
 		return nil, err
 	}
 
-	var messages []model.Message
+	messages := make([]model.Message, 0)
 	if err := r.db.WithContext(ctx).
 		Where("conversation_id = ?", conv.ID).
 		Order("created_at ASC").
 		Find(&messages).Error; err != nil {
-		return nil, fmt.Errorf("list messages: %w", err)
+		return []model.Message{}, fmt.Errorf("list messages: %w", err)
 	}
 
 	return messages, nil

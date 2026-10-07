@@ -390,6 +390,119 @@ function testChen2DCompactLayout() {
   console.log('✓ toChenFlowElements 2D 拓扑感知聚类布局与动态最近 Handle 测试通过')
 }
 
+function testChenZeroOverlapForMultiEntities() {
+  // 构建 6 实体企业架构（租户、部门、用户、角色、权限、岗位）
+  const design: ERDesign = {
+    entities: [
+      {
+        id: 'ent_tenant',
+        name: 'tenant',
+        comment: '企业租户',
+        attributes: [
+          { id: 't_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '租户主键' },
+          { id: 't_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '企业名称' },
+        ],
+      },
+      {
+        id: 'ent_dept',
+        name: 'department',
+        comment: '组织部门',
+        attributes: [
+          { id: 'd_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '部门主键' },
+          { id: 'd_name', name: 'name', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '部门名称' },
+        ],
+      },
+      {
+        id: 'ent_user',
+        name: 'user',
+        comment: '企业用户',
+        attributes: [
+          { id: 'u_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '用户主键' },
+          { id: 'u_name', name: 'username', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '用户名' },
+        ],
+      },
+      {
+        id: 'ent_role',
+        name: 'role',
+        comment: '业务角色',
+        attributes: [
+          { id: 'r_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '角色主键' },
+          { id: 'r_code', name: 'code', db_type: 'varchar(32)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '角色标识' },
+        ],
+      },
+      {
+        id: 'ent_perm',
+        name: 'permission',
+        comment: '系统权限',
+        attributes: [
+          { id: 'p_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '权限主键' },
+          { id: 'p_key', name: 'key', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '权限KEY' },
+        ],
+      },
+      {
+        id: 'ent_pos',
+        name: 'position',
+        comment: '组织岗位',
+        attributes: [
+          { id: 'pos_id', name: 'id', db_type: 'bigint', code_type: 'int64', is_primary_key: true, is_nullable: false, is_unique: true, description: '岗位主键' },
+          { id: 'pos_title', name: 'title', db_type: 'varchar(64)', code_type: 'string', is_primary_key: false, is_nullable: false, is_unique: false, description: '岗位头衔' },
+        ],
+      },
+    ],
+    relations: [
+      { id: 'rel_t_d', source_entity_id: 'ent_tenant', target_entity_id: 'ent_dept', cardinality: 'one_to_many' },
+      { id: 'rel_t_u', source_entity_id: 'ent_tenant', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
+      { id: 'rel_d_u', source_entity_id: 'ent_dept', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
+      { id: 'rel_u_r', source_entity_id: 'ent_user', target_entity_id: 'ent_role', cardinality: 'many_to_many' },
+      { id: 'rel_r_p', source_entity_id: 'ent_role', target_entity_id: 'ent_perm', cardinality: 'many_to_many' },
+      { id: 'rel_u_pos', source_entity_id: 'ent_user', target_entity_id: 'ent_pos', cardinality: 'many_to_one' },
+    ],
+  }
+
+  const { nodes } = toChenFlowElements(design)
+
+  const getNodeSize = (type?: string) => {
+    if (type === 'chenEntity') return { w: 150, h: 52 }
+    if (type === 'chenRelation') return { w: 108, h: 68 }
+    if (type === 'chenAttribute') return { w: 76, h: 28 }
+    return { w: 100, h: 50 }
+  }
+
+  const collisions: string[] = []
+
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i]
+    const sizeA = getNodeSize(a.type)
+    const cxA = a.position.x + sizeA.w / 2
+    const cyA = a.position.y + sizeA.h / 2
+
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j]
+      const sizeB = getNodeSize(b.type)
+      const cxB = b.position.x + sizeB.w / 2
+      const cyB = b.position.y + sizeB.h / 2
+
+      const overlapX = (sizeA.w + sizeB.w) / 2 - Math.abs(cxA - cxB)
+      const overlapY = (sizeA.h + sizeB.h) / 2 - Math.abs(cyA - cyB)
+
+      // 只要 X 轴与 Y 轴均产生穿透（即包围盒重叠），则判定为碰撞
+      if (overlapX > 0 && overlapY > 0) {
+        collisions.push(
+          `节点碰撞: [${a.id} (${a.type})] 与 [${b.id} (${b.type})] 重叠 (dx: ${overlapX.toFixed(1)}, dy: ${overlapY.toFixed(1)})`
+        )
+      }
+    }
+  }
+
+  assert.equal(
+    collisions.length,
+    0,
+    `陈氏图必须实现所有节点绝对无重叠！当前发现 ${collisions.length} 处碰撞:\n${collisions.join('\n')}`,
+  )
+
+  console.log(`✓ 6 实体企业模型全节点（实体、联系菱形、属性椭圆）绝对零重叠校验通过 (共 ${nodes.length} 个节点，0 碰撞)`)
+}
+
 function runAllTests() {
   console.log('--- 运行陈氏概念视图自引用关系与中间表判定单元测试 ---')
   testGetSelfLoopPath()
@@ -399,6 +512,7 @@ function runAllTests() {
   testDetectJunctionTableAssociativeEntity()
   testDetectJunctionTableUserOverride()
   testChen2DCompactLayout()
+  testChenZeroOverlapForMultiEntities()
   console.log('所有测试全部通过！\n')
 }
 

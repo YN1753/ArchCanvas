@@ -274,16 +274,20 @@ function DerivePhysicalCard() {
   const conceptsCount = conceptualDesign?.concepts?.length ?? 0
   const relationsCount = conceptualDesign?.relations?.length ?? 0
 
-  if (conceptsCount === 0) return null
+  const isPhysicalReady = agentPhase === 'physical_ready'
+  const isDeriving = agentPhase === 'deriving_physical'
+
+  // 模型推导完成（physical_ready）或空闲状态下，不主动常驻展示推导卡片
+  // 仅在概念就绪（concept_ready）或正在推导（deriving_physical）时显示
+  if (conceptsCount === 0 || isPhysicalReady || agentPhase === 'idle') {
+    return null
+  }
 
   const dialects: Array<{ id: DatabaseDialect; label: string }> = [
     { id: 'mysql', label: 'MySQL 8.0' },
     { id: 'postgres', label: 'PostgreSQL' },
     { id: 'sqlite', label: 'SQLite' },
   ]
-
-  const isPhysicalReady = agentPhase === 'physical_ready'
-  const isDeriving = agentPhase === 'deriving_physical'
 
   return (
     <div className="w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-3">
@@ -416,6 +420,8 @@ export default function AiSidebar() {
   const aiResult = useStore((state) => state.aiResult)
   const proposeConcepts = useStore((state) => state.proposeConcepts)
   const dismissAiResult = useStore((state) => state.dismissAiResult)
+  const setAgentPhase = useStore((state) => state.setAgentPhase)
+  const conceptualDesign = useStore((state) => state.conceptualDesign)
 
   const [input, setInput] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -474,6 +480,17 @@ export default function AiSidebar() {
   const submit = async () => {
     const text = input.trim()
     if (!text || !hasProject || aiRunning) return
+
+    // 检查是否为用户明确要求重新推导物理模型的快捷指令
+    const isReDeriveCommand = /^(重新推导|重新生成|重新弄|重新推导物理表|重新推导物理模型|重新推导模型|重新生成物理表|再推导一次|重新推导一下|重新来|重新来过)$/i.test(
+      text.replace(/[\s，。！!,.?？]+/g, ''),
+    )
+    if (isReDeriveCommand && (conceptualDesign?.concepts?.length ?? 0) > 0) {
+      setInput('')
+      setAgentPhase('concept_ready')
+      return
+    }
+
     setInput('')
     isNearBottomRef.current = true
     setShowScrollBottom(false)

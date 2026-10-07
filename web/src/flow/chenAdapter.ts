@@ -486,8 +486,9 @@ export function computeChen2DLayout(
     })
   }
 
-  // 5. 计算联系菱形节点坐标（相连两实体中心的几何中点插值）
+  // 5. 计算联系菱形节点坐标（相连两实体中心的几何中点插值 + 障碍实体避让 + 走廊导流）
   const processedPairCounts = new Map<string, number>()
+  const placedDiamonds: Array<{ id: string; cx: number; cy: number }> = []
 
   for (const rel of relations) {
     if (rel.isSelf || rel.sourceId === rel.targetId) {
@@ -496,6 +497,11 @@ export function computeChen2DLayout(
         relationPositions.set(rel.id, {
           x: srcPos.x + EW + 60,
           y: srcPos.y - 10,
+        })
+        placedDiamonds.push({
+          id: rel.id,
+          cx: srcPos.x + EW + 60 + RW / 2,
+          cy: srcPos.y - 10 + RH / 2,
         })
       }
       continue
@@ -525,6 +531,76 @@ export function computeChen2DLayout(
       midY += (dx / len) * 45 * sign
     }
 
+    // 检查是否与中间障碍实体（如 tenant / user 等）发生包围盒重叠
+    const testEntityCollision = (cx: number, cy: number) => {
+      for (const ent of entities) {
+        if (ent.id === rel.sourceId || ent.id === rel.targetId) continue
+        const ep = entityPositions.get(ent.id)
+        if (!ep) continue
+        const ecx = ep.x + EW / 2
+        const ecy = ep.y + EH / 2
+        // 安全包围盒判定（实体 + 菱形包围盒 + 安全缓冲区）
+        const safeW = (EW + RW) / 2 + 25
+        const safeH = (EH + RH) / 2 + 25
+        if (Math.abs(cx - ecx) < safeW && Math.abs(cy - ecy) < safeH) {
+          return { collides: true, ecx, ecy }
+        }
+      }
+      return { collides: false, ecx: 0, ecy: 0 }
+    }
+
+    const colCheck = testEntityCollision(midX, midY)
+    if (colCheck.collides) {
+      // 存在中间障碍实体！计算向开阔走廊通道绕行的候选点
+      const dx = tgtCenter.x - srcCenter.x
+      const dy = tgtCenter.y - srcCenter.y
+      const isHorizontal = Math.abs(dx) >= Math.abs(dy)
+
+      let bestCandX = midX
+      let bestCandY = midY
+      let foundClear = false
+
+      const candidates: Array<{ x: number; y: number }> = []
+      if (isHorizontal) {
+        // 横向穿跨（如跨越中间实体）：向行间走廊导流
+        candidates.push({ x: midX, y: colCheck.ecy + (ROW_GAP * 0.45) })
+        candidates.push({ x: midX, y: colCheck.ecy - (ROW_GAP * 0.45) })
+        candidates.push({ x: midX, y: colCheck.ecy + 110 })
+        candidates.push({ x: midX, y: colCheck.ecy - 110 })
+      } else {
+        // 纵向穿跨：向列间走廊导流
+        candidates.push({ x: colCheck.ecx + (COL_GAP * 0.45), y: midY })
+        candidates.push({ x: colCheck.ecx - (COL_GAP * 0.45), y: midY })
+        candidates.push({ x: colCheck.ecx + 130, y: midY })
+        candidates.push({ x: colCheck.ecx - 130, y: midY })
+      }
+
+      for (const cand of candidates) {
+        if (!testEntityCollision(cand.x, cand.y).collides) {
+          bestCandX = cand.x
+          bestCandY = cand.y
+          foundClear = true
+          break
+        }
+      }
+
+      if (foundClear) {
+        midX = bestCandX
+        midY = bestCandY
+      }
+    }
+
+    // 检查是否与已放置的其他联系菱形重合
+    for (const other of placedDiamonds) {
+      const dist = Math.hypot(midX - other.cx, midY - other.cy)
+      if (dist < Math.max(RW, RH) + 15) {
+        midX += 50
+        midY += 35
+      }
+    }
+
+    placedDiamonds.push({ id: rel.id, cx: midX, cy: midY })
+
     relationPositions.set(rel.id, {
       x: midX - RW / 2,
       y: midY - RH / 2,
@@ -532,6 +608,144 @@ export function computeChen2DLayout(
   }
 
   return { entityPositions, relationPositions, freeFaces }
+}
+
+/**
+ * 陈氏图全局 AABB 无重叠松弛求解器
+ * 严格保证任何两个节点（实体-实体、实体-联系、联系-联系、联系-属性）之间均留有安全间距，彻底杜绝重叠
+ */
+export function resolveChenCollisions(nodes: ChenNode[], minGap: number = 24): void {
+  if (!nodes || nodes.length < 2) return
+
+  const MAX_ITERATIONS = 50
+
+  const getNodeBounds = (n: ChenNode) => {
+    let w = 150
+    let h = 52
+    let isAnchor = false
+    let isAttribute = false
+
+    if (n.type === 'chenEntity') {
+      w = 150
+      h = 52
+      isAnchor = true
+    } else if (n.type === 'chenRelation') {
+      w = 108
+      h = 68
+    } else if (n.type === 'chenAttribute') {
+      w = 76
+      h = 28
+      isAttribute = true
+    }
+
+    return {
+      w,
+      h,
+      cx: n.position.x + w / 2,
+      cy: n.position.y + h / 2,
+      isAnchor,
+      isAttribute,
+    }
+  }
+
+  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+    let hasCollision = false
+
+    for (let i = 0; i < nodes.length; i++) {
+      const nodeA = nodes[i]
+      const boundsA = getNodeBounds(nodeA)
+
+      for (let j = i + 1; j < nodes.length; j++) {
+        const nodeB = nodes[j]
+        const boundsB = getNodeBounds(nodeB)
+
+        // 若为同属一个实体的兄弟属性，天然保留水平排布间距，要求 gap 为 8px 即可
+        const isSiblingAttrs =
+          boundsA.isAttribute &&
+          boundsB.isAttribute &&
+          Boolean((nodeA.data as any)?.entityId) &&
+          (nodeA.data as any)?.entityId === (nodeB.data as any)?.entityId
+
+        // 实体与其自身的子属性，保留初始上下对齐间距（>= 12px 即不重叠）
+        const isParentChild =
+          (boundsA.isAnchor && boundsB.isAttribute && (nodeB.data as any)?.entityId === nodeA.id) ||
+          (boundsB.isAnchor && boundsA.isAttribute && (nodeA.data as any)?.entityId === nodeB.id)
+
+        const currentGap = isSiblingAttrs ? 8 : isParentChild ? 12 : minGap
+
+        const reqDistX = (boundsA.w + boundsB.w) / 2 + currentGap
+        const reqDistY = (boundsA.h + boundsB.h) / 2 + currentGap
+
+        const dx = boundsB.cx - boundsA.cx
+        const dy = boundsB.cy - boundsA.cy
+
+        const overlapX = reqDistX - Math.abs(dx)
+        const overlapY = reqDistY - Math.abs(dy)
+
+        if (overlapX > 0 && overlapY > 0) {
+          hasCollision = true
+
+          // 沿穿透最小的轴向平移拆离（最小位移阻力原则）
+          if (overlapX < overlapY) {
+            // 水平方向分离
+            const dir = dx === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dx)
+            const shift = overlapX
+
+            if (boundsA.isAnchor && !boundsB.isAnchor) {
+              nodeB.position.x += dir * shift
+            } else if (!boundsA.isAnchor && boundsB.isAnchor) {
+              nodeA.position.x -= dir * shift
+            } else if (boundsA.isAttribute && !boundsB.isAttribute) {
+              // 属性与联系菱形碰撞：联系菱形避让
+              nodeB.position.x += dir * shift
+            } else if (!boundsA.isAttribute && boundsB.isAttribute) {
+              nodeA.position.x -= dir * shift
+            } else {
+              // 同级别节点均分避让
+              nodeA.position.x -= dir * (shift / 2)
+              nodeB.position.x += dir * (shift / 2)
+            }
+          } else {
+            // 垂直方向分离
+            const dir = dy === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dy)
+            const shift = overlapY
+
+            if (boundsA.isAnchor && !boundsB.isAnchor) {
+              nodeB.position.y += dir * shift
+            } else if (!boundsA.isAnchor && boundsB.isAnchor) {
+              nodeA.position.y -= dir * shift
+            } else if (boundsA.isAttribute && !boundsB.isAttribute) {
+              nodeB.position.y += dir * shift
+            } else if (!boundsA.isAttribute && boundsB.isAttribute) {
+              nodeA.position.y -= dir * shift
+            } else {
+              nodeA.position.y -= dir * (shift / 2)
+              nodeB.position.y += dir * (shift / 2)
+            }
+          }
+        }
+      }
+    }
+
+    if (!hasCollision) break
+  }
+
+  // 保证所有节点坐标在安全可视正区间内 (x >= 40, y >= 40)
+  let minX = Infinity
+  let minY = Infinity
+  for (const n of nodes) {
+    if (n.position.x < minX) minX = n.position.x
+    if (n.position.y < minY) minY = n.position.y
+  }
+
+  if (minX < 40 || minY < 40) {
+    const shiftX = minX < 40 ? 40 - minX : 0
+    const shiftY = minY < 40 ? 40 - minY : 0
+    for (const n of nodes) {
+      n.position.x += shiftX
+      n.position.y += shiftY
+    }
+  }
 }
 
 /**
@@ -914,6 +1128,9 @@ export function toChenFlowElements(
       selected: reg.id === selectedId || reg.relation.id === selectedId,
     })
   }
+
+  // 7.5 执行全局 AABB 无重叠约束求解，彻底消除实体、联系与属性之间的几何重叠
+  resolveChenCollisions(nodes, 24)
 
   // 8. 建立全节点几何中心坐标缓存，用于动态计算最优出入 Handle
   const nodeCenterMap = new Map<string, { x: number; y: number }>()
@@ -1398,6 +1615,9 @@ export function conceptualToChenFlowElements(
       selected: rel.id === selectedId || rel.rawId === selectedId,
     })
   }
+
+  // 7.5 执行全局 AABB 无重叠约束求解，彻底消除实体、联系与属性之间的几何重叠
+  resolveChenCollisions(nodes, 24)
 
   // 8. 建立全节点几何中心坐标缓存，用于动态计算最优出入 Handle
   const nodeCenterMap = new Map<string, { x: number; y: number }>()

@@ -196,6 +196,10 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
         aiResult: null,
         aiError: null,
         reviewReport: null,
+        messages: [],
+        messagesLoading: true,
+        aiThinking: '',
+        aiStatus: '',
       })
       get().recompute(ensureLayout(design))
       void get().fetchProjectMessages(id)
@@ -228,6 +232,11 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
         selection: null,
         inspectorOpen: false,
         aiResult: null,
+        aiError: null,
+        messages: [],
+        messagesLoading: false,
+        aiThinking: '',
+        aiStatus: '',
       })
       get().recompute({ entities: [], relations: [] })
       set({ toast: { kind: 'info', text: `已成功创建项目「${name}」` } })
