@@ -19,7 +19,7 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
   const entity = data.entity
   const concept = data.concept
   const name = data.name || concept?.name || entity?.name || ''
-  const chineseName = data.displayName || concept?.display_name || (name ? getEntityChineseName(name) : '')
+  const chineseName = data.displayName || concept?.display_name || entity?.comment?.trim() || (name ? getEntityChineseName(name, entity?.comment || concept?.description) : '')
   const entityId = data.conceptId || concept?.id || entity?.id || ''
 
   const select = useStore((state) => state.select)

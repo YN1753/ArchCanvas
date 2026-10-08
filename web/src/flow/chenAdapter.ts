@@ -1102,7 +1102,7 @@ export function toChenFlowElements(
       position: customPos ?? defaultPos,
       data: {
         relationId: junc.entity.id,
-        name: getEntityChineseName(junc.entity.name),
+        name: junc.entity.comment?.trim() || getEntityChineseName(junc.entity.name, junc.entity.comment),
         cardinality: 'many_to_many',
         sourceEntityId: junc.leftEntity.id,
         targetEntityId: junc.rightEntity.id,
@@ -1457,7 +1457,7 @@ export function conceptualToChenFlowElements(
     const baseEcx = entityX + ENTITY_W / 2
     const baseEcy = entityY + ENTITY_H / 2
 
-    const chineseName = c.display_name || getEntityChineseName(c.name)
+    const chineseName = c.display_name || getEntityChineseName(c.name, c.description)
 
     nodes.push({
       id: cid,

@@ -40,7 +40,7 @@ export default function TableNode({ data, selected }: NodeProps<TableNodeType>) 
   const storeSelection = useStore((state) => state.selection)
   const focusedEntityId = useStore((state) => state.focusedEntityId)
   const design = useStore((state) => state.design)
-  const chineseName = getEntityChineseName(entity.name)
+  const chineseName = entity.comment?.trim() || getEntityChineseName(entity.name, entity.comment)
 
   const isFocused = focusedEntityId === entity.id
 

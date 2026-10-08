@@ -405,7 +405,7 @@ function ConceptInspector({ conceptID }: { conceptID: string }) {
   }
 
   const cid = concept.id || conceptID
-  const entityChinese = concept.display_name || getEntityChineseName(concept.name)
+  const entityChinese = concept.display_name || getEntityChineseName(concept.name, concept.description)
 
   return (
     <div className="space-y-4">
@@ -1034,7 +1034,7 @@ function RelationInspector({ relationID }: { relationID: string }) {
   const entityOptions = entities.map((entity) => ({
     value: entity.id,
     label: entity.name,
-    sublabel: getEntityChineseName(entity.name),
+    sublabel: entity.comment?.trim() || getEntityChineseName(entity.name, entity.comment),
   }))
 
   const currentCard = (relation.cardinality || (relation as any).relation_type_id || 'one_to_many') as Cardinality
