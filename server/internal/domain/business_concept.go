@@ -51,7 +51,7 @@ type BusinessConcept struct {
 	DisplayName string             `json:"display_name,omitempty" jsonschema:"description=概念的中文业务名称，如 用户, 订单, 商品"`
 	Description string             `json:"description,omitempty" jsonschema:"description=实体的业务定义和用途"`
 	Operation   ConceptOperation   `json:"operation,omitempty" jsonschema:"enum=create,enum=modify,enum=retain,enum=delete,description=对该实体的操作行为"`
-	Position    *Position          `json:"position,omitempty" jsonschema:"description=概念在陈氏画布上的绝对坐标"`
+	Position    *Position          `json:"position,omitempty" jsonschema:"-"`
 	Attributes  []ConceptAttribute `json:"attributes" jsonschema:"description=该业务概念包含的核心业务属性列表"`
 }
 
@@ -63,7 +63,7 @@ type ConceptRelation struct {
 	TargetConcept string             `json:"target_concept" jsonschema:"description=目标业务概念名称或ID"`
 	Cardinality   ConceptCardinality `json:"cardinality" jsonschema:"enum=one_to_one,enum=one_to_many,enum=many_to_many,description=关联对应关系"`
 	Description   string             `json:"description,omitempty" jsonschema:"description=业务关联场景说明，如一个用户可以拥有多笔订单"`
-	Position      *Position          `json:"position,omitempty" jsonschema:"description=菱形联系在陈氏画布上的绝对坐标"`
+	Position      *Position          `json:"position,omitempty" jsonschema:"-"`
 }
 
 // ConceptualDesign 概念模型设计方案（陈氏模型的一等公民表达，与物理 ERDesign 对偶）

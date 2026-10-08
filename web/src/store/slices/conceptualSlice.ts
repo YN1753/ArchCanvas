@@ -70,10 +70,16 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   resetChenPositions() {
-    const { project } = get()
-    set({ chenPositions: {} })
+    const { project, conceptualDesign } = get()
+    const nextConceptual: ConceptualDesign = {
+      ...conceptualDesign,
+      concepts: (conceptualDesign.concepts || []).map((c) => ({ ...c, position: undefined })),
+      relations: (conceptualDesign.relations || []).map((r) => ({ ...r, position: undefined })),
+    }
+    set({ chenPositions: {}, conceptualDesign: nextConceptual })
     if (project) {
       saveChenPositions(project.id, {})
+      get().scheduleSaveConceptual()
     }
   },
 
@@ -94,8 +100,8 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       description: '',
       position: customPosition
         ? {
-            x: Math.round(customPosition.x / 20) * 20,
-            y: Math.round(customPosition.y / 20) * 20,
+            x: Math.max(40, Math.round(customPosition.x / 20) * 20),
+            y: Math.max(40, Math.round(customPosition.y / 20) * 20),
           }
         : undefined,
       attributes: [

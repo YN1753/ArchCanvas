@@ -517,6 +517,72 @@ function testChenZeroOverlapForMultiEntities() {
   console.log(`✓ 实体纯净概念命名（租户、岗位等，拒绝「xxx概念」后缀与中英文混排）校验通过`)
 }
 
+function testConceptualAutoLayoutStabilityAndZeroDrift() {
+  const conceptualDesign: ConceptualDesign = {
+    domain_name: '企业组织架构',
+    concepts: [
+      { id: 'tenant', name: 'Tenant', display_name: '租户', description: '企业租户', attributes: [{ id: 't_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'user', name: 'User', display_name: '用户', description: '企业用户', attributes: [{ id: 'u_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'dept', name: 'Department', display_name: '部门', description: '组织部门', attributes: [{ id: 'd_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'role', name: 'Role', display_name: '角色', description: '系统角色', attributes: [{ id: 'r_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'perm', name: 'Permission', display_name: '权限', description: '操作权限', attributes: [{ id: 'p_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'pos', name: 'Position', display_name: '岗位', description: '工作岗位', attributes: [{ id: 'pos_id', name: 'id', is_business_key: true, required: true }] },
+      // 包含一个可能因误点击落在极值负坐标的孤立概念
+      { id: 'rogue', name: 'RogueConcept', display_name: '新概念', description: '测试', position: { x: -620, y: -1880 }, attributes: [] },
+    ],
+    relations: [
+      { id: 'rel_t_u', name: '拥有', source_concept: 'Tenant', target_concept: 'User', cardinality: 'one_to_many' },
+      { id: 'rel_t_d', name: '拥有', source_concept: 'Tenant', target_concept: 'Department', cardinality: 'one_to_many' },
+      { id: 'rel_t_r', name: '定义', source_concept: 'Tenant', target_concept: 'Role', cardinality: 'one_to_many' },
+      { id: 'rel_u_d', name: '属于', source_concept: 'User', target_concept: 'Department', cardinality: 'one_to_many' },
+      { id: 'rel_u_r', name: '授予', source_concept: 'User', target_concept: 'Role', cardinality: 'many_to_many' },
+      { id: 'rel_r_p', name: '拥有', source_concept: 'Role', target_concept: 'Permission', cardinality: 'many_to_many' },
+      { id: 'rel_d_pos', name: '设置', source_concept: 'Department', target_concept: 'Position', cardinality: 'one_to_many' },
+      { id: 'rel_d_parent', name: '上级', source_concept: 'Department', target_concept: 'Department', cardinality: 'one_to_many' },
+    ],
+  }
+
+  // 1. 模拟连续点击「整理」(customPositions: {}) 5 次，校验每次生成的坐标绝对稳定、零漂移
+  let prevCoords: Map<string, { x: number; y: number }> | null = null
+
+  for (let i = 0; i < 5; i++) {
+    const { nodes } = conceptualToChenFlowElements(conceptualDesign, undefined, {})
+    const currentCoords = new Map(nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]))
+
+    if (prevCoords) {
+      for (const [id, coord] of currentCoords.entries()) {
+        const prev = prevCoords.get(id)!
+        assert.equal(
+          coord.x,
+          prev.x,
+          `第 ${i + 1} 次整理排版时节点 ${id} 的 X 坐标发生漂移: ${prev.x} -> ${coord.x}`
+        )
+        assert.equal(
+          coord.y,
+          prev.y,
+          `第 ${i + 1} 次整理排版时节点 ${id} 的 Y 坐标发生漂移: ${prev.y} -> ${coord.y}`
+        )
+      }
+    }
+    prevCoords = currentCoords
+
+    // 2. 校验所有节点总排版包围盒紧凑，没有任何节点被推向远端（X 最大不超过 2000px，Y 不超过 800px）
+    const xs = nodes.map((n) => n.position.x)
+    const ys = nodes.map((n) => n.position.y)
+    const maxX = Math.max(...xs)
+    const maxY = Math.max(...ys)
+    const minX = Math.min(...xs)
+    const minY = Math.min(...ys)
+
+    assert.ok(minX >= 40, `所有节点 X 坐标均在安全正区间: minX = ${minX} >= 40`)
+    assert.ok(minY >= 40, `所有节点 Y 坐标均在安全正区间: minY = ${minY} >= 40`)
+    assert.ok(maxX <= 2200, `所有节点总宽度紧凑，严禁横向逃逸: maxX = ${maxX} <= 2200`)
+    assert.ok(maxY <= 900, `所有节点总高度紧凑: maxY = ${maxY} <= 900`)
+  }
+
+  console.log('✓ 概念视图连续整理多次绝对零漂移与极值负坐标安全收敛校验通过')
+}
+
 function runAllTests() {
   console.log('--- 运行陈氏概念视图自引用关系与中间表判定单元测试 ---')
   testGetSelfLoopPath()
@@ -527,7 +593,9 @@ function runAllTests() {
   testDetectJunctionTableUserOverride()
   testChen2DCompactLayout()
   testChenZeroOverlapForMultiEntities()
+  testConceptualAutoLayoutStabilityAndZeroDrift()
   console.log('所有测试全部通过！\n')
 }
 
 runAllTests()
+

@@ -89,7 +89,7 @@ func (a *AgentService) Chat(
 			}
 		}
 
-		saveAssistantMsg := func(payload map[string]interface{}) {
+		saveAssistantMsg := func(payload map[string]any) {
 			if convID != "" && a.ProjectService != nil && a.ProjectService.MessageRepo != nil {
 				dataBytes, err := json.Marshal(payload)
 				if err == nil {
@@ -120,7 +120,7 @@ func (a *AgentService) Chat(
 				return
 			}
 			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
-			saveAssistantMsg(map[string]interface{}{
+			saveAssistantMsg(map[string]any{
 				"summary":  "业务分析遇到异常",
 				"thinking": thinkingBuffer.String(),
 				"status":   "error",
@@ -138,7 +138,7 @@ func (a *AgentService) Chat(
 			}
 			sendEvent(StreamEvent{Type: EventDone, Data: true})
 
-			saveAssistantMsg(map[string]interface{}{
+			saveAssistantMsg(map[string]any{
 				"summary":             reqOutput.Summary,
 				"thinking":            thinkingBuffer.String(),
 				"status":              "clarification",
@@ -167,7 +167,7 @@ func (a *AgentService) Chat(
 				return
 			}
 			sendEvent(StreamEvent{Type: EventError, Data: err.Error()})
-			saveAssistantMsg(map[string]interface{}{
+			saveAssistantMsg(map[string]any{
 				"summary":  "物理表结构设计遇到异常",
 				"thinking": thinkingBuffer.String(),
 				"status":   "error",
@@ -187,7 +187,7 @@ func (a *AgentService) Chat(
 			savedResult, err := a.ProjectService.SaveERDesign(ctx, req.ProjectID, *erDesign)
 			if err != nil {
 				sendEvent(StreamEvent{Type: EventError, Data: "落库失败: " + err.Error()})
-				saveAssistantMsg(map[string]interface{}{
+				saveAssistantMsg(map[string]any{
 					"summary":  "数据模型持久化落库失败",
 					"thinking": thinkingBuffer.String(),
 					"status":   "error",

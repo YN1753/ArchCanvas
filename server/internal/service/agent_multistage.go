@@ -430,6 +430,7 @@ func (a *AgentService) ReviewSchema(
 func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.ConceptualDesign) domain.ConceptualDesign {
 	if existing == nil || len(existing.Concepts) == 0 {
 		for i := range incoming.Concepts {
+			incoming.Concepts[i].Position = nil
 			if incoming.Concepts[i].ID == "" {
 				incoming.Concepts[i].ID = id.NewUUIDv7()
 			}
@@ -440,6 +441,7 @@ func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.Co
 			}
 		}
 		for i := range incoming.Relations {
+			incoming.Relations[i].Position = nil
 			if incoming.Relations[i].ID == "" {
 				incoming.Relations[i].ID = id.NewUUIDv7()
 			}
@@ -481,7 +483,7 @@ func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.Co
 			if inc.ID == "" {
 				inc.ID = matched.ID
 			}
-			if inc.Position == nil && matched.Position != nil {
+			if matched.Position != nil {
 				inc.Position = matched.Position
 			}
 			// 保持已有属性的 ID 稳定
@@ -508,6 +510,7 @@ func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.Co
 				}
 			}
 		} else {
+			inc.Position = nil
 			if inc.ID == "" {
 				inc.ID = id.NewUUIDv7()
 			}
@@ -522,18 +525,29 @@ func mergeConceptualDesign(existing *domain.ConceptualDesign, incoming domain.Co
 	// 保持关系 ID 与坐标稳定
 	for i := range incoming.Relations {
 		rel := &incoming.Relations[i]
+		foundExisting := false
 		if rel.ID == "" {
 			for _, oldR := range existing.Relations {
 				if strings.EqualFold(oldR.SourceConcept, rel.SourceConcept) &&
 					strings.EqualFold(oldR.TargetConcept, rel.TargetConcept) &&
 					oldR.Cardinality == rel.Cardinality {
 					rel.ID = oldR.ID
-					if rel.Position == nil {
-						rel.Position = oldR.Position
-					}
+					rel.Position = oldR.Position
+					foundExisting = true
 					break
 				}
 			}
+		} else {
+			for _, oldR := range existing.Relations {
+				if oldR.ID == rel.ID {
+					rel.Position = oldR.Position
+					foundExisting = true
+					break
+				}
+			}
+		}
+		if !foundExisting {
+			rel.Position = nil
 		}
 		if rel.ID == "" {
 			rel.ID = id.NewUUIDv7()

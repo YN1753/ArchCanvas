@@ -170,8 +170,9 @@ export default function Canvas() {
     // 默认自动调用整理逻辑：重置坐标并应用规范化拓扑排版
     if (canvasViewMode === 'chen') {
       resetChenPositions()
+      const currentConceptual = useStore.getState().conceptualDesign
       const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
-        conceptualDesign,
+        conceptualDesign: currentConceptual,
         design,
         agentPhase,
         selectedId: selectedEntityID ?? selectedRelationID,
@@ -297,8 +298,9 @@ export default function Canvas() {
   const handleAutoLayout = () => {
     if (canvasViewMode === 'chen') {
       resetChenPositions()
+      const currentConceptual = useStore.getState().conceptualDesign
       const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
-        conceptualDesign,
+        conceptualDesign: currentConceptual,
         design,
         agentPhase,
         selectedId: selectedEntityID ?? selectedRelationID,
