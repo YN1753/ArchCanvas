@@ -154,6 +154,7 @@ export default function Canvas() {
     chenPositions,
   ])
 
+  // 页面刷新、初次挂载或切换项目/视图模式时，默认自动执行一次排版整理与适屏居中
   useEffect(() => {
     if (!projectID) return
     const count =
@@ -164,17 +165,41 @@ export default function Canvas() {
 
     const key = `${projectID}:${canvasViewMode}`
     if (initialFittedKeyRef.current === key) return
-
     initialFittedKeyRef.current = key
-    const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.18, maxZoom: 1 })
-    }, 120)
-    return () => window.clearTimeout(timer)
+
+    // 默认自动调用整理逻辑：重置坐标并应用规范化拓扑排版
+    if (canvasViewMode === 'chen') {
+      resetChenPositions()
+      const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
+        conceptualDesign,
+        design,
+        agentPhase,
+        selectedId: selectedEntityID ?? selectedRelationID,
+        customPositions: {},
+      })
+      setNodes(chenNodes)
+      setEdges(chenEdges)
+    } else {
+      autoLayout()
+    }
+
+    // 多阶延迟适屏调度：在 60ms, 180ms, 360ms 各触发一次，确保 ReactFlow 测量 DOM 节点后 100% 成功适屏居中
+    const timers = [60, 180, 360].map((delay) =>
+      window.setTimeout(() => {
+        void fitView({ padding: 0.18, duration: 300 })
+      }, delay)
+    )
+    return () => timers.forEach((t) => window.clearTimeout(t))
   }, [
     projectID,
-    design.entities.length,
-    conceptualDesign?.concepts?.length,
     canvasViewMode,
+    conceptualDesign,
+    design,
+    agentPhase,
+    selectedEntityID,
+    selectedRelationID,
+    resetChenPositions,
+    autoLayout,
     fitView,
   ])
 
@@ -284,9 +309,13 @@ export default function Canvas() {
     } else {
       autoLayout()
     }
-    window.setTimeout(() => {
-      void fitView({ padding: 0.18, duration: 300 })
-    }, 60)
+
+    // 多阶延迟确保渲染与测量完毕后平滑适屏居中
+    for (const delay of [60, 180, 360]) {
+      window.setTimeout(() => {
+        void fitView({ padding: 0.18, duration: 300 })
+      }, delay)
+    }
   }
 
   // ----------------------------------------------------
@@ -387,6 +416,8 @@ export default function Canvas() {
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
         connectionMode={ConnectionMode.Loose}
+        fitView={true}
+        fitViewOptions={{ padding: 0.18 }}
         snapToGrid={true}
         snapGrid={[20, 20]}
         elevateNodesOnSelect={true}
