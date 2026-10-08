@@ -41,3 +41,12 @@ type SaveModelReq struct {
 	APIKey       string `json:"api_key,omitempty"`
 	SetAsDefault bool   `json:"set_as_default"`
 }
+
+// EnrichSemanticsReq 轻量 LLM 全图概念层语义推导请求
+type EnrichSemanticsReq struct {
+	ProjectID     string           `json:"project_id"`
+	Dialect       string           `json:"dialect,omitempty"`
+	Design        *domain.ERDesign `json:"design,omitempty"`
+	ModelProvider string           `json:"model_provider,omitempty"`
+	ModelName     string           `json:"model_name,omitempty"`
+}

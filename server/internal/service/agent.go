@@ -495,7 +495,8 @@ func (a *AgentService) buildSchemaDesignMessages(input SchemaDesignInput) []*sch
 	prompt.WriteString("   - media -> VARCHAR(512) (code_type: string)\n")
 	prompt.WriteString("3. 根据业务关联关系（one_to_many, many_to_many）建立合理的外键字段（如 user_id BIGINT）和 Relation 连线；\n")
 	prompt.WriteString("   - 【严禁生成指向自身的自引用关系连线】：relations 仅用于两张不同实体表之间的外键关联（source_entity_id 必须与 target_entity_id 不同）。对于像 parent_id（树形分类/评论递归回复）等层级自引用结构，只需在表中保留 parent_id 外键字段即可，绝对不要在 relations 中添加指向本表的自环连线（避免画布产生遮挡字段的表内回环）；\n")
-	prompt.WriteString("4. 表名（name）必须使用简洁规范的英文小写复数（如 users, orders, order_items），字段名（name）请使用标准蛇形命名（如 user_id, order_no）。关于表和字段的 ID，可填入表名作为临时标识或留空，服务端会自动分配全局有序且无冲突的 RFC 9562 UUIDv7 主键。\n\n")
+	prompt.WriteString("4. 表名（name）必须使用简洁规范的英文小写复数（如 users, orders, order_items），字段名（name）请使用标准蛇形命名（如 user_id, order_no）。关于表和字段的 ID，可填入表名作为临时标识或留空，服务端会自动分配全局有序且无冲突的 RFC 9562 UUIDv7 主键；\n")
+	prompt.WriteString("5. 【业务概念中文注释对齐（至关重要）】：实体的 `comment` 必须填入纯粹标准的中文业务概念名（如 '租户'、'岗位'、'员工'、'角色'），绝对严禁拼接'表'、'实体'、'概念'等假后缀！每个字段的 `comment` 必须填入清晰准确的中文业务释义（如 '租户编码'、'联系电话'、'启用状态'）。\n\n")
 
 	if input.Requirement != nil {
 		reqJSON, err := json.Marshal(input.Requirement)

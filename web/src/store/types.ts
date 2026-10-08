@@ -173,6 +173,7 @@ export interface AiChatSlice {
   proposeConcepts: (input: string) => Promise<void>
   derivePhysical: (dialect?: DatabaseDialect) => Promise<void>
   reviewSchema: (dialect?: DatabaseDialect) => Promise<void>
+  enrichSemantics: (options?: { design?: ERDesign }) => Promise<void>
   dismissAiResult: () => void
 }
 
@@ -199,6 +200,7 @@ export interface UiSlice {
   openDataDialog: (tab?: DataDialogTab) => void
   closeDataDialog: () => void
   dismissToast: () => void
+  showToast: (text: string, kind?: 'info' | 'error') => void
 
   setCanvasViewMode: (mode: CanvasViewMode) => void
   setDslView: (view: 'canvas' | 'code') => void

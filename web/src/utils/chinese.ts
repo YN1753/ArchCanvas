@@ -21,6 +21,21 @@ const ENTITY_DICTIONARY: Record<string, string> = {
   departments: '部门',
   org: '组织机构',
   organization: '组织机构',
+  tenant: '租户',
+  tenants: '租户',
+  position: '岗位',
+  positions: '岗位',
+  job: '岗位',
+  jobs: '岗位',
+  employee: '员工',
+  employees: '员工',
+  staff: '员工',
+  member: '成员',
+  members: '成员',
+  company: '企业',
+  companies: '企业',
+  enterprise: '企业',
+  enterprises: '企业',
 
   // 电商与交易
   order: '订单',
@@ -350,8 +365,8 @@ export function getEntityChineseName(name: string, description?: string): string
     if (cleaned) return cleaned
   }
 
-  // 若仍无中文，强制生成符合概念图规范的中文概念名
-  return `${name}概念`
+  // 若无对应中文翻译，直接优雅大写首字母作为实体名，严禁拼接「概念」后缀
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
 }
 
 /**

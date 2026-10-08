@@ -69,6 +69,10 @@ export const createUiSlice: StateCreator<Store, [], [], UiSlice> = (set, get) =>
     set({ toast: null })
   },
 
+  showToast(text: string, kind: 'info' | 'error' = 'info') {
+    set({ toast: { kind, text } })
+  },
+
   setCanvasViewMode(mode: CanvasViewMode) {
     set({ canvasViewMode: mode })
   },

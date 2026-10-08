@@ -500,7 +500,21 @@ function testChenZeroOverlapForMultiEntities() {
     `陈氏图必须实现所有节点绝对无重叠！当前发现 ${collisions.length} 处碰撞:\n${collisions.join('\n')}`,
   )
 
+  // 验证实体中文概念名称规范性：严禁出现「tenant概念」等假后缀，必须为干净标准中文名词
+  const tenantNode = nodes.find((n) => n.id === 'ent_tenant')
+  const posNode = nodes.find((n) => n.id === 'ent_pos')
+  assert.equal((tenantNode?.data as any)?.displayName, '租户', 'tenant 对应中文概念名为「租户」而非「tenant概念」')
+  assert.equal((posNode?.data as any)?.displayName, '岗位', 'position 对应中文概念名为「岗位」而非「position概念」')
+
+  for (const n of nodes) {
+    if (n.type === 'chenEntity') {
+      const dn = (n.data as any)?.displayName || ''
+      assert.ok(!dn.endsWith('概念'), `实体名称「${dn}」严禁出现「概念」假后缀`)
+    }
+  }
+
   console.log(`✓ 6 实体企业模型全节点（实体、联系菱形、属性椭圆）绝对零重叠校验通过 (共 ${nodes.length} 个节点，0 碰撞)`)
+  console.log(`✓ 实体纯净概念命名（租户、岗位等，拒绝「xxx概念」后缀与中英文混排）校验通过`)
 }
 
 function runAllTests() {

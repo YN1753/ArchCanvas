@@ -116,6 +116,24 @@ func (a *AgentHandler) ReviewSchema(c *gin.Context) {
 	streamSSE(c, eventCh)
 }
 
+// EnrichSemantics 轻量 LLM 全图概念层语义推导端点
+func (a *AgentHandler) EnrichSemantics(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req request.EnrichSemanticsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	result, err := a.Agent.EnrichSemantics(ctx, req)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // streamSSE 统一的 SSE 事件流写入与刷写辅助函数
 func streamSSE(c *gin.Context, eventCh <-chan service.StreamEvent) {
 	c.Header("Content-Type", "text/event-stream")

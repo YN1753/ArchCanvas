@@ -34,6 +34,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
   const design = useStore((state) => state.design)
   const project = useStore((state) => state.project)
   const importDesign = useStore((state) => state.importDesign)
+  const enrichSemantics = useStore((state) => state.enrichSemantics)
   const defaultTab = useStore((state) => state.dataDialogTab)
   const targetDialect = useStore((state) => state.targetDialect)
   const canvasViewMode = useStore((state) => state.canvasViewMode)
@@ -42,6 +43,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
 
   const [tab, setTab] = useState<Tab>(defaultTab ?? 'export-sql')
   const [exportDialect, setExportDialect] = useState<DatabaseDialect>(targetDialect || 'mysql')
+  const [autoEnrichSemantics, setAutoEnrichSemantics] = useState(true)
   const [importJsonText, setImportJsonText] = useState('')
   const [importSqlText, setImportSqlText] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
@@ -271,6 +273,9 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
       }
       importDesign(parsed)
       onClose()
+      if (autoEnrichSemantics) {
+        void enrichSemantics({ design: parsed })
+      }
     } catch (error) {
       setImportError(error instanceof Error ? error.message : String(error))
     }
@@ -289,6 +294,9 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
       }
       importDesign(parsedDesign)
       onClose()
+      if (autoEnrichSemantics) {
+        void enrichSemantics({ design: parsedDesign })
+      }
     } catch (error) {
       setImportError(error instanceof Error ? error.message : String(error))
     }
@@ -644,18 +652,32 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                 </div>
               ) : null}
 
-              <div className="flex justify-end gap-2.5 pt-2">
-                <button type="button" className={buttonClass} onClick={onClose}>
-                  取消
-                </button>
-                <button
-                  type="button"
-                  disabled={importSqlText.trim().length === 0}
-                  onClick={submitImportSQL}
-                  className="rounded-lg bg-[#df4e3e] border-[1.5px] border-[#1f1f1f] px-4 py-1.5 text-xs font-bold text-white transition hover:bg-[#d04232] disabled:cursor-not-allowed disabled:opacity-40 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
-                >
-                  逆向解析并载入画板
-                </button>
+              <div className="flex items-center justify-between gap-2.5 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-stone-700 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={autoEnrichSemantics}
+                    onChange={(e) => setAutoEnrichSemantics(e.target.checked)}
+                    className="rounded border-[#1f1f1f] text-[#df4e3e] focus:ring-[#df4e3e]"
+                  />
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-bold text-[#df4e3e]">✨ AI 智能推导概念层语义</span>
+                    <span className="text-[11px] text-stone-400">（通过轻量 LLM 自动补全实体与字段中文业务概念）</span>
+                  </span>
+                </label>
+                <div className="flex items-center gap-2.5">
+                  <button type="button" className={buttonClass} onClick={onClose}>
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={importSqlText.trim().length === 0}
+                    onClick={submitImportSQL}
+                    className="rounded-lg bg-[#df4e3e] border-[1.5px] border-[#1f1f1f] px-4 py-1.5 text-xs font-bold text-white transition hover:bg-[#d04232] disabled:cursor-not-allowed disabled:opacity-40 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
+                  >
+                    逆向解析并载入画板
+                  </button>
+                </div>
               </div>
             </>
           ) : tab === 'import-json' ? (
@@ -678,18 +700,32 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
                   {importError}
                 </p>
               ) : null}
-              <div className="flex justify-end gap-2.5 pt-2">
-                <button type="button" className={buttonClass} onClick={onClose}>
-                  取消
-                </button>
-                <button
-                  type="button"
-                  disabled={importJsonText.trim().length === 0}
-                  onClick={submitImportJSON}
-                  className="rounded-lg bg-[#df4e3e] border-[1.5px] border-[#1f1f1f] px-4 py-1.5 text-xs font-bold text-white transition hover:bg-[#d04232] disabled:cursor-not-allowed disabled:opacity-40 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
-                >
-                  解析并载入
-                </button>
+              <div className="flex items-center justify-between gap-2.5 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-stone-700 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={autoEnrichSemantics}
+                    onChange={(e) => setAutoEnrichSemantics(e.target.checked)}
+                    className="rounded border-[#1f1f1f] text-[#df4e3e] focus:ring-[#df4e3e]"
+                  />
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-bold text-[#df4e3e]">✨ AI 智能推导概念层语义</span>
+                    <span className="text-[11px] text-stone-400">（通过轻量 LLM 自动补全实体与字段中文业务概念）</span>
+                  </span>
+                </label>
+                <div className="flex items-center gap-2.5">
+                  <button type="button" className={buttonClass} onClick={onClose}>
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={importJsonText.trim().length === 0}
+                    onClick={submitImportJSON}
+                    className="rounded-lg bg-[#df4e3e] border-[1.5px] border-[#1f1f1f] px-4 py-1.5 text-xs font-bold text-white transition hover:bg-[#d04232] disabled:cursor-not-allowed disabled:opacity-40 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
+                  >
+                    解析并载入
+                  </button>
+                </div>
               </div>
             </>
           ) : (

@@ -527,4 +527,77 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
       set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'physical_ready' })
     }
   },
+
+  async enrichSemantics(options) {
+    const { project, selectedModel, design } = get()
+    if (!project) return
+    const targetDesign = options?.design || design
+    if (!targetDesign || !Array.isArray(targetDesign.entities) || targetDesign.entities.length === 0) {
+      set({ toast: { kind: 'error', text: '当前画布无数据表，无法推导概念语义' } })
+      return
+    }
+
+    set({
+      aiRunning: true,
+      aiThinking: '',
+      aiStatus: 'AI 架构师正在分析全图并推导业务概念层语义…',
+      aiError: null,
+    })
+
+    try {
+      const res = await api.enrichSemantics({
+        project_id: project.id,
+        dialect: get().targetDialect,
+        design: targetDesign,
+        model_provider: selectedModel?.provider,
+        model_name: selectedModel?.model,
+      })
+
+      if (res && res.design) {
+        get().recordSnapshot()
+
+        // 保持现有坐标，仅合并/应用 enriched 表注释与字段注释
+        const existingPosMap = new Map<string, { x: number; y: number }>()
+        for (const e of get().design.entities) {
+          if (e.position) existingPosMap.set(e.id, e.position)
+        }
+
+        const enrichedEntities = res.design.entities.map((e) => ({
+          ...e,
+          position: e.position || existingPosMap.get(e.id),
+        }))
+
+        const nextDesign: ERDesign = {
+          entities: enrichedEntities,
+          relations: res.design.relations || targetDesign.relations,
+        }
+
+        get().recompute(ensureLayout(nextDesign), { serverWarnings: [] })
+
+        if (res.conceptual_design) {
+          set({ conceptualDesign: res.conceptual_design })
+        }
+
+        get().scheduleSave()
+
+        set({
+          aiRunning: false,
+          aiStatus: '',
+          toast: {
+            kind: 'info',
+            text: '✨ 全图概念层语义推导完成！已为所有实体与属性注入精准中文业务概念',
+          },
+        })
+      } else {
+        set({ aiRunning: false, aiStatus: '' })
+      }
+    } catch (error) {
+      set({
+        aiRunning: false,
+        aiStatus: '',
+        aiError: errorMessage(error),
+        toast: { kind: 'error', text: `语义推导失败: ${errorMessage(error)}` },
+      })
+    }
+  },
 })

@@ -1002,12 +1002,16 @@ export function toChenFlowElements(
     const baseEcx = entityX + ENTITY_W / 2
     const baseEcy = entityY + ENTITY_H / 2
 
+    const chineseName = getEntityChineseName(entity.name, entity.comment)
+
     nodes.push({
       id: entity.id,
       type: 'chenEntity',
       position: { x: entityX, y: entityY },
       data: {
         entity,
+        name: entity.name,
+        displayName: chineseName,
       },
       selected: entity.id === selectedId,
     })

@@ -44,6 +44,7 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 		agent.POST("propose-concepts", handlers.Agent.ProposeConcepts) // Layer 1: 业务概念建模
 		agent.POST("derive-physical", handlers.Agent.DerivePhysical)   // Layer 2: 物理表与索引工程推导
 		agent.POST("review-schema", handlers.Agent.ReviewSchema)       // Layer 3: 架构质量与性能体检
+		agent.POST("enrich-semantics", handlers.Agent.EnrichSemantics) // 全图概念层语义推导
 	}
 
 	generator := route.Group("generator")

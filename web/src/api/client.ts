@@ -209,6 +209,19 @@ export interface ReviewSchemaParams {
   model_name?: string
 }
 
+export interface EnrichSemanticsParams {
+  project_id: string
+  dialect?: DatabaseDialect
+  design?: ERDesign
+  model_provider?: string
+  model_name?: string
+}
+
+export interface EnrichedSemanticsResult {
+  design: ERDesign
+  conceptual_design: ConceptualDesign
+}
+
 async function streamPost<T = any>(
   endpoint: string,
   params: unknown,
@@ -446,6 +459,15 @@ export const api = {
   proposeConceptsStream,
   derivePhysicalStream,
   reviewSchemaStream,
+
+  /**
+   * 一键调用轻量 LLM 推导全图概念层语义
+   */
+  enrichSemantics: (params: EnrichSemanticsParams) =>
+    request<EnrichedSemanticsResult>('/agent/enrich-semantics', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
 
   /**
    * 获取可用的大模型列表（语义化 GET /models/list）。

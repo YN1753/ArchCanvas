@@ -39,6 +39,7 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
   return (
     <div
       onClick={handleClick}
+      title={chineseName && name && chineseName !== name ? `${chineseName} (${name})` : chineseName || name}
       className={`group relative flex h-[52px] w-[150px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 bg-white px-3 py-1.5 transition-all select-none ${
         selected || isFocused
           ? 'border-[#df4e3e] shadow-[3px_3px_0px_#df4e3e] ring-2 ring-red-200'
@@ -62,10 +63,11 @@ function ChenEntityNode({ data, selected }: NodeProps<ChenEntityNodeType>) {
       <Handle type="target" position={Position.Left} id="left-target" className="!h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="source" position={Position.Left} id="left-source" className="!h-2 !w-2 !border-none !bg-transparent" />
 
-      {/* 核心概念名与英文表名 */}
-      <div className="text-center">
-        <div className="text-[14px] font-black text-[#1f1f1f] tracking-tight leading-tight">{chineseName}</div>
-        <div className="font-mono text-[10px] font-medium text-stone-400 mt-0.5">{name}</div>
+      {/* 核心实体名（严格遵循标准陈氏 ER 规范：单一纯粹居中名称，不堆叠次级英文） */}
+      <div className="flex items-center justify-center text-center">
+        <span className="text-[14px] font-black text-[#1f1f1f] tracking-tight leading-none truncate max-w-[130px]">
+          {chineseName || name}
+        </span>
       </div>
     </div>
   )

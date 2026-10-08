@@ -62,6 +62,8 @@ export default function Toolbar({
   const setReviewDrawerOpen = useStore((state) => state.setReviewDrawerOpen)
   const reviewSchema = useStore((state) => state.reviewSchema)
   const targetDialect = useStore((state) => state.targetDialect)
+  const enrichSemantics = useStore((state) => state.enrichSemantics)
+  const aiRunning = useStore((state) => state.aiRunning)
 
   return (
     <header className="flex items-center justify-between border-b border-[#e5ded0] bg-[#faf7f0] px-4 py-2.5 select-none shadow-2xs">
@@ -230,6 +232,20 @@ export default function Toolbar({
               {reviewReport.score}分
             </span>
           )}
+        </button>
+
+        {/* 一键 AI 语义推导按钮 */}
+        <button
+          type="button"
+          onClick={() => void enrichSemantics()}
+          disabled={aiRunning}
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-white px-3 py-1.5 text-xs font-bold text-stone-800 shadow-[2px_2px_0px_#1f1f1f] hover:bg-stone-50 active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          title="一键调用轻量 LLM 分析全图上下文，推导并补全所有实体与字段的纯正业务概念名"
+        >
+          <svg className="w-3.5 h-3.5 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.286L13 21l-2.286-6.857L5 12l5.714-2.286L13 3z" />
+          </svg>
+          <span>{aiRunning ? '推导中…' : 'AI 语义推导'}</span>
         </button>
 
         {/* 导出 Go 脚手架按钮 */}
