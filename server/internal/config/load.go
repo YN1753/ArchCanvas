@@ -12,7 +12,40 @@ import (
 )
 
 func Load(configDir string) *Config {
+	// 确保配置目录与基础配置文件存在，实现开箱即用零崩溃
+	configPath := filepath.Join(configDir, "config.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		_ = os.MkdirAll(configDir, 0o755)
+		defaultConfig := `agent:
+  default_model_provider: deepseek
+  models:
+    deepseek:
+      api_key: DEEPSEEK_API_KEY
+      base_url: https://api.deepseek.com/v1
+      default_model: deepseek-chat
+      max_tokens: 8192
+      temperature: 0.3
+      type: openai
+    openai:
+      api_key: OPENAI_API_KEY
+      base_url: https://api.openai.com/v1
+      default_model: gpt-4o
+      max_tokens: 8192
+      temperature: 0.7
+      type: openai
+database:
+  path: ./data/archcanvas.db
+server:
+  host: 0.0.0.0
+  port: 8080
+`
+		_ = os.WriteFile(configPath, []byte(defaultConfig), 0o644)
+	}
+
 	envPath := filepath.Join(configDir, ".env")
+	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		_ = os.WriteFile(envPath, []byte("# ArchCanvas Environment Variables\n# DEEPSEEK_API_KEY=your_key_here\n"), 0o644)
+	}
 	if err := godotenv.Load(envPath); err != nil {
 		// .env 不存在时不强行崩溃，尝试仅读取环境变量
 	}

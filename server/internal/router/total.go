@@ -3,6 +3,7 @@ package router
 import (
 	"archcanvas/internal/handler"
 	"archcanvas/internal/middleware"
+	"archcanvas/internal/static"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,6 +53,9 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 		generator.POST("preview", handlers.Generator.Preview)
 		generator.POST("download", handlers.Generator.Download)
 	}
+
+	// 注册内嵌前端静态页面与 SPA 路由兜底回退
+	static.RegisterSPA(r)
 
 	return r
 }

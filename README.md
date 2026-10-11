@@ -233,34 +233,65 @@ archcanvas/
 
 ## 🚀 快速开始
 
-### 1. 环境准备
+### 方式一：下载单可执行文件运行（零环境依赖 · 推荐）
+
+ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go `embed` 内置于二进制中，无需安装 Node.js、Go 或配置复杂环境）：
+
+1. 前往 [GitHub Releases](../../releases) 下载对应操作系统的版本包：
+   * **macOS (Apple Silicon)**：`archcanvas-darwin-arm64.tar.gz`
+   * **macOS (Intel)**：`archcanvas-darwin-amd64.tar.gz`
+   * **Linux (x86_64)**：`archcanvas-linux-amd64.tar.gz`
+   * **Linux (ARM64)**：`archcanvas-linux-arm64.tar.gz`
+   * **Windows (x86_64)**：`archcanvas-windows-amd64.zip`
+2. 解压并单命令启动：
+   ```bash
+   # 默认启动 (监听 0.0.0.0:8080，配置与 SQLite 数据库默认保存在 exe 同级目录下)
+   ./archcanvas
+
+   # 动态自定义端口启动
+   ./archcanvas -port 9090
+
+   # 自定义主机与数据目录
+   ./archcanvas -host 127.0.0.1 -port 8888 -data /custom/path/archcanvas.db
+   ```
+3. 打开浏览器访问终端输出的地址（如 `http://localhost:8080`）即可立即开始建模！
+
+---
+
+### 方式二：源码一键打包
+
+仓库根目录已内置跨平台 `Makefile`：
+
+```bash
+# 一键完成前端打包、资源嵌入并编译出单二进制文件
+make build
+
+# 启动运行
+./archcanvas
+```
+
+---
+
+### 方式三：前后端分离开发模式
+
+#### 1. 环境准备
 - **Go**：`>= 1.22`
 - **Node.js**：`>= 18`
-- **系统支持**：macOS / Linux / Windows
 
-### 2. 启动后端服务
+#### 2. 启动后端开发服务
 ```bash
-# 1. 进入后端目录
 cd server
-
-# 2. 检查或配置大模型（可在 configs/config.yaml 中配置，或启动后在前端界面配置）
-# 3. 运行后端服务（默认监听 127.0.0.1:8080，使用本地 SQLite）
 go run ./cmd/server
 ```
 
-### 3. 启动前端界面
+#### 3. 启动前端热重载开发服务
 ```bash
-# 1. 打开新终端，进入前端目录
 cd web
-
-# 2. 安装依赖
 npm install
-
-# 3. 启动本地开发服务
 npm run dev
 ```
 
-启动成功后，使用浏览器访问：**`http://localhost:5173`** 即可进入 ArchCanvas 架构画板。
+浏览器访问开发端口 **`http://localhost:5173`** 即可进行开发与调试。
 
 ---
 

@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    name: Build Frontend (Web)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd web
+          npm ci
+
+      - name: Build Web Dist
+        run: |
+          cd web
+          npm run build
+
+      - name: Upload Web Dist Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 1
+
+  build-binaries:
+    name: Build Binary (${{ matrix.target }})
+    needs: build-web
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            target: archcanvas-linux-amd64
+            binary_name: archcanvas
+            archive_format: tar.gz
+
+          # Linux ARM64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            target: archcanvas-linux-arm64
+            binary_name: archcanvas
+            archive_format: tar.gz
+            cross_cc: aarch64-linux-gnu-gcc
+            apt_pkg: gcc-aarch64-linux-gnu
+
+          # macOS Apple Silicon (ARM64)
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            target: archcanvas-darwin-arm64
+            binary_name: archcanvas
+            archive_format: tar.gz
+
+          # macOS Intel (x86_64)
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            target: archcanvas-darwin-amd64
+            binary_name: archcanvas
+            archive_format: tar.gz
+
+          # Windows x86_64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            target: archcanvas-windows-amd64
+            binary_name: archcanvas.exe
+            archive_format: zip
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: 'server/go.sum'
+
+      - name: Install Linux Cross-Compiler (if needed)
+        if: matrix.apt_pkg != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_pkg }}
+
+      - name: Download Web Dist Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: server/internal/static/dist
+
+      - name: Build Go Binary (with embedded frontend)
+        shell: bash
+        run: |
+          cd server
+          export CGO_ENABLED=1
+          export GOOS=${{ matrix.goos }}
+          export GOARCH=${{ matrix.goarch }}
+          if [ -n "${{ matrix.cross_cc }}" ]; then
+            export CC=${{ matrix.cross_cc }}
+          fi
+
+          VERSION="${{ github.ref_name }}"
+          if [ -z "$VERSION" ] || [[ "$VERSION" == "main" ]]; then
+            VERSION="v0.1.0-dev"
+          fi
+          COMMIT="${{ github.sha }}"
+          BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.GitCommit=${COMMIT:0:7} -X main.BuildTime=${BUILD_TIME}"
+          go build -ldflags "$LDFLAGS" -o ../${{ matrix.binary_name }} cmd/server/main.go
+
+      - name: Package Release Archive (tar.gz)
+        if: matrix.archive_format == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p release-pkg/configs
+          cp ${{ matrix.binary_name }} release-pkg/
+          cp README.md release-pkg/ || true
+          if [ -f server/configs/config.yaml ]; then
+            cp server/configs/config.yaml release-pkg/configs/
+          fi
+          cd release-pkg
+          tar -czf ../${{ matrix.target }}.tar.gz *
+
+      - name: Package Release Archive (zip)
+        if: matrix.archive_format == 'zip'
+        shell: bash
+        run: |
+          mkdir -p release-pkg/configs
+          cp ${{ matrix.binary_name }} release-pkg/
+          cp README.md release-pkg/ || true
+          if [ -f server/configs/config.yaml ]; then
+            cp server/configs/config.yaml release-pkg/configs/
+          fi
+          cd release-pkg
+          7z a -tzip ../${{ matrix.target }}.zip *
+
+      - name: Upload Package to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            archcanvas-*.tar.gz
+            archcanvas-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

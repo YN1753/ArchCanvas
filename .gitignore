@@ -4,7 +4,14 @@ server/.air.toml
 server/tmp
 *.log
 node_modules/
-dist/
+web/dist/
+server/internal/static/dist/*
+!server/internal/static/dist/.gitkeep
+!server/internal/static/dist/index.html
+configs/
+data/
 server/configs/.env
 server/configs/config.yaml
 server/data/
+archcanvas
+archcanvas.exe
