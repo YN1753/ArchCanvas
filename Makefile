@@ -1,7 +1,7 @@
 .PHONY: all build build-web build-server test clean run
 
 BINARY_NAME=archcanvas
-VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0")
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0")
 COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 BUILD_TIME?=$(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)"

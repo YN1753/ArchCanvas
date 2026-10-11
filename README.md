@@ -9,10 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/YN1753/ArchCanvas/releases"><img src="https://img.shields.io/github/v/release/YN1753/ArchCanvas?style=flat-square&color=blue&label=Release" alt="Latest Release" /></a>
+  <a href="https://github.com/YN1753/ArchCanvas/actions"><img src="https://img.shields.io/github/actions/workflow/status/YN1753/ArchCanvas/release.yml?style=flat-square&label=Release%20CI" alt="Release CI" /></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-orange?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64-blueviolet?style=flat-square" alt="Architecture" />
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react" alt="React Version" />
-  <img src="https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite" alt="Vite Version" />
-  <img src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
   <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=flat-square&logo=sqlite" alt="SQLite" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
 </p>
@@ -132,6 +134,13 @@
 - **时序单调与 B+ 树友好**：全面采用最新的 RFC 9562 标准 UUIDv7，高 48 位嵌入毫秒级时间戳，解决传统随机 UUIDv4 引起的索引页频繁分裂，具备自增 ID 级别追加写入性能；
 - **跨项目防冲突与入库自愈**：彻底摒弃易导致主键冲突的英文名 ID；后端入库层（`SaveByProjectID`）具备智能重映射与关联自愈机制，自动识别非法或临时占位符，完成外键关系自动重定向。
 
+### 11. 📦 零依赖绿色单可执行文件与同级持久化（Portable Single Binary）
+- **`//go:embed` 静态资源全量内嵌**：前端 React + Vite 静态编译产物通过 Go 1.16+ `embed.FS` 完整内置于单可执行文件中，配合自动 SPA 路由兜底，零 Node.js、零外部静态资源服务器依赖；
+- **文件同级绿色便携存储**：程序启动时通过 `os.Executable()` 智能锚定自身位置，默认将 SQLite 数据库存放在 `exe同级/data/archcanvas.db`，配置存放在 `exe同级/configs/config.yaml`，真正实现“U 盘式随身携带、开箱即跑、零系统目录写入污染”；
+- **缺省配置自愈与零崩溃**：首次在全新目录下运行若未找到配置文件，后端自动初始化默认配置与 `.env` 模板，免去手动建文件繁琐步骤；
+- **动态命令行参数注入**：原生支持 `-port` / `-p`、`-host`、`-data` / `-d`、`-config` / `-c` 等灵活参数，启动端口动态切换无需重新打包前端；
+- **全平台自动化 CI/CD Release**：内置 GitHub Actions Release 流，打 Tag 自动跨平台编译（Windows x86_64、Linux x86_64、Linux ARM64、macOS Apple Silicon、macOS Intel），并自动打包 SHA-256 校验和下发至 Release。
+
 ---
 
 ## 🏗️ 系统架构设计
@@ -235,39 +244,93 @@ archcanvas/
 
 ### 方式一：下载单可执行文件运行（零环境依赖 · 推荐）
 
-ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go `embed` 内置于二进制中，无需安装 Node.js、Go 或配置复杂环境）：
+ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go `//go:embed` 内置于二进制中，无需安装 Node.js、Go 或配置外部静态服务器）：
 
-1. 前往 [GitHub Releases](../../releases) 下载对应操作系统的版本包：
-   * **macOS (Apple Silicon)**：`archcanvas-darwin-arm64.tar.gz`
-   * **macOS (Intel)**：`archcanvas-darwin-amd64.tar.gz`
+1. 前往 [GitHub Releases](https://github.com/YN1753/ArchCanvas/releases) 下载对应操作系统的版本包：
+   * **macOS (Apple Silicon / M 系列)**：`archcanvas-darwin-arm64.tar.gz`
+   * **macOS (Intel x86_64)**：`archcanvas-darwin-amd64.tar.gz`
    * **Linux (x86_64)**：`archcanvas-linux-amd64.tar.gz`
-   * **Linux (ARM64)**：`archcanvas-linux-arm64.tar.gz`
+   * **Linux (ARM64 / AArch64)**：`archcanvas-linux-arm64.tar.gz`
    * **Windows (x86_64)**：`archcanvas-windows-amd64.zip`
+
 2. 解压并单命令启动：
    ```bash
    # 默认启动 (监听 0.0.0.0:8080，配置与 SQLite 数据库默认保存在 exe 同级目录下)
    ./archcanvas
 
-   # 动态自定义端口启动
+   # 动态自定义端口启动 (如 9090)
    ./archcanvas -port 9090
 
-   # 自定义主机与数据目录
-   ./archcanvas -host 127.0.0.1 -port 8888 -data /custom/path/archcanvas.db
+   # 自定义主机、端口与数据库存储路径
+   ./archcanvas -host 127.0.0.1 -p 8888 -d /data/my_archcanvas.db
    ```
-3. 打开浏览器访问终端输出的地址（如 `http://localhost:8080`）即可立即开始建模！
+
+3. 终端启动 Banner 示例：
+   ```text
+     ╭─────────────────────────────────────────────────────────────╮
+     │  ArchCanvas v1.0.0                                          │
+     │  AI 驱动的领域业务架构建模与企业级数据库智能 CAD            │
+     ├─────────────────────────────────────────────────────────────┤
+     │  * 本地 Web 入口 : http://localhost:8080                    │
+     │  * 局域网访问   : http://0.0.0.0:8080                       │
+     │  * 数据文件     : /path/to/data/archcanvas.db               │
+     │  * 配置目录     : /path/to/configs                          │
+     ╰─────────────────────────────────────────────────────────────╯
+   ```
+
+4. 打开浏览器访问终端输出的地址（如 `http://localhost:8080`）即可立即开始建模！
+
+#### ⚙️ 命令行参数一览
+
+| 参数 | 简写 | 环境变量 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `-port` | `-p` | `PORT` | `8080` | HTTP 服务监听端口（优先级：命令行 > 环境变量 > 配置文件） |
+| `-host` | - | `HOST` | `0.0.0.0` | HTTP 服务绑定主机地址（如 `127.0.0.1` 仅限本机访问） |
+| `-config` | `-c` | - | `exe同级/configs` | 指定配置文件目录路径（首次运行若不存在自动生成默认配置） |
+| `-data` | `-d` | - | `exe同级/data/archcanvas.db` | 指定 SQLite 数据库文件路径（支持相对与绝对路径） |
+| `-version` | `-v` | - | - | 查看当前版本号、Git Commit Hash 与构建时间 |
 
 ---
 
-### 方式二：源码一键打包
+### 方式二：源码一键构建（Makefile）
 
-仓库根目录已内置跨平台 `Makefile`：
+仓库根目录已内置生产级构建脚本 `Makefile`：
 
 ```bash
-# 一键完成前端打包、资源嵌入并编译出单二进制文件
+# 1. 编译前端、注入 embed 并生成单二进制可执行文件
 make build
 
-# 启动运行
-./archcanvas
+# 2. 运行前后端全量单元测试与组件测试
+make test
+
+# 3. 编译并直接启动
+make run
+
+# 4. 清理构建缓存与产物
+make clean
+```
+
+---
+
+### 🔄 自动化 CI/CD 与多平台 Release 发布
+
+本项目配置了完整的 GitHub Actions 自动化工作流：
+
+1. **测试流水线（`.github/workflows/ci.yml`）**：
+   - 每次向 `main` 分支提交代码或发起 Pull Request 时，自动执行前端与 Go 后端的全量测试。
+2. **发布流水线（`.github/workflows/release.yml`）**：
+   - 当向远程推送版本 Tag（如 `v1.0.0`）时，自动触发跨平台矩阵并行编译：
+     - `linux/amd64`（Linux x86_64）
+     - `linux/arm64`（Linux AArch64，集成 `gcc-aarch64-linux-gnu` 支持 SQLite CGO 交叉编译）
+     - `darwin/arm64`（macOS Apple Silicon）
+     - `darwin/amd64`（macOS Intel）
+     - `windows/amd64`（Windows x86_64）
+   - 自动生成打包文件（`.tar.gz` / `.zip`）、默认配置文件模板与 `sha256sums.txt` 校验和文件，并全自动发布到 GitHub Releases 供用户下载。
+
+```bash
+# 触发发布示例
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 ---
