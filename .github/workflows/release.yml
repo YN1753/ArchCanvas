@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: 'web/package-lock.json'
 
@@ -75,8 +75,8 @@ jobs:
             binary_name: archcanvas
             archive_format: tar.gz
 
-          # macOS Intel (x86_64)
-          - os: macos-13
+          # macOS Intel (x86_64) - Cross-compiled natively via Apple Clang on macos-latest
+          - os: macos-latest
             goos: darwin
             goarch: amd64
             target: archcanvas-darwin-amd64
