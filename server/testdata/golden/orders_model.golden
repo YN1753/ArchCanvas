@@ -1,0 +1,17 @@
+package model
+
+import ()
+
+// Order 客户订单表
+type Order struct {
+	ID          uint64  `gorm:"primaryKey;column:id;type:bigint unsigned" json:"id"`
+	OrderNo     string  `gorm:"column:order_no;type:varchar(64);not null;unique" json:"order_no"`
+	UserID      uint64  `gorm:"column:user_id;type:bigint unsigned;not null" json:"user_id"`
+	TotalAmount float64 `gorm:"column:total_amount;type:decimal(10,2);not null" json:"total_amount"`
+	User        *User   `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
+	BaseModel
+}
+
+func (Order) TableName() string {
+	return "orders"
+}

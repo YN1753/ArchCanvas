@@ -1,0 +1,17 @@
+package model
+
+import ()
+
+// User 系统核心用户表
+type User struct {
+	ID       uint64  `gorm:"primaryKey;column:id;type:bigint unsigned" json:"id"`
+	Username string  `gorm:"column:username;type:varchar(64);not null;unique" json:"username"`
+	Email    string  `gorm:"column:email;type:varchar(128);not null" json:"email"`
+	Status   int8    `gorm:"column:status;type:tinyint;not null" json:"status"`
+	Orders   []Order `gorm:"foreignKey:UserID;references:ID" json:"orders,omitempty"`
+	BaseModel
+}
+
+func (User) TableName() string {
+	return "users"
+}

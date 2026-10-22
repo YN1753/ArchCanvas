@@ -1,0 +1,38 @@
+package router
+
+import (
+	"example.com/goldenapp/internal/handler"
+	"github.com/gin-gonic/gin"
+)
+
+type Handlers struct {
+	User  *handler.UserHandler
+	Order *handler.OrderHandler
+}
+
+// SetupRouter 初始化 Gin 路由引擎与中间件
+func SetupRouter(handlers Handlers) *gin.Engine {
+	r := gin.Default()
+
+	api := r.Group("/api/v1")
+	{
+		userGroup := api.Group("/users")
+		{
+			userGroup.POST("", handlers.User.Create)
+			userGroup.GET("/:id", handlers.User.GetDetail)
+			userGroup.GET("", handlers.User.List)
+			userGroup.PUT("", handlers.User.Update)
+			userGroup.DELETE("/:id", handlers.User.Delete)
+		}
+		orderGroup := api.Group("/orders")
+		{
+			orderGroup.POST("", handlers.Order.Create)
+			orderGroup.GET("/:id", handlers.Order.GetDetail)
+			orderGroup.GET("", handlers.Order.List)
+			orderGroup.PUT("", handlers.Order.Update)
+			orderGroup.DELETE("/:id", handlers.Order.Delete)
+		}
+	}
+
+	return r
+}

@@ -1,0 +1,61 @@
+package service
+
+import (
+	"context"
+
+	"example.com/goldenapp/internal/model"
+	"example.com/goldenapp/internal/repository"
+)
+
+type UserService interface {
+	Create(ctx context.Context, item *model.User) error
+	GetDetail(ctx context.Context, id uint64) (*model.User, error)
+	GetList(ctx context.Context, page, size int) ([]*model.User, int64, error)
+	Update(ctx context.Context, item *model.User) error
+	Delete(ctx context.Context, id uint64) error
+}
+
+type userService struct {
+	repo repository.UserRepository
+}
+
+func NewUserService(repo repository.UserRepository) UserService {
+	return &userService{repo: repo}
+}
+
+func (s *userService) Create(ctx context.Context, item *model.User) error {
+	// TODO: 1. 补充前置业务校验逻辑 (例如字段合法性、唯一性防重等)
+
+	// TODO: 2. 执行数据持久化
+	if err := s.repo.Create(ctx, item); err != nil {
+		return err
+	}
+
+	// TODO: 3. 补充后续业务联动 (如异步通知、缓存写入等)
+	return nil
+}
+
+func (s *userService) GetDetail(ctx context.Context, id uint64) (*model.User, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
+func (s *userService) GetList(ctx context.Context, page, size int) ([]*model.User, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 10
+	}
+	offset := (page - 1) * size
+	return s.repo.List(ctx, offset, size)
+}
+
+func (s *userService) Update(ctx context.Context, item *model.User) error {
+	// TODO: 补充业务更新前置检查与数据变更逻辑
+	return s.repo.Update(ctx, item)
+}
+
+func (s *userService) Delete(ctx context.Context, id uint64) error {
+	// TODO: 补充业务删除约束检查 (如关联级联校验)
+	return s.repo.Delete(ctx, id)
+}

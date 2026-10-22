@@ -859,4 +859,144 @@ func TestGenerateKeywordsAndInvalidIdentifiers(t *testing.T) {
 	t.Logf("Successfully compiled keyword and special identifiers app in: %s", tmpDir)
 }
 
+func TestGenerateGoldenFiles(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_user",
+				Name:    "users",
+				Comment: "系统核心用户表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_u1",
+						Name:         "id",
+						DBType:       "BIGINT UNSIGNED",
+						CodeType:     "uint64",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_u2",
+						Name:     "username",
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+						IsUnique: true,
+					},
+					{
+						ID:       "attr_u3",
+						Name:     "email",
+						DBType:   "VARCHAR(128)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_u4",
+						Name:     "status",
+						DBType:   "TINYINT",
+						CodeType: "int8",
+					},
+				},
+			},
+			{
+				ID:      "ent_order",
+				Name:    "orders",
+				Comment: "客户订单表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_o1",
+						Name:         "id",
+						DBType:       "BIGINT UNSIGNED",
+						CodeType:     "uint64",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_o2",
+						Name:     "order_no",
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+						IsUnique: true,
+					},
+					{
+						ID:       "attr_o3",
+						Name:     "user_id",
+						DBType:   "BIGINT UNSIGNED",
+						CodeType: "uint64",
+					},
+					{
+						ID:       "attr_o4",
+						Name:     "total_amount",
+						DBType:   "DECIMAL(10,2)",
+						CodeType: "float64",
+					},
+				},
+			},
+		},
+		Relations: []domain.Relation{
+			{
+				ID:             "rel_user_orders",
+				SourceEntityID: "ent_user",
+				TargetEntityID: "ent_order",
+				RelationTypeID: "one_to_many",
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:        "proj_golden",
+		ModuleName:       "example.com/goldenapp",
+		Port:             "8080",
+		DBDriver:         "sqlite",
+		EnableSoftDelete: true,
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	fileMap := make(map[string]string)
+	for _, f := range files {
+		fileMap[f.Path] = f.Content
+	}
+
+	goldenDir := filepath.Join("..", "..", "testdata", "golden")
+	_ = os.MkdirAll(goldenDir, 0755)
+
+	checkGolden := func(relPath, goldenName string) {
+		actual, ok := fileMap[relPath]
+		if !ok {
+			t.Fatalf("missing expected generated file: %s", relPath)
+		}
+		goldenPath := filepath.Join(goldenDir, goldenName)
+		update := os.Getenv("UPDATE_GOLDEN") == "1"
+
+		if _, err := os.Stat(goldenPath); os.IsNotExist(err) || update {
+			if err := os.WriteFile(goldenPath, []byte(actual), 0644); err != nil {
+				t.Fatalf("failed to write golden file %s: %v", goldenPath, err)
+			}
+			t.Logf("Updated golden snapshot: %s", goldenPath)
+			return
+		}
+
+		expectedBytes, err := os.ReadFile(goldenPath)
+		if err != nil {
+			t.Fatalf("failed to read golden file %s: %v", goldenPath, err)
+		}
+
+		expected := string(expectedBytes)
+		if actual != expected {
+			t.Errorf("Golden snapshot mismatch for %s (golden: %s).\n--- Actual ---\n%s\n--- Expected ---\n%s\nRun with UPDATE_GOLDEN=1 to overwrite if intentional.", relPath, goldenName, actual, expected)
+		}
+	}
+
+	checkGolden("internal/model/users.go", "users_model.golden")
+	checkGolden("internal/model/orders.go", "orders_model.golden")
+	checkGolden("internal/router/router.go", "router.golden")
+	checkGolden("internal/service/users_service.go", "users_service.golden")
+}
+
+
 
