@@ -726,3 +726,137 @@ func TestGenerateFileTree_E2EBuild(t *testing.T) {
 	t.Logf("Successfully compiled and vetted generated project in: %s", tmpDir)
 }
 
+func TestGenerateKeywordsAndInvalidIdentifiers(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_type",
+				Name:    "types", // 单数是 type (Go 关键字)
+				Comment: "类型元数据表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_1",
+						Name:         "id",
+						DBType:       "BIGINT UNSIGNED",
+						CodeType:     "uint64",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_2",
+						Name:     "type", // Go 关键字
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_3",
+						Name:     "func", // Go 关键字
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_4",
+						Name:     "var", // Go 关键字
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_5",
+						Name:     "select", // Go 关键字
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_6",
+						Name:     "123_code", // 数字开头
+						DBType:   "VARCHAR(32)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_7",
+						Name:     "@special#tag", // 包含特殊字符
+						DBType:   "VARCHAR(32)",
+						CodeType: "string",
+					},
+				},
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:  "proj_kw_test",
+		ModuleName: "example.com/kwapp",
+		Port:       "8080",
+		DBDriver:   "sqlite",
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	fileMap := make(map[string]string)
+	for _, f := range files {
+		fileMap[f.Path] = f.Content
+		if strings.HasSuffix(f.Path, ".go") {
+			_, parseErr := parser.ParseFile(fset, f.Path, f.Content, parser.AllErrors)
+			if parseErr != nil {
+				t.Fatalf("file %s failed AST parsing: %v\nContent:\n%s", f.Path, parseErr, f.Content)
+			}
+		}
+	}
+
+	// 验证结构体中导出的字段命名是否被安全转换
+	typeModel, ok := fileMap["internal/model/types.go"]
+	if !ok {
+		t.Fatal("missing internal/model/types.go")
+	}
+
+	if !strings.Contains(typeModel, "Type\t") && !strings.Contains(typeModel, "Type ") {
+		t.Errorf("expected struct to have Type field, got:\n%s", typeModel)
+	}
+	if !strings.Contains(typeModel, "Func\t") && !strings.Contains(typeModel, "Func ") {
+		t.Errorf("expected struct to have Func field, got:\n%s", typeModel)
+	}
+	if !strings.Contains(typeModel, "Field123Code\t") && !strings.Contains(typeModel, "Field123Code ") {
+		t.Errorf("expected struct to have Field123Code field for numeric start, got:\n%s", typeModel)
+	}
+	if !strings.Contains(typeModel, "SpecialTag\t") && !strings.Contains(typeModel, "SpecialTag ") {
+		t.Errorf("expected struct to have SpecialTag field for special chars, got:\n%s", typeModel)
+	}
+
+	// 验证临时目录端到端真实编译
+	tmpDir := t.TempDir()
+	for _, f := range files {
+		targetPath := filepath.Join(tmpDir, f.Path)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", targetPath, err)
+		}
+		if err := os.WriteFile(targetPath, []byte(f.Content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", targetPath, err)
+		}
+	}
+
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = tmpDir
+	tidyOut, err := tidyCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed for keywords app: %v\nOutput:\n%s", err, string(tidyOut))
+	}
+
+	cmd := exec.Command("go", "build", "-o", "server_bin", "./cmd/server")
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build failed for keywords app: %v\nOutput:\n%s", err, string(out))
+	}
+
+	t.Logf("Successfully compiled keyword and special identifiers app in: %s", tmpDir)
+}
+
+

@@ -48,6 +48,86 @@ var initialisms = map[string]bool{
 	"XSS":   true,
 }
 
+// goKeywords Go 语言保留关键字表
+var goKeywords = map[string]bool{
+	"break":       true,
+	"default":     true,
+	"func":        true,
+	"interface":   true,
+	"select":      true,
+	"case":        true,
+	"defer":       true,
+	"go":          true,
+	"map":         true,
+	"struct":      true,
+	"chan":        true,
+	"else":        true,
+	"goto":        true,
+	"package":     true,
+	"switch":      true,
+	"const":       true,
+	"fallthrough": true,
+	"if":          true,
+	"range":       true,
+	"type":        true,
+	"continue":    true,
+	"for":         true,
+	"import":      true,
+	"return":      true,
+	"var":         true,
+}
+
+// SafeFieldName 将属性名转换为合法的 Go 结构体导出字段名 (首字母大写 PascalCase，避免数字开头或非法字符)
+func SafeFieldName(raw string) string {
+	pascal := ToPascalCase(raw)
+	if pascal == "" {
+		return "Field"
+	}
+	r := []rune(pascal)
+	if unicode.IsDigit(r[0]) {
+		return "Field" + pascal
+	}
+	if !unicode.IsLetter(r[0]) {
+		return "Field" + pascal
+	}
+	return pascal
+}
+
+// SafeStructName 将实体名转换为合法的 Go 结构体名称
+func SafeStructName(raw string) string {
+	pascal := ToPascalCase(raw)
+	if pascal == "" {
+		return "Model"
+	}
+	r := []rune(pascal)
+	if unicode.IsDigit(r[0]) {
+		return "Entity" + pascal
+	}
+	if !unicode.IsLetter(r[0]) {
+		return "Entity" + pascal
+	}
+	return pascal
+}
+
+// SafeVarName 将实体名转换为合法的 Go 变量名 (避开 Go 关键字与数字开头)
+func SafeVarName(raw string) string {
+	camel := ToCamelCase(raw)
+	if camel == "" {
+		return "item"
+	}
+	if goKeywords[camel] {
+		return camel + "Item"
+	}
+	r := []rune(camel)
+	if unicode.IsDigit(r[0]) {
+		return "v" + camel
+	}
+	if !unicode.IsLetter(r[0]) {
+		return "item" + camel
+	}
+	return camel
+}
+
 // ProjectContext 传递给代码生成模板的根上下文
 type ProjectContext struct {
 	ModuleName       string
@@ -494,9 +574,9 @@ func buildEntityData(ent domain.Entity) EntityData {
 		tableName = "table"
 	}
 	singular := ToSingular(tableName)
-	structName := ToPascalCase(singular)
-	varName := ToCamelCase(singular)
-	pluralName := ToPascalCase(tableName)
+	structName := SafeStructName(singular)
+	varName := SafeVarName(singular)
+	pluralName := SafeStructName(tableName)
 
 	// 构建列名到索引定义的映射（支持单列/复合索引与唯一索引）
 	colIndexesMap := make(map[string][]colIndexInfo)
@@ -583,7 +663,7 @@ func buildEntityData(ent domain.Entity) EntityData {
 }
 
 func buildAttributeData(attr domain.Attribute, idxInfos []colIndexInfo) AttributeData {
-	fieldName := ToPascalCase(attr.Name)
+	fieldName := SafeFieldName(attr.Name)
 	goType := normalizeGoType(attr.CodeType, attr.DBType, attr.IsNullable)
 
 	var gormTags []string
@@ -777,7 +857,7 @@ func splitIntoWords(s string) []string {
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
 		c := runes[i]
-		if c == '_' || c == '-' || c == ' ' || c == '.' {
+		if !unicode.IsLetter(c) && !unicode.IsDigit(c) {
 			if len(current) > 0 {
 				words = append(words, string(current))
 				current = nil
