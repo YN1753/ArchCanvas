@@ -11,10 +11,16 @@ import (
 // InitRouter 初始化 Gin 路由引擎并注册纯语义风格 API 路由（只使用 GET 与 POST）
 func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	r := gin.New()
+	_ = r.SetTrustedProxies(nil) // 显式禁用默认全信任反向代理，防范客户端 IP 伪造
 	r.Use(gin.Logger())
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS())
+
+	// 根路径健康探针（适配容器与反向代理探活）
+	r.GET("/healthz", handlers.Health.Check)
+
 	route := r.Group("/api/v1")
+	route.GET("healthz", handlers.Health.Check)
 
 	// ================= 1. 模型管理 (纯语义 GET/POST) =================
 	models := route.Group("models")

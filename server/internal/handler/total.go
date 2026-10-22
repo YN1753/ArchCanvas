@@ -5,12 +5,14 @@ type TotalHandler struct {
 	Agent     AgentHandler
 	Project   ProjectHandler
 	Generator GeneratorHandler
+	Health    HealthHandler
 }
 
-func NewTotalHandler(agent AgentHandler, project ProjectHandler, generator GeneratorHandler) TotalHandler {
+func NewTotalHandler(agent AgentHandler, project ProjectHandler, generator GeneratorHandler, health HealthHandler) TotalHandler {
 	return TotalHandler{
 		Agent:     agent,
 		Project:   project,
 		Generator: generator,
+		Health:    health,
 	}
 }

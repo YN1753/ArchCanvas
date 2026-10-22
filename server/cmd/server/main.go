@@ -10,12 +10,18 @@ import (
 	"archcanvas/internal/router"
 	"archcanvas/internal/service"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 var (
@@ -110,17 +116,52 @@ func main() {
 		panic(err)
 	}
 	generatorHandler := handler.NewGeneratorHandler(generatorService)
+	healthHandler := handler.NewHealthHandler(db)
 
-	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler, generatorHandler)
+	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler, generatorHandler, healthHandler)
 
 	r := router.InitRouter(totalHandler)
 
 	printBanner(cfg, configDir)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Service.Host, cfg.Service.Port)
-	if err := r.Run(addr); err != nil {
-		panic(fmt.Sprintf("启动服务失败 [%s]: %v", addr, err))
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      r,
+		ReadTimeout:  120 * time.Second,
+		WriteTimeout: 120 * time.Second,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("启动 HTTP 服务失败 [%s]: %v", addr, err)
+		}
+	}()
+
+	// 监听系统停机中断信号 (SIGINT, SIGTERM)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	log.Printf("接收到系统停机信号 [%s]，正在执行优雅退出与资源释放…", sig)
+
+	// 预留最多 8 秒的优雅关闭窗口，等待在途请求完成
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP 服务停机超时或异常: %v", err)
+	}
+
+	// 显式安全关闭底层 SQLite 连接池
+	if sqlDB, err := db.DB(); err == nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("关闭 SQLite 数据库连接池异常: %v", err)
+		} else {
+			log.Println("SQLite 数据库连接已安全关闭")
+		}
+	}
+
+	log.Println("ArchCanvas 服务已成功安全退出")
 }
 
 // getBaseDir 获取可执行文件基准工作目录（打包运行时为 exe 所在目录，go run 开发时回退到当前目录）
