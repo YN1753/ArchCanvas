@@ -1,0 +1,216 @@
+{
+  "clarification_cases": [
+    {
+      "id": "c_01",
+      "input": "做个商城",
+      "expected_clarification": true,
+      "reason": "输入极短且业务边界完全未定义"
+    },
+    {
+      "id": "c_02",
+      "input": "登录",
+      "expected_clarification": true,
+      "reason": "单动词输入，缺少系统场景与数据上下文"
+    },
+    {
+      "id": "c_03",
+      "input": "帮我设计系统",
+      "expected_clarification": true,
+      "reason": "无具体业务领域描述"
+    },
+    {
+      "id": "c_04",
+      "input": "你好",
+      "expected_clarification": true,
+      "reason": "纯寒暄问候语"
+    },
+    {
+      "id": "c_05",
+      "input": "建一个单据表",
+      "expected_clarification": true,
+      "reason": "单实体输入，缺少业务交互关联主体"
+    },
+    {
+      "id": "c_06",
+      "input": "做一个博客网站，需要文章和用户，还要有评论功能，请问需要哪些表",
+      "expected_clarification": false,
+      "reason": "需求清晰明确，包含创作者、文章、评论互动三大主体"
+    },
+    {
+      "id": "c_07",
+      "input": "学校选课系统，学生可以选择多门课程，每门课程由一名教师授课，记录选课成绩",
+      "expected_clarification": false,
+      "reason": "实体角色完整，关联清晰（学生-课程-教师-选课成绩）"
+    },
+    {
+      "id": "c_08",
+      "input": "用户管理",
+      "expected_clarification": true,
+      "reason": "模块短语，缺少字段范围与权限边界"
+    },
+    {
+      "id": "c_09",
+      "input": "仓储管理系统中的入库单和出库单",
+      "expected_clarification": true,
+      "reason": "缺少商品物料主体和仓库库位定义"
+    },
+    {
+      "id": "c_10",
+      "input": "搭建企业员工报销审批系统，包含员工信息、报销单主表、报销费用明细以及多级审批流记录",
+      "expected_clarification": false,
+      "reason": "业务场景闭环，明确员工、报销单、费用明细与审批记录"
+    },
+    {
+      "id": "c_11",
+      "input": "类似闲鱼的二手交易，支持买家卖家、商品发布、订单支付与评价",
+      "expected_clarification": false,
+      "reason": "明确商业模式与关键功能闭环"
+    },
+    {
+      "id": "c_12",
+      "input": "帮我弄一个数据表",
+      "expected_clarification": true,
+      "reason": "未指定任何实体或业务场景"
+    },
+    {
+      "id": "c_13",
+      "input": "会议室预约系统，员工可以查看各会议室的空闲时段并提交预约，管理员审核预约",
+      "expected_clarification": false,
+      "reason": "明确员工、会议室、预约记录与管理员审核实体"
+    },
+    {
+      "id": "c_14",
+      "input": "医院门诊挂号平台，包含科室、医生坐诊排班、患者信息以及门诊预约挂号记录",
+      "expected_clarification": false,
+      "reason": "科室、医生、排班、患者与挂号单关系明确"
+    },
+    {
+      "id": "c_15",
+      "input": "支付功能",
+      "expected_clarification": true,
+      "reason": "纯技术概念，缺少业务主体与订单依赖"
+    },
+    {
+      "id": "c_16",
+      "input": "图书管理",
+      "expected_clarification": true,
+      "reason": "需求过短，未明确是馆藏借还还是电子书销售"
+    },
+    {
+      "id": "c_17",
+      "input": "图书馆藏借阅系统，读者可借阅图书，系统记录借还流水、归还截止日期与逾期罚金",
+      "expected_clarification": false,
+      "reason": "读者、图书、借还流水与逾期罚金业务链路清晰"
+    },
+    {
+      "id": "c_18",
+      "input": "工单系统",
+      "expected_clarification": true,
+      "reason": "过短需求，缺少派单流转机制与角色定义"
+    },
+    {
+      "id": "c_19",
+      "input": "客户服务工单系统，客户提交故障工单，客服认领并分配给技术支持人员，全程记录处理进展与满意度评价",
+      "expected_clarification": false,
+      "reason": "客户、工单、流转记录与评价体系完整闭环"
+    },
+    {
+      "id": "c_20",
+      "input": "666",
+      "expected_clarification": true,
+      "reason": "纯网络数字表情，无业务含义"
+    },
+    {
+      "id": "c_21",
+      "input": "系统有哪些实体",
+      "expected_clarification": true,
+      "reason": "反向提问，未提供上下文"
+    },
+    {
+      "id": "c_22",
+      "input": "IoT 物联网设备数据中台，设备网关定时上报遥测数据，支持配置告警规则与生成报警事件",
+      "expected_clarification": false,
+      "reason": "设备、遥测指标、告警规则与报警事件业务明确"
+    },
+    {
+      "id": "c_23",
+      "input": "在吗",
+      "expected_clarification": true,
+      "reason": "问候语"
+    },
+    {
+      "id": "c_24",
+      "input": "支持积分兑换礼品的积分商城，用户签到获取积分，使用积分兑换礼品并填写收货地址生成兑换单",
+      "expected_clarification": false,
+      "reason": "用户、积分流水、礼品库、地址与兑换单场景闭环"
+    },
+    {
+      "id": "c_25",
+      "input": "优惠券模块",
+      "expected_clarification": true,
+      "reason": "未说明优惠券类型、发放方式与核销门槛"
+    }
+  ],
+  "modeling_cases": [
+    {
+      "id": "m_01",
+      "name": "在线电商交易系统",
+      "input": "在线电商系统，包含用户表（users）、商品表（products）、订单主表（orders）以及订单明细项（order_items）",
+      "entities": ["users", "products", "orders", "order_items"]
+    },
+    {
+      "id": "m_02",
+      "name": "内容博客社区",
+      "input": "博客系统，创作者发布文章（articles），读者针对文章进行评论（comments），并支持文章多标签分类（tags）",
+      "entities": ["users", "articles", "comments", "tags"]
+    },
+    {
+      "id": "m_03",
+      "name": "高校选课教务系统",
+      "input": "高校教务系统，包含学生信息（students）、开课教师（teachers）、课程表（courses）以及学生选课成绩记录（enrollments）",
+      "entities": ["students", "teachers", "courses", "enrollments"]
+    },
+    {
+      "id": "m_04",
+      "name": "标准 RBAC 权限系统",
+      "input": "通用企业权限管理系统，包含用户表（users）、角色表（roles）、权限菜单（permissions）以及用户角色映射（user_roles）",
+      "entities": ["users", "roles", "permissions", "user_roles"]
+    },
+    {
+      "id": "m_05",
+      "name": "IoT 设备监测中台",
+      "input": "物联网监测系统，管理物联设备（devices）、设备采集指标（metrics）与告警规则（alerts）",
+      "entities": ["devices", "metrics", "alerts"]
+    },
+    {
+      "id": "m_06",
+      "name": "仓储 WMS 货品进出库",
+      "input": "仓库管理系统，包含仓库划分（warehouses）、物料物权（materials）、入库申请（inbound_orders）与出库单（outbound_orders）",
+      "entities": ["warehouses", "materials", "inbound_orders", "outbound_orders"]
+    },
+    {
+      "id": "m_07",
+      "name": "会议室预订系统",
+      "input": "企业行政管理系统，管理办公区会议室（meeting_rooms）、员工账号（employees）与会议室预订记录（reservations）",
+      "entities": ["employees", "meeting_rooms", "reservations"]
+    },
+    {
+      "id": "m_08",
+      "name": "敏捷项目看板任务系统",
+      "input": "敏捷研发协作平台，包含项目看板（boards）、任务卡片（tasks）、处理人（members）与工作日志（work_logs）",
+      "entities": ["boards", "tasks", "members", "work_logs"]
+    },
+    {
+      "id": "m_09",
+      "name": "医院门诊就医平台",
+      "input": "智慧医院平台，包含医疗科室（departments）、坐诊医生（doctors）、就诊患者（patients）与门诊挂号单（appointments）",
+      "entities": ["departments", "doctors", "patients", "appointments"]
+    },
+    {
+      "id": "m_10",
+      "name": "企业员工报销审批",
+      "input": "财务报销系统，包含报销申请人（users）、报销费用主单（expense_reports）、发票消费明细（expense_items）与审批流程记录（approvals）",
+      "entities": ["users", "expense_reports", "expense_items", "approvals"]
+    }
+  ]
+}

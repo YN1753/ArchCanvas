@@ -832,9 +832,12 @@ func checkShortInputClarification(input RequirementInput) (*RequirementOutput, b
 		return nil, false
 	}
 
-	// 若输入为空或中文字符少于 6 个，或命中无意义问候词
-	isGreeting := trimmed == "你好" || trimmed == "hello" || trimmed == "hi" || trimmed == "在吗" || trimmed == "在么"
-	if runeLen < 6 || isGreeting {
+	// 若输入为空或中文字符少于等于 8 个字，或命中无意义问候词/无场景提问句式
+	isGreeting := trimmed == "你好" || trimmed == "hello" || trimmed == "hi" || trimmed == "在吗" || trimmed == "在么" || trimmed == "666"
+	hasQuestionPattern := strings.Contains(trimmed, "有哪些") || strings.Contains(trimmed, "是什么") || strings.Contains(trimmed, "怎么做")
+	isMissingSubject := runeLen < 20 && strings.Contains(trimmed, "中的") && !strings.Contains(trimmed, "包含") && !strings.Contains(trimmed, "记录")
+
+	if runeLen <= 8 || isGreeting || hasQuestionPattern || isMissingSubject {
 		summary := fmt.Sprintf("需求描述「%s」较为简略，缺少具体业务场景与主体对象。", trimmed)
 		if trimmed == "" {
 			summary = "需求输入为空，请描述您希望构建的系统业务场景与核心对象。"
