@@ -405,7 +405,7 @@ npm run dev
   - **图像与剪贴板**：`html-to-image` (高清 PNG / 矢量 SVG 导出与二进制剪贴板写入)
   - **运行时校验**：Zod 4 (前端 ER DSL 镜像校验)
 - **后端技术栈**：
-  - **开发语言**：Go 1.22+
+  - **开发语言**：Go 1.27+
   - **Web 框架**：Gin (`github.com/gin-gonic/gin`)
   - **ORM 框架**：GORM (`gorm.io/gorm`, `gorm.io/driver/sqlite`)
   - **AI Agent 框架**：CloudWeGo Eino SDK (`github.com/cloudwego/eino`)
