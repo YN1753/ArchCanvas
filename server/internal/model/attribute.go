@@ -3,7 +3,7 @@ package model
 type Attribute struct {
 	ID           string  `gorm:"primaryKey" json:"id"`
 	Name         string  `gorm:"not null;uniqueIndex:name_entity" json:"name"`
-	EntityID     string  `gorm:"not null;uniqueIndex:name_entity" json:"entity_id"`
+	EntityID     string  `gorm:"not null;index:idx_attributes_entity_id;uniqueIndex:name_entity" json:"entity_id"`
 	Comment      string  `gorm:"column:comment" json:"comment"`
 	DBType       string  `gorm:"not null" json:"db_type"`
 	CodeType     string  `gorm:"not null" json:"code_type"`

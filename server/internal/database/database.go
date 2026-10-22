@@ -54,6 +54,12 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 		_ = db.Exec("PRAGMA synchronous = NORMAL;").Error
 	}
 
+	// 调优底层连接池参数，兼顾本地多协程读写吞吐并防范文件句柄溢出
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(50)
+		sqlDB.SetMaxIdleConns(10)
+	}
+
 	return db, nil
 }
 
