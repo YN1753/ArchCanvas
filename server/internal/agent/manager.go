@@ -127,6 +127,11 @@ func (m *ModelManager) GetChatModel(ctx context.Context, provider, name string) 
 	}
 
 	m.mu.Lock()
+	// Double check: 防范高并发下重复实例化相同模型覆盖
+	if existing, ok := m.Cache[key]; ok {
+		m.mu.Unlock()
+		return existing, nil
+	}
 	m.Cache[key] = chatModel
 	m.mu.Unlock()
 
@@ -164,11 +169,11 @@ func FetchModelsFromBaseURL(ctx context.Context, baseURL, apiKey string) ([]stri
 		targetURL = targetURL + "/models"
 	}
 
-	models, status, err := fetchModelsHTTP(ctx, targetURL, apiKey)
+	models, status, err := fetchModelsHTTPWithRetry(ctx, targetURL, apiKey)
 	// 如果目标地址返回 404 且原 URL 未包含 /v1，尝试补充 /v1/models 重试
 	if err != nil && status == http.StatusNotFound && !strings.Contains(baseURL, "/v1") {
 		retryURL := baseURL + "/v1/models"
-		if m, _, err2 := fetchModelsHTTP(ctx, retryURL, apiKey); err2 == nil && len(m) > 0 {
+		if m, _, err2 := fetchModelsHTTPWithRetry(ctx, retryURL, apiKey); err2 == nil && len(m) > 0 {
 			return m, nil
 		}
 	}
@@ -176,7 +181,7 @@ func FetchModelsFromBaseURL(ctx context.Context, baseURL, apiKey string) ([]stri
 	if err != nil && status == http.StatusNotFound {
 		cleanBase := strings.TrimSuffix(baseURL, "/v1")
 		ollamaURL := cleanBase + "/api/tags"
-		if m, _, err3 := fetchModelsHTTP(ctx, ollamaURL, apiKey); err3 == nil && len(m) > 0 {
+		if m, _, err3 := fetchModelsHTTPWithRetry(ctx, ollamaURL, apiKey); err3 == nil && len(m) > 0 {
 			return m, nil
 		}
 	}
@@ -187,6 +192,40 @@ func FetchModelsFromBaseURL(ctx context.Context, baseURL, apiKey string) ([]stri
 }
 
 var httpClient = &http.Client{Timeout: 6 * time.Second}
+
+// fetchModelsHTTPWithRetry 封装带有指数退避（Exponential Backoff）重试的 HTTP 请求
+func fetchModelsHTTPWithRetry(ctx context.Context, targetURL, apiKey string) ([]string, int, error) {
+	const maxAttempts = 3
+	backoff := 100 * time.Millisecond
+
+	var lastErr error
+	var lastStatus int
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		models, status, err := fetchModelsHTTP(ctx, targetURL, apiKey)
+		if err == nil && status == http.StatusOK {
+			return models, status, nil
+		}
+
+		lastErr = err
+		lastStatus = status
+
+		// 明确的非临时性客户端错误（如 401 鉴权失败、404 未找到、403 权限不足），直接返回无需盲目重试
+		if status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden {
+			return nil, status, err
+		}
+
+		if attempt < maxAttempts {
+			select {
+			case <-time.After(backoff):
+				backoff *= 2 // 100ms -> 200ms -> 400ms 指数递增
+			case <-ctx.Done():
+				return nil, lastStatus, ctx.Err()
+			}
+		}
+	}
+	return nil, lastStatus, lastErr
+}
 
 func fetchModelsHTTP(ctx context.Context, targetURL, apiKey string) ([]string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
