@@ -258,64 +258,94 @@ func (a *AgentService) AnalyzeRequirement(
 
 	messages := a.buildRequirementMessages(input)
 
-	stream, err := toolModel.Stream(ctx, messages)
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
+	const maxRetries = 2
+	var finalOutput *RequirementOutput
+	currentMessages := messages
 
-	var accumulatedMses []*schema.Message
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 && onThinking != nil {
+			onThinking(fmt.Sprintf("\n[提示] 概念模型结构化解析未通过，正在携带错误上下文向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
+
+		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
 			return nil, err
 		}
 
-		if chunk.Content != "" && onThinking != nil {
-			onThinking(chunk.Content)
+		var accumulatedMses []*schema.Message
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				stream.Close()
+				return nil, err
+			}
+
+			if chunk.Content != "" && onThinking != nil {
+				onThinking(chunk.Content)
+			}
+			accumulatedMses = append(accumulatedMses, chunk)
 		}
+		stream.Close()
 
-		accumulatedMses = append(accumulatedMses, chunk)
-	}
+		concatMsg, err := schema.ConcatMessages(accumulatedMses)
+		var parseErr error
 
-	var finalOutput *RequirementOutput
-
-	concatMsg, err := schema.ConcatMessages(accumulatedMses)
-	if err == nil && len(concatMsg.ToolCalls) > 0 {
-		for _, tc := range concatMsg.ToolCalls {
-			if tc.Function.Name == tools.ProposeRequirementToolName {
-				var args tools.ProposeRequirementArgs
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
-					finalOutput = &RequirementOutput{
-						Summary:             args.Summary,
-						Concepts:            args.Concepts,
-						Relations:           args.Relations,
-						Assumptions:         args.Assumptions,
-						NegativeConstraints: args.NegativeConstraints,
-						NeedClarification:   args.NeedClarification,
-						ClarificationCards:  args.ClarificationCards,
-						Questions:           args.Questions,
+		if err == nil && len(concatMsg.ToolCalls) > 0 {
+			for _, tc := range concatMsg.ToolCalls {
+				if tc.Function.Name == tools.ProposeRequirementToolName {
+					var args tools.ProposeRequirementArgs
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
+						finalOutput = &RequirementOutput{
+							Summary:             args.Summary,
+							Concepts:            args.Concepts,
+							Relations:           args.Relations,
+							Assumptions:         args.Assumptions,
+							NegativeConstraints: args.NegativeConstraints,
+							NeedClarification:   args.NeedClarification,
+							ClarificationCards:  args.ClarificationCards,
+							Questions:           args.Questions,
+						}
+						break
+					} else {
+						parseErr = fmt.Errorf("tool call JSON 反序列化失败: %w", err)
 					}
-					break
 				}
 			}
 		}
-	}
 
-	if finalOutput == nil && concatMsg != nil && concatMsg.Content != "" {
-		if parsed, err := tryParseRequirementJSON(concatMsg.Content); err == nil {
-			finalOutput = parsed
-		} else {
-			finalOutput = &RequirementOutput{
-				Summary:           concatMsg.Content,
-				Concepts:          []domain.BusinessConcept{},
-				Relations:         []domain.ConceptRelation{},
-				NeedClarification: false,
+		if finalOutput == nil && concatMsg != nil && concatMsg.Content != "" {
+			if parsed, err := tryParseRequirementJSON(concatMsg.Content); err == nil && isRequirementOutputValid(parsed) {
+				finalOutput = parsed
+			} else if err != nil {
+				parseErr = fmt.Errorf("正文 JSON 提取解析失败: %w", err)
+			} else {
+				parseErr = errors.New("正文提取的 JSON 数据缺少必要业务字段")
 			}
+		}
+
+		if finalOutput != nil {
+			break
+		}
+
+		// 若未解析出有效结果且仍有重试机会，构造包含错误信息的 Feedback Loop 提示
+		if attempt < maxRetries {
+			errMsg := "输出未包含有效的工具调用或结构化 JSON"
+			if parseErr != nil {
+				errMsg = parseErr.Error()
+			}
+			feedbackPrompt := fmt.Sprintf("【格式校验纠错】你上一轮的输出无法被系统成功反序列化为有效的结构化结果，解析错误信息为: %s。请严格遵循 ToolCall 参数结构定义或标准纯 JSON 格式输出，确保 JSON 括号完整闭合，勿附加无意义的修饰文字。", errMsg)
+
+			assistantContent := ""
+			if concatMsg != nil {
+				assistantContent = concatMsg.Content
+			}
+			currentMessages = append(currentMessages,
+				schema.AssistantMessage(assistantContent, nil),
+				schema.UserMessage(feedbackPrompt),
+			)
 		}
 	}
 
@@ -355,56 +385,102 @@ func (a *AgentService) DesignSchema(
 
 	messages := a.buildSchemaDesignMessages(input)
 
-	stream, err := toolModel.Stream(ctx, messages)
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
+	const maxRetries = 2
+	var finalDesign *domain.ERDesign
+	currentMessages := messages
 
-	var accumulatedMses []*schema.Message
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 && onThinking != nil {
+			onThinking(fmt.Sprintf("\n[提示] 数据库物理模型反序列化校验未通过，正在携带错误信息向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
+
+		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
 			return nil, err
 		}
 
-		if chunk.Content != "" && onThinking != nil {
-			onThinking(chunk.Content)
+		var accumulatedMses []*schema.Message
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				stream.Close()
+				return nil, err
+			}
+
+			if chunk.Content != "" && onThinking != nil {
+				onThinking(chunk.Content)
+			}
+			accumulatedMses = append(accumulatedMses, chunk)
 		}
+		stream.Close()
 
-		accumulatedMses = append(accumulatedMses, chunk)
-	}
+		concatMsg, err := schema.ConcatMessages(accumulatedMses)
+		var parseErr error
 
-	concatMsg, err := schema.ConcatMessages(accumulatedMses)
-	if err == nil && len(concatMsg.ToolCalls) > 0 {
-		for _, tc := range concatMsg.ToolCalls {
-			if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
-				var args tools.ProposeSchemaDesignArgs
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
-					cleanRelations := make([]domain.Relation, 0, len(args.Relations))
-					for _, r := range args.Relations {
-						if strings.TrimSpace(r.SourceEntityID) != "" &&
-							!strings.EqualFold(strings.TrimSpace(r.SourceEntityID), strings.TrimSpace(r.TargetEntityID)) {
-							cleanRelations = append(cleanRelations, r)
+		if err == nil && len(concatMsg.ToolCalls) > 0 {
+			for _, tc := range concatMsg.ToolCalls {
+				if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
+					var args tools.ProposeSchemaDesignArgs
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil && len(args.Entities) > 0 {
+						cleanRelations := make([]domain.Relation, 0, len(args.Relations))
+						for _, r := range args.Relations {
+							if strings.TrimSpace(r.SourceEntityID) != "" &&
+								!strings.EqualFold(strings.TrimSpace(r.SourceEntityID), strings.TrimSpace(r.TargetEntityID)) {
+								cleanRelations = append(cleanRelations, r)
+							}
 						}
+						finalDesign = &domain.ERDesign{
+							Entities:  args.Entities,
+							Relations: cleanRelations,
+						}
+						break
+					} else if err != nil {
+						parseErr = fmt.Errorf("tool call 参数反序列化失败: %w", err)
+					} else {
+						parseErr = errors.New("生成的数据库设计中实体数量为 0")
 					}
-					return &domain.ERDesign{
-						Entities:  args.Entities,
-						Relations: cleanRelations,
-					}, nil
 				}
 			}
 		}
+
+		if finalDesign == nil && concatMsg != nil && concatMsg.Content != "" {
+			if parsed, err := tryParseSchemaJSON(concatMsg.Content); err == nil && len(parsed.Entities) > 0 {
+				finalDesign = parsed
+			} else if err != nil {
+				parseErr = fmt.Errorf("正文 ER 结构反序列化失败: %w", err)
+			} else {
+				parseErr = errors.New("正文提取的模型中实体数量为 0")
+			}
+		}
+
+		if finalDesign != nil {
+			break
+		}
+
+		// 若未解析出有效模型且仍有重试机会，构造包含错误上下文的 Feedback Loop 提示
+		if attempt < maxRetries {
+			errMsg := "输出未包含有效的实体表结构"
+			if parseErr != nil {
+				errMsg = parseErr.Error()
+			}
+			feedbackPrompt := fmt.Sprintf("【物理建模格式纠错】上一轮输出的数据库表设计未能成功通过系统结构化校验，错误原因: %s。请必须输出包含 entities（实体列表、主键、物理列）与 relations（关联关系）的完整有效 JSON 结构，重新提交。", errMsg)
+
+			assistantContent := ""
+			if concatMsg != nil {
+				assistantContent = concatMsg.Content
+			}
+			currentMessages = append(currentMessages,
+				schema.AssistantMessage(assistantContent, nil),
+				schema.UserMessage(feedbackPrompt),
+			)
+		}
 	}
 
-	if concatMsg != nil && concatMsg.Content != "" {
-		if parsed, err := tryParseSchemaJSON(concatMsg.Content); err == nil {
-			return parsed, nil
-		}
+	if finalDesign != nil {
+		return finalDesign, nil
 	}
 
 	return nil, errors.New("大模型未返回有效的物理数据库表结构设计方案")
