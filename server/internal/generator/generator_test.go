@@ -3,6 +3,9 @@ package generator
 import (
 	"go/parser"
 	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -597,6 +600,129 @@ func TestGenerateIntegerPrimaryKeyVariants(t *testing.T) {
 		t.Errorf("system_logs_handler.go should use strconv.ParseInt for int32, got:\n%s", logHandler)
 	}
 	if !strings.Contains(logHandler, "int32(id)") {
-		t.Errorf("system_logs_handler.go should cast to int32(id), got:\n%s", logHandler)
+		t.Errorf("system_logs_handler.go should use strconv.ParseInt for int32, got:\n%s", logHandler)
 	}
 }
+
+func TestGenerateFileTree_E2EBuild(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_user",
+				Name:    "users",
+				Comment: "用户表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_u1",
+						Name:         "id",
+						DBType:       "BIGINT UNSIGNED",
+						CodeType:     "uint64",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_u2",
+						Name:     "username",
+						DBType:   "VARCHAR(64)",
+						CodeType: "string",
+						IsUnique: true,
+					},
+					{
+						ID:       "attr_u3",
+						Name:     "status",
+						DBType:   "TINYINT",
+						CodeType: "int8",
+					},
+				},
+			},
+			{
+				ID:      "ent_article",
+				Name:    "articles",
+				Comment: "文章表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_a1",
+						Name:         "id",
+						DBType:       "BIGINT UNSIGNED",
+						CodeType:     "uint64",
+						IsPrimaryKey: true,
+					},
+					{
+						ID:       "attr_a2",
+						Name:     "title",
+						DBType:   "VARCHAR(128)",
+						CodeType: "string",
+					},
+					{
+						ID:       "attr_a3",
+						Name:     "author_id",
+						DBType:   "BIGINT UNSIGNED",
+						CodeType: "uint64",
+					},
+				},
+			},
+		},
+		Relations: []domain.Relation{
+			{
+				ID:             "rel_user_articles",
+				SourceEntityID: "ent_user",
+				TargetEntityID: "ent_article",
+				RelationTypeID: "one_to_many",
+			},
+		},
+	}
+
+	req := request.GenerateRequest{
+		ProjectID:  "proj_e2e_build",
+		ModuleName: "example.com/e2eapp",
+		Port:       "8080",
+		DBDriver:   "sqlite",
+	}
+
+	files, err := svc.GenerateFileTreeFromDesign(design, req)
+	if err != nil {
+		t.Fatalf("GenerateFileTreeFromDesign returned error: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	for _, f := range files {
+		targetPath := filepath.Join(tmpDir, f.Path)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", targetPath, err)
+		}
+		if err := os.WriteFile(targetPath, []byte(f.Content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", targetPath, err)
+		}
+	}
+
+	// 1. 整理依赖
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = tmpDir
+	tidyOut, err := tidyCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed: %v\nOutput:\n%s", err, string(tidyOut))
+	}
+
+	// 2. 真实编译 cmd/server
+	cmd := exec.Command("go", "build", "-o", "server_bin", "./cmd/server")
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build ./cmd/server failed: %v\nOutput:\n%s", err, string(out))
+	}
+
+	// 3. 真实静态分析 go vet
+	vetCmd := exec.Command("go", "vet", "./...")
+	vetCmd.Dir = tmpDir
+	vetOut, err := vetCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go vet ./... failed: %v\nOutput:\n%s", err, string(vetOut))
+	}
+
+	t.Logf("Successfully compiled and vetted generated project in: %s", tmpDir)
+}
+
