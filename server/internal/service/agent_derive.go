@@ -52,48 +52,91 @@ func (a *AgentService) DerivePhysicalSchema(
 
 	messages := a.buildDerivePhysicalMessages(input)
 
-	stream, err := toolModel.Stream(ctx, messages)
-	if err != nil {
-		return derivePhysicalRuleBased(input), nil
-	}
-	defer stream.Close()
+	const maxRetries = 2
+	currentMessages := messages
 
-	var accumulatedMses []*schema.Message
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 && onThinking != nil {
+			onThinking(fmt.Sprintf("\n[提示] 物理表结构解析未通过，正在携带错误上下文向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
+
+		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
-			return derivePhysicalRuleBased(input), nil
+			if attempt == maxRetries {
+				return derivePhysicalRuleBased(input), nil
+			}
+			continue
 		}
 
-		if chunk.Content != "" && onThinking != nil {
-			onThinking(chunk.Content)
+		var accumulatedMses []*schema.Message
+		var streamErr error
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				streamErr = err
+				break
+			}
+
+			if chunk.Content != "" && onThinking != nil {
+				onThinking(chunk.Content)
+			}
+			accumulatedMses = append(accumulatedMses, chunk)
+		}
+		stream.Close()
+
+		if streamErr != nil {
+			if attempt == maxRetries {
+				return derivePhysicalRuleBased(input), nil
+			}
+			continue
 		}
 
-		accumulatedMses = append(accumulatedMses, chunk)
-	}
+		concatMsg, err := schema.ConcatMessages(accumulatedMses)
+		var parseErr error
 
-	concatMsg, err := schema.ConcatMessages(accumulatedMses)
-	if err == nil && len(concatMsg.ToolCalls) > 0 {
-		for _, tc := range concatMsg.ToolCalls {
-			if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
-				var args tools.ProposeSchemaDesignArgs
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil && len(args.Entities) > 0 {
-					return sanitizeERDesign(args.Entities, args.Relations, input.CurrentERDesign), nil
+		if err == nil && len(concatMsg.ToolCalls) > 0 {
+			for _, tc := range concatMsg.ToolCalls {
+				if tc.Function.Name == tools.SaveERDesignToolName || tc.Function.Name == tools.ProposeSchemaDesignToolName {
+					var args tools.ProposeSchemaDesignArgs
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil && len(args.Entities) > 0 {
+						return sanitizeERDesign(args.Entities, args.Relations, input.CurrentERDesign), nil
+					} else if err != nil {
+						parseErr = fmt.Errorf("参数反序列化失败: %w", err)
+					}
 				}
 			}
 		}
-	}
 
-	if concatMsg != nil && concatMsg.Content != "" {
-		if parsed, err := tryParseSchemaJSON(concatMsg.Content); err == nil && len(parsed.Entities) > 0 {
-			return sanitizeERDesign(parsed.Entities, parsed.Relations, input.CurrentERDesign), nil
+		if concatMsg != nil && concatMsg.Content != "" {
+			if parsed, err := tryParseSchemaJSON(concatMsg.Content); err == nil && len(parsed.Entities) > 0 {
+				return sanitizeERDesign(parsed.Entities, parsed.Relations, input.CurrentERDesign), nil
+			} else if err != nil {
+				parseErr = fmt.Errorf("正文 JSON 提取失败: %w", err)
+			}
+		}
+
+		if attempt < maxRetries {
+			errMsg := "输出未包含合法的实体表结构"
+			if parseErr != nil {
+				errMsg = parseErr.Error()
+			}
+			feedbackPrompt := fmt.Sprintf("【物理推导格式纠错】上一轮输出未能通过系统结构化反序列化校验，错误原因：%s。请严格遵循 ToolCall 参数结构或纯标准 JSON 格式输出包含 entities（带 id 主键）与 relations 的完整物理数据模型，修复后重新提交。", errMsg)
+
+			assistantContent := ""
+			if concatMsg != nil {
+				assistantContent = concatMsg.Content
+			}
+			currentMessages = append(currentMessages,
+				schema.AssistantMessage(assistantContent, nil),
+				schema.UserMessage(feedbackPrompt),
+			)
 		}
 	}
 
+	// 多次自纠错重试仍未通过，优雅降级至本地确定性启发式规则推导
 	return derivePhysicalRuleBased(input), nil
 }
 

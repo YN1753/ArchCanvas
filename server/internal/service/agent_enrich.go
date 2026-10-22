@@ -112,43 +112,68 @@ func (a *AgentService) inferSemanticsWithLLM(
 
 	messages := buildEnrichSemanticsMessages(design)
 
-	stream, err := chatModel.Stream(ctx, messages)
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
+	const maxRetries = 2
+	currentMessages := messages
 
-	var sb strings.Builder
-	for {
-		chunk, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		stream, err := chatModel.Stream(ctx, currentMessages)
 		if err != nil {
-			return nil, err
+			if attempt == maxRetries {
+				return nil, err
+			}
+			continue
 		}
-		if chunk.Content != "" {
-			sb.WriteString(chunk.Content)
-		}
-	}
 
-	raw := sb.String()
-	candidates := extractJSONCandidates(raw)
-	for _, cand := range candidates {
-		var payload inferredSemanticsPayload
-		if err := json.Unmarshal([]byte(cand), &payload); err == nil && len(payload.Entities) > 0 {
-			return &payload, nil
-		}
-		cleaned := CleanJSONSyntax(cand)
-		if cleaned != cand {
-			var pClean inferredSemanticsPayload
-			if err := json.Unmarshal([]byte(cleaned), &pClean); err == nil && len(pClean.Entities) > 0 {
-				return &pClean, nil
+		var sb strings.Builder
+		var streamErr error
+		for {
+			chunk, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				streamErr = err
+				break
+			}
+			if chunk.Content != "" {
+				sb.WriteString(chunk.Content)
 			}
 		}
+		stream.Close()
+
+		if streamErr != nil {
+			if attempt == maxRetries {
+				return nil, streamErr
+			}
+			continue
+		}
+
+		raw := sb.String()
+		candidates := extractJSONCandidates(raw)
+		for _, cand := range candidates {
+			var payload inferredSemanticsPayload
+			if err := json.Unmarshal([]byte(cand), &payload); err == nil && len(payload.Entities) > 0 {
+				return &payload, nil
+			}
+			cleaned := CleanJSONSyntax(cand)
+			if cleaned != cand {
+				var pClean inferredSemanticsPayload
+				if err := json.Unmarshal([]byte(cleaned), &pClean); err == nil && len(pClean.Entities) > 0 {
+					return &pClean, nil
+				}
+			}
+		}
+
+		if attempt < maxRetries {
+			feedbackPrompt := "【语义推导格式纠错】你上一轮输出未能通过系统 JSON 结构化解析，请必须返回包含 entities 与 relations 的纯标准 JSON，确保括号闭合，勿输出无关的解释性文字。"
+			currentMessages = append(currentMessages,
+				schema.AssistantMessage(raw, nil),
+				schema.UserMessage(feedbackPrompt),
+			)
+		}
 	}
 
-	return nil, fmt.Errorf("failed to parse inferred semantics JSON")
+	return nil, fmt.Errorf("failed to parse inferred semantics JSON after retries")
 }
 
 func buildEnrichSemanticsMessages(design domain.ERDesign) []*schema.Message {
