@@ -51,14 +51,10 @@ func (h *GeneratorHandler) Download(c *gin.Context) {
 		return
 	}
 
-	fileName := req.ModuleName
-	if fileName == "" {
-		fileName = "archcanvas-app"
-	}
+	fileName := generator.SafeModuleName(req.ModuleName)
 	if idx := strings.LastIndex(fileName, "/"); idx >= 0 {
 		fileName = fileName[idx+1:]
 	}
-	fileName = strings.TrimSpace(fileName)
 	if fileName == "" {
 		fileName = "archcanvas-app"
 	}
