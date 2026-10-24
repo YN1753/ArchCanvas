@@ -128,6 +128,32 @@ func SafeVarName(raw string) string {
 	return camel
 }
 
+// SafeModuleName 清洗并规范化 Go 模块名 (go.mod 中的 module name)
+// 若为空或纯空白，自动兜底为 "app"；将空格及特殊非法字符替换为连字符，并去除两端非法符号
+func SafeModuleName(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "app"
+	}
+	trimmed = strings.ReplaceAll(trimmed, " ", "-")
+	var b strings.Builder
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' || r == '/' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	res := strings.Trim(b.String(), "-./")
+	for strings.Contains(res, "--") {
+		res = strings.ReplaceAll(res, "--", "-")
+	}
+	if res == "" {
+		return "app"
+	}
+	return res
+}
+
 // ProjectContext 传递给代码生成模板的根上下文
 type ProjectContext struct {
 	ModuleName       string
@@ -347,7 +373,7 @@ func BuildProjectContext(req request.GenerateRequest, design *domain.ERDesign) P
 	}
 
 	return ProjectContext{
-		ModuleName:       req.ModuleName,
+		ModuleName:       SafeModuleName(req.ModuleName),
 		Port:             port,
 		DBDriver:         driver,
 		EnableRedis:      req.EnableRedis,

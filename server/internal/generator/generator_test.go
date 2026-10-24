@@ -998,5 +998,90 @@ func TestGenerateGoldenFiles(t *testing.T) {
 	checkGolden("internal/service/users_service.go", "users_service.golden")
 }
 
+func TestSafeModuleName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", "app"},
+		{"   ", "app"},
+		{"my-app", "my-app"},
+		{"my_app", "my_app"},
+		{"my cool project", "my-cool-project"},
+		{"github.com/org/repo", "github.com/org/repo"},
+		{"  my@project#name!  ", "my-project-name"},
+		{"-.-/---", "app"},
+		{"user/app--v2", "user/app-v2"},
+	}
+
+	for _, tc := range tests {
+		actual := SafeModuleName(tc.input)
+		if actual != tc.expected {
+			t.Errorf("SafeModuleName(%q) = %q, expected %q", tc.input, actual, tc.expected)
+		}
+	}
+}
+
+func TestGenerateFileTree_EmptyOrMessyModuleName(t *testing.T) {
+	svc, err := NewGeneratorService(nil)
+	if err != nil {
+		t.Fatalf("failed to initialize GeneratorService: %v", err)
+	}
+
+	design := &domain.ERDesign{
+		Entities: []domain.Entity{
+			{
+				ID:      "ent_user",
+				Name:    "users",
+				Comment: "用户表",
+				Attributes: []domain.Attribute{
+					{
+						ID:           "attr_1",
+						Name:         "id",
+						DBType:       "BIGINT",
+						CodeType:     "int64",
+						IsPrimaryKey: true,
+					},
+				},
+			},
+		},
+	}
+
+	cases := []struct {
+		rawModule      string
+		expectedModule string
+	}{
+		{"", "app"},
+		{"   ", "app"},
+		{"  my order service!  ", "my-order-service"},
+	}
+
+	for _, c := range cases {
+		req := request.GenerateRequest{
+			ModuleName: c.rawModule,
+			Port:       "8080",
+			DBDriver:   "sqlite",
+		}
+		files, err := svc.GenerateFileTreeFromDesign(design, req)
+		if err != nil {
+			t.Fatalf("GenerateFileTreeFromDesign failed for module %q: %v", c.rawModule, err)
+		}
+
+		var goModContent string
+		for _, f := range files {
+			if f.Path == "go.mod" {
+				goModContent = f.Content
+				break
+			}
+		}
+
+		expectedLine := "module " + c.expectedModule
+		if !strings.Contains(goModContent, expectedLine) {
+			t.Errorf("go.mod for input %q should contain %q, but got:\n%s", c.rawModule, expectedLine, goModContent)
+		}
+	}
+}
+
+
 
 
