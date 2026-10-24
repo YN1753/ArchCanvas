@@ -28,6 +28,11 @@ jobs:
           cd web
           npm ci
 
+      - name: Run TypeScript Typecheck
+        run: |
+          cd web
+          npm run typecheck
+
       - name: Run Frontend Tests
         run: |
           cd web
