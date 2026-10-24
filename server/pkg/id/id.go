@@ -21,3 +21,15 @@ func IsValidUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
 }
+
+// IsValidUUIDv7 严格检查给定字符串是否为符合 RFC 9562 规范的有序 UUIDv7 (Version == 7 且为 RFC 4122/9562 变体)。
+func IsValidUUIDv7(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return false
+	}
+	return u.Version() == 7 && u.Variant() == uuid.RFC4122
+}
