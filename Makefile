@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-server test clean run
+.PHONY: all build build-web build-server test test-race eval check clean run
 
 BINARY_NAME=archcanvas
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0")
@@ -27,6 +27,23 @@ test:
 	@cd web && npm test
 	@echo "==> 运行后端测试..."
 	@cd server && go test ./...
+
+test-race:
+	@echo "==> 执行后端竞态检测 (go test -race)..."
+	@cd server && go test -race ./...
+
+eval:
+	@echo "==> 执行 AI 需求澄清与建模基准评测 (35 场景)..."
+	@cd server && go test -v ./internal/eval -run TestRunBenchmark
+
+check:
+	@echo "==> 执行前端类型检查..."
+	@cd web && npm run typecheck
+	@echo "==> 执行后端静态检查 (go vet)..."
+	@cd server && go vet ./...
+	@echo "==> 执行全量单元测试与竞态检测..."
+	@$(MAKE) test-race
+	@echo "==> 质量检测全部通过！"
 
 run: build
 	@echo "==> 启动 ArchCanvas..."
