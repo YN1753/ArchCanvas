@@ -37,16 +37,25 @@ func (a *AgentService) DerivePhysicalSchema(
 
 	chatModel, err := a.ModelManager.GetModel(ctx, input.ModelProvider, input.ModelName)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		// 回退至内置启发式规则推导
 		return derivePhysicalRuleBased(input), nil
 	}
 
 	toolList, err := tools.BuildDesignTools(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return derivePhysicalRuleBased(input), nil
 	}
 	toolModel, err := chatModel.WithTools(toolList)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return derivePhysicalRuleBased(input), nil
 	}
 
@@ -56,12 +65,18 @@ func (a *AgentService) DerivePhysicalSchema(
 	currentMessages := messages
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if attempt > 0 && onThinking != nil {
 			onThinking(fmt.Sprintf("\n[提示] 物理表结构解析未通过，正在携带错误上下文向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
 
 		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if attempt == maxRetries {
 				return derivePhysicalRuleBased(input), nil
 			}
@@ -71,11 +86,21 @@ func (a *AgentService) DerivePhysicalSchema(
 		var accumulatedMses []*schema.Message
 		var streamErr error
 		for {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				return nil, ctx.Err()
+			default:
+			}
 			chunk, err := stream.Recv()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
+				stream.Close()
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				streamErr = err
 				break
 			}
@@ -88,6 +113,9 @@ func (a *AgentService) DerivePhysicalSchema(
 		stream.Close()
 
 		if streamErr != nil {
+			if errors.Is(streamErr, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if attempt == maxRetries {
 				return derivePhysicalRuleBased(input), nil
 			}

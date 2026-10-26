@@ -263,23 +263,38 @@ func (a *AgentService) AnalyzeRequirement(
 	currentMessages := messages
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if attempt > 0 && onThinking != nil {
 			onThinking(fmt.Sprintf("\n[提示] 概念模型结构化解析未通过，正在携带错误上下文向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
 
 		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, err
 		}
 
 		var accumulatedMses []*schema.Message
 		for {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				return nil, ctx.Err()
+			default:
+			}
 			chunk, err := stream.Recv()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
 				stream.Close()
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, err
 			}
 
@@ -390,23 +405,38 @@ func (a *AgentService) DesignSchema(
 	currentMessages := messages
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if attempt > 0 && onThinking != nil {
 			onThinking(fmt.Sprintf("\n[提示] 数据库物理模型反序列化校验未通过，正在携带错误信息向大模型发起第 %d 次纠错重试…\n", attempt))
 		}
 
 		stream, err := toolModel.Stream(ctx, currentMessages)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, err
 		}
 
 		var accumulatedMses []*schema.Message
 		for {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				return nil, ctx.Err()
+			default:
+			}
 			chunk, err := stream.Recv()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
 				stream.Close()
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, err
 			}
 

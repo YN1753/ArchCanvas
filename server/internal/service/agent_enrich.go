@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -73,7 +74,13 @@ func (a *AgentService) EnrichSemantics(
 
 	// 1. 尝试使用轻量 LLM 进行全图语义推导
 	enrichedPayload, err := a.inferSemanticsWithLLM(ctx, req, designCopy)
-	if err != nil || enrichedPayload == nil || len(enrichedPayload.Entities) == 0 {
+	if err != nil && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
+		return nil, ctx.Err()
+	}
+	if enrichedPayload == nil || len(enrichedPayload.Entities) == 0 {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		// LLM 调用失败或不可用时，优雅降级至启发式规则语义推导
 		enrichedPayload = inferSemanticsRuleBased(designCopy)
 	}
@@ -116,8 +123,14 @@ func (a *AgentService) inferSemanticsWithLLM(
 	currentMessages := messages
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		stream, err := chatModel.Stream(ctx, currentMessages)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if attempt == maxRetries {
 				return nil, err
 			}
@@ -127,11 +140,21 @@ func (a *AgentService) inferSemanticsWithLLM(
 		var sb strings.Builder
 		var streamErr error
 		for {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				return nil, ctx.Err()
+			default:
+			}
 			chunk, err := stream.Recv()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
+				stream.Close()
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				streamErr = err
 				break
 			}
@@ -142,6 +165,9 @@ func (a *AgentService) inferSemanticsWithLLM(
 		stream.Close()
 
 		if streamErr != nil {
+			if errors.Is(streamErr, context.Canceled) || ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if attempt == maxRetries {
 				return nil, streamErr
 			}

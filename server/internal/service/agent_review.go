@@ -43,11 +43,19 @@ func (a *AgentService) ReviewPhysicalSchema(
 				defer stream.Close()
 
 				for {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					default:
+					}
 					chunk, err := stream.Recv()
 					if errors.Is(err, io.EOF) {
 						break
 					}
 					if err != nil {
+						if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+							return nil, ctx.Err()
+						}
 						break
 					}
 
