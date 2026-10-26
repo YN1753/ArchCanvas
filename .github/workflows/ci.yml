@@ -66,6 +66,11 @@ jobs:
           cd server
           go test -v -race ./...
 
+      - name: Run AI Quality & Architecture Benchmark Gate (35 Scenarios)
+        run: |
+          cd server
+          go test -v ./internal/eval -run TestRunBenchmarkSuite
+
       - name: Verify Server Build
         run: |
           cd server

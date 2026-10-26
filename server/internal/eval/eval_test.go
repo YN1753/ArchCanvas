@@ -177,6 +177,25 @@ func TestRunBenchmarkSuite(t *testing.T) {
 		t.Fatalf("failed to write benchmark.md: %v", err)
 	}
 	t.Logf("Benchmark report successfully saved to %s", benchmarkFile)
+
+	// 5. 质量回归阻断门禁校验 (AI Benchmark Regression Gate)
+	// 任何导致指标劣化的变更都会直接判定测试失败并阻断 CI
+	if report.FalseNegativeRate > 0.0 {
+		t.Errorf("[Regression Gate Failed] 需求澄清漏判率超过 0%% 基线: 实际为 %.2f%% (%d 处漏判)",
+			report.FalseNegativeRate, report.FalseNegativeCount)
+	}
+	if report.FalsePositiveRate > 5.0 {
+		t.Errorf("[Regression Gate Failed] 需求澄清误判率超过 5%% 容忍阈值: 实际为 %.2f%% (%d 处误判)",
+			report.FalsePositiveRate, report.FalsePositiveCount)
+	}
+	if report.RulePassRate < 100.0 {
+		t.Errorf("[Regression Gate Failed] 物理建模规则通过率低于 100%% 基线: 实际为 %.2f%%",
+			report.RulePassRate)
+	}
+	if report.BuildSuccessRate < 100.0 {
+		t.Errorf("[Regression Gate Failed] 端到端生成项目编译通过率低于 100%% 基线: 实际为 %.2f%%",
+			report.BuildSuccessRate)
+	}
 }
 
 // 辅助构造满足业务场景的规范化物理设计
