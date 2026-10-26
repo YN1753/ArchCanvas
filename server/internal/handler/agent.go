@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"archcanvas/internal/middleware"
 	"archcanvas/internal/service"
 	"archcanvas/pkg/response"
 	"archcanvas/request"
 	"net/http"
 	"strings"
 
+	"github.com/gin-contrib/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -136,10 +138,14 @@ func (a *AgentHandler) EnrichSemantics(c *gin.Context) {
 
 // streamSSE 统一的 SSE 事件流写入与刷写辅助函数
 func streamSSE(c *gin.Context, eventCh <-chan service.StreamEvent) {
+	traceID := middleware.GetTraceID(c.Request.Context())
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	if traceID != "" {
+		c.Header(middleware.HeaderXRequestID, traceID)
+	}
 	c.Status(http.StatusOK)
 
 	flusher, _ := c.Writer.(http.Flusher)
@@ -159,7 +165,11 @@ func streamSSE(c *gin.Context, eventCh <-chan service.StreamEvent) {
 			if !ok {
 				return
 			}
-			c.SSEvent(string(event.Type), event.Data)
+			c.Render(-1, sse.Event{
+				Id:    traceID,
+				Event: string(event.Type),
+				Data:  event.Data,
+			})
 			flush()
 		}
 	}

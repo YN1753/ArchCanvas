@@ -12,6 +12,7 @@ import (
 func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil) // 显式禁用默认全信任反向代理，防范客户端 IP 伪造
+	r.Use(middleware.TraceMiddleware())
 	r.Use(gin.Logger())
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS())
