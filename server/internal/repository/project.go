@@ -127,11 +127,9 @@ func (r *ProjectRepository) Update(ctx context.Context, id, name, description st
 	}
 
 	updates := map[string]any{
-		"name":       name,
-		"updated_at": time.Now(),
-	}
-	if description != "" {
-		updates["description"] = description
+		"name":        name,
+		"description": description,
+		"updated_at":  time.Now(),
 	}
 
 	if err := r.db.WithContext(ctx).Model(&project).Updates(updates).Error; err != nil {
