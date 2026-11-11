@@ -15,6 +15,10 @@ func Recovery() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if gin.Mode() == gin.ReleaseMode {
+			response.Fail(c, http.StatusInternalServerError, "服务器内部发生非预期错误", nil)
+			return
+		}
 		errStr := fmt.Sprintf("%v", recovered)
 		response.Fail(c, http.StatusInternalServerError, "服务器内部发生非预期错误: "+errStr, nil)
 	})

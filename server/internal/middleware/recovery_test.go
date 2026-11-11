@@ -57,4 +57,20 @@ func TestRecoveryMiddleware(t *testing.T) {
 	if resp.Message != expectedPrefix {
 		t.Errorf("expected message %q, got %q", expectedPrefix, resp.Message)
 	}
+
+	// 3. 测试 ReleaseMode 下脱敏内部 Panic 详情
+	gin.SetMode(gin.ReleaseMode)
+	defer gin.SetMode(gin.TestMode)
+
+	wRelease := httptest.NewRecorder()
+	reqRelease, _ := http.NewRequest("GET", "/panic-route", nil)
+	r.ServeHTTP(wRelease, reqRelease)
+
+	var respRelease response.Response
+	if err := json.Unmarshal(wRelease.Body.Bytes(), &respRelease); err != nil {
+		t.Fatalf("failed to unmarshal release panic response: %v", err)
+	}
+	if respRelease.Message != "服务器内部发生非预期错误" {
+		t.Errorf("expected sanitized message in ReleaseMode, got %q", respRelease.Message)
+	}
 }
