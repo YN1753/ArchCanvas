@@ -455,7 +455,7 @@ func derivePhysicalRuleBased(input DerivePhysicalInput) *domain.ERDesign {
 		switch rel.Cardinality {
 		case domain.CardOneToMany:
 			// 1:N 在多端 (tgt) 注入外键列 src_id
-			fkName := fmt.Sprintf("%s_id", srcEnt.Name)
+			fkName := fmt.Sprintf("%s_id", toSingularName(srcEnt.Name))
 			hasFK := false
 			for _, attr := range tgtEnt.Attributes {
 				if attr.Name == fkName {
@@ -499,7 +499,7 @@ func derivePhysicalRuleBased(input DerivePhysicalInput) *domain.ERDesign {
 
 		case domain.CardOneToOne:
 			// 1:1 在 tgt 注入外键且设为唯一索引
-			fkName := fmt.Sprintf("%s_id", srcEnt.Name)
+			fkName := fmt.Sprintf("%s_id", toSingularName(srcEnt.Name))
 			hasFK := false
 			for _, attr := range tgtEnt.Attributes {
 				if attr.Name == fkName {
@@ -544,7 +544,7 @@ func derivePhysicalRuleBased(input DerivePhysicalInput) *domain.ERDesign {
 
 		case domain.CardManyToMany:
 			// M:N 解耦为中间关联表
-			junctionName := fmt.Sprintf("%s_%s", srcEnt.Name, tgtEnt.Name)
+			junctionName := fmt.Sprintf("%s_%s", toSingularName(srcEnt.Name), tgtEnt.Name)
 			junctionID := id.NewUUIDv7()
 
 			var jPos *domain.Position
@@ -555,8 +555,8 @@ func derivePhysicalRuleBased(input DerivePhysicalInput) *domain.ERDesign {
 				}
 			}
 
-			srcFK := fmt.Sprintf("%s_id", srcEnt.Name)
-			tgtFK := fmt.Sprintf("%s_id", tgtEnt.Name)
+			srcFK := fmt.Sprintf("%s_id", toSingularName(srcEnt.Name))
+			tgtFK := fmt.Sprintf("%s_id", toSingularName(tgtEnt.Name))
 
 			idDBType := "BIGINT UNSIGNED"
 			idCodeType := "uint64"
@@ -570,11 +570,13 @@ func derivePhysicalRuleBased(input DerivePhysicalInput) *domain.ERDesign {
 				idCodeType = "int64"
 			}
 
+			isJunc := true
 			junctionEntity := domain.Entity{
-				ID:       junctionID,
-				Name:     junctionName,
-				Comment:  fmt.Sprintf("%s与%s的关联关系", srcEnt.Comment, tgtEnt.Comment),
-				Position: jPos,
+				ID:              junctionID,
+				Name:            junctionName,
+				Comment:         fmt.Sprintf("%s与%s的关联关系", srcEnt.Comment, tgtEnt.Comment),
+				IsJunctionTable: &isJunc,
+				Position:        jPos,
 				Attributes: []domain.Attribute{
 					{
 						ID:           id.NewUUIDv7(),
@@ -721,4 +723,19 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// toSingularName 将英文复数表名转换为单数形式（如 users -> user, categories -> category），用于生成规范的外键与中间表前缀
+func toSingularName(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasSuffix(lower, "ies") && len(lower) > 3 {
+		return lower[:len(lower)-3] + "y"
+	}
+	if strings.HasSuffix(lower, "ses") || strings.HasSuffix(lower, "xes") || strings.HasSuffix(lower, "zes") || strings.HasSuffix(lower, "ches") || strings.HasSuffix(lower, "shes") {
+		return lower[:len(lower)-2]
+	}
+	if strings.HasSuffix(lower, "s") && !strings.HasSuffix(lower, "ss") && !strings.HasSuffix(lower, "us") && !strings.HasSuffix(lower, "is") && len(lower) > 1 {
+		return lower[:len(lower)-1]
+	}
+	return lower
 }
