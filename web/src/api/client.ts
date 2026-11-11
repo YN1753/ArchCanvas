@@ -450,15 +450,6 @@ export const api = {
       }),
     }),
 
-  /**
-   * 自然语言 → ER 结构变更。
-   */
-  analyzeERDesign: (projectID: string, input: string, apply = true) =>
-    request<ERDesignAnalysisResult>('/agent/er-design/analyze', {
-      method: 'POST',
-      body: JSON.stringify({ project_id: projectID, input, apply }),
-    }),
-
   chatStream,
   proposeConceptsStream,
   derivePhysicalStream,
