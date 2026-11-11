@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"archcanvas/internal/domain"
 	"archcanvas/internal/model"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -152,4 +154,70 @@ func (r *ProjectRepository) SaveConceptualDesign(ctx context.Context, id string,
 			"conceptual_design": conceptualDesignJSON,
 			"updated_at":        time.Now(),
 		}).Error
+}
+
+func (r *ProjectRepository) GetAIContext(ctx context.Context, projectID string) (*domain.AIContextContent, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("project repository database is nil")
+	}
+	if projectID == "" {
+		return nil, errors.New("project id is required")
+	}
+	var rec model.AIContext
+	if err := r.db.WithContext(ctx).Where("project_id = ?", projectID).First(&rec).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(rec.Content) == 0 {
+		return nil, nil
+	}
+	var content domain.AIContextContent
+	if err := json.Unmarshal(rec.Content, &content); err != nil {
+		return nil, err
+	}
+	return &content, nil
+}
+
+func (r *ProjectRepository) UpsertAIContext(ctx context.Context, projectID string, content domain.AIContextContent) error {
+	if r == nil || r.db == nil {
+		return errors.New("project repository database is nil")
+	}
+	if projectID == "" {
+		return errors.New("project id is required")
+	}
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	var existing model.AIContext
+	err = r.db.WithContext(ctx).Where("project_id = ?", projectID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		rec := &model.AIContext{
+			ID:        id.NewUUIDv7(),
+			ProjectID: projectID,
+			Content:   raw,
+			Version:   "v1",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		return r.db.WithContext(ctx).Create(rec).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).
+		Model(&existing).
+		Updates(map[string]any{
+			"content":    raw,
+			"updated_at": time.Now(),
+		}).Error
+}
+
+func (r *ProjectRepository) DeleteAIContext(ctx context.Context, projectID string) error {
+	if r == nil || r.db == nil || projectID == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("project_id = ?", projectID).Delete(&model.AIContext{}).Error
 }

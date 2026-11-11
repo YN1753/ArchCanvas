@@ -39,9 +39,15 @@ func (a *AgentService) ProposeConcepts(
 		var convID string
 
 		var currentConceptualDesign *domain.ConceptualDesign
+		var storedConstraints []string
+		var storedDecisions []string
 
 		// 1. 获取项目已有画布设计及历史会话上下文
 		if a.ProjectService != nil && req.ProjectID != "" {
+			if aiCtx, err := a.ProjectService.GetAIContext(ctx, req.ProjectID); err == nil && aiCtx != nil {
+				storedConstraints = aiCtx.Constraints
+				storedDecisions = aiCtx.Decisions
+			}
 			cd, err := a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
 			if err == nil && cd != nil && len(cd.Concepts) > 0 {
 				currentConceptualDesign = cd
@@ -89,6 +95,8 @@ func (a *AgentService) ProposeConcepts(
 			ProjectID:               req.ProjectID,
 			Message:                 req.Input,
 			HistoryMessages:         historyMessages,
+			Constraints:             storedConstraints,
+			Decisions:               storedDecisions,
 			CurrentConceptualDesign: currentConceptualDesign,
 			CurrentERDesign:         currentDesign,
 			ModelProvider:           req.ModelProvider,
@@ -109,6 +117,16 @@ func (a *AgentService) ProposeConcepts(
 				"error":    err.Error(),
 			})
 			return
+		}
+
+		if a.ProjectService != nil && req.ProjectID != "" {
+			_ = a.ProjectService.MergeAndSaveAIContext(
+				ctx,
+				req.ProjectID,
+				reqOutput.Summary,
+				reqOutput.Assumptions,
+				reqOutput.NegativeConstraints,
+			)
 		}
 
 		// 组装并平滑合并业务概念聚合（保留已有概念坐标与稳定 ID）

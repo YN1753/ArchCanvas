@@ -58,9 +58,15 @@ func (a *AgentService) Chat(
 		var convID string
 
 		var currentConceptualDesign *domain.ConceptualDesign
+		var storedConstraints []string
+		var storedDecisions []string
 
 		// 1. 获取项目已有画布设计及历史会话上下文
 		if a.ProjectService != nil && req.ProjectID != "" {
+			if aiCtx, err := a.ProjectService.GetAIContext(ctx, req.ProjectID); err == nil && aiCtx != nil {
+				storedConstraints = aiCtx.Constraints
+				storedDecisions = aiCtx.Decisions
+			}
 			cd, err := a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
 			if err == nil && cd != nil && len(cd.Concepts) > 0 {
 				currentConceptualDesign = cd
@@ -107,6 +113,8 @@ func (a *AgentService) Chat(
 			ProjectID:               req.ProjectID,
 			Message:                 req.Input,
 			HistoryMessages:         historyMessages,
+			Constraints:             storedConstraints,
+			Decisions:               storedDecisions,
 			CurrentConceptualDesign: currentConceptualDesign,
 			CurrentERDesign:         currentDesign,
 			ModelProvider:           req.ModelProvider,
@@ -127,6 +135,16 @@ func (a *AgentService) Chat(
 				"error":    err.Error(),
 			})
 			return
+		}
+
+		if a.ProjectService != nil && req.ProjectID != "" {
+			_ = a.ProjectService.MergeAndSaveAIContext(
+				ctx,
+				req.ProjectID,
+				reqOutput.Summary,
+				reqOutput.Assumptions,
+				reqOutput.NegativeConstraints,
+			)
 		}
 
 		if reqOutput.NeedClarification {

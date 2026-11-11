@@ -185,8 +185,60 @@ func (s *ProjectService) ListProjectMessages(ctx context.Context, projectID stri
 }
 
 func (s *ProjectService) ClearProjectMessages(ctx context.Context, projectID string) error {
+	if s.ProjectRepo != nil {
+		_ = s.ProjectRepo.DeleteAIContext(ctx, projectID)
+	}
 	if s.MessageRepo == nil {
 		return nil
 	}
 	return s.MessageRepo.ClearMessagesByProject(ctx, projectID)
+}
+
+func (s *ProjectService) GetAIContext(ctx context.Context, projectID string) (*domain.AIContextContent, error) {
+	if s.ProjectRepo == nil || projectID == "" {
+		return nil, nil
+	}
+	return s.ProjectRepo.GetAIContext(ctx, projectID)
+}
+
+func (s *ProjectService) MergeAndSaveAIContext(
+	ctx context.Context,
+	projectID string,
+	goal string,
+	decisions []string,
+	constraints []string,
+) error {
+	if s.ProjectRepo == nil || projectID == "" {
+		return nil
+	}
+	existing, _ := s.ProjectRepo.GetAIContext(ctx, projectID)
+	var merged domain.AIContextContent
+	if existing != nil {
+		merged = *existing
+	}
+	if goal != "" {
+		merged.Goal = goal
+	}
+	merged.Decisions = mergeUniqueStrings(merged.Decisions, decisions, 20)
+	merged.Constraints = mergeUniqueStrings(merged.Constraints, constraints, 20)
+	return s.ProjectRepo.UpsertAIContext(ctx, projectID, merged)
+}
+
+func mergeUniqueStrings(base, incoming []string, maxItems int) []string {
+	seen := make(map[string]struct{}, len(base)+len(incoming))
+	out := make([]string, 0, len(base)+len(incoming))
+	for _, item := range append(base, incoming...) {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	if maxItems > 0 && len(out) > maxItems {
+		out = out[len(out)-maxItems:]
+	}
+	return out
 }

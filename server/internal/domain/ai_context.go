@@ -3,10 +3,10 @@ package domain
 import "time"
 
 type AIContext struct {
-	ID        string           `gorm:"primaryKey" json:"id"`
-	ProjectID string           `gorm:"not null;uniqueIndex" json:"project_id"`
+	ID        string           `json:"id"`
+	ProjectID string           `json:"project_id"`
 	Content   AIContextContent `json:"content"`
-	Version   string           `gorm:"type:text" json:"version"`
+	Version   string           `json:"version"`
 	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`
 }
