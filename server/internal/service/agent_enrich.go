@@ -88,8 +88,13 @@ func (a *AgentService) EnrichSemantics(
 	// 2. 将推导出的语义合并回物理表 ERDesign
 	applySemanticsToDesign(&designCopy, enrichedPayload)
 
-	// 3. 构建/同步概念数据模型 (ConceptualDesign / 陈氏图)
-	conceptualDesign := buildConceptualDesignFromEnriched(designCopy, enrichedPayload)
+	// 3. 构建/同步概念数据模型 (ConceptualDesign / 陈氏图)，并保留已有概念节点坐标
+	rawConceptualDesign := buildConceptualDesignFromEnriched(designCopy, enrichedPayload)
+	var existingConceptual *domain.ConceptualDesign
+	if a.ProjectService != nil && req.ProjectID != "" {
+		existingConceptual, _ = a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
+	}
+	conceptualDesign := mergeConceptualDesign(existingConceptual, rawConceptualDesign)
 
 	// 4. 若有 project_id，持久化到服务端数据库
 	if a.ProjectService != nil && req.ProjectID != "" {
@@ -330,16 +335,119 @@ func sanitizeConceptName(name string) string {
 	return strings.TrimSpace(name)
 }
 
+var technicalAuditFields = map[string]bool{
+	"created_at": true, "create_time": true, "created_time": true, "create_at": true,
+	"gmt_create": true, "created_date": true, "created_by": true, "creator": true,
+	"updated_at": true, "update_time": true, "updated_time": true, "update_at": true,
+	"gmt_modified": true, "updated_date": true, "updated_by": true, "updater": true,
+	"deleted_at": true, "delete_time": true, "deleted_time": true, "delete_at": true,
+	"is_deleted": true, "deleted": true, "del_flag": true, "version": true,
+	"lock_version": true, "revision": true,
+}
+
+func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Entity) (bool, *domain.Entity, *domain.Entity) {
+	if entity.IsJunctionTable != nil && !*entity.IsJunctionTable {
+		return false, nil, nil
+	}
+
+	var matchedParents []domain.Entity
+	matchedFkIDs := make(map[string]bool)
+
+	for _, attr := range entity.Attributes {
+		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
+		if lowerName == "id" || (!strings.HasSuffix(lowerName, "_id") && !strings.HasSuffix(lowerName, "id")) {
+			continue
+		}
+		base := strings.TrimSuffix(strings.TrimSuffix(lowerName, "_id"), "id")
+		if base == "" {
+			continue
+		}
+		for _, cand := range allEntities {
+			if cand.ID == entity.ID {
+				continue
+			}
+			cName := strings.ToLower(cand.Name)
+			cSingular := strings.TrimSuffix(cName, "s")
+			if cName == base || cSingular == base || strings.Contains(cName, base) || strings.Contains(base, cSingular) {
+				already := false
+				for _, p := range matchedParents {
+					if p.ID == cand.ID {
+						already = true
+						break
+					}
+				}
+				if !already {
+					matchedParents = append(matchedParents, cand)
+					matchedFkIDs[attr.ID] = true
+					break
+				}
+			}
+		}
+	}
+
+	if len(matchedParents) < 2 {
+		return false, nil, nil
+	}
+
+	if entity.IsJunctionTable != nil && *entity.IsJunctionTable {
+		return true, &matchedParents[0], &matchedParents[1]
+	}
+
+	if len(entity.Attributes) > 6 {
+		return false, nil, nil
+	}
+
+	bizAttrCount := 0
+	for _, attr := range entity.Attributes {
+		if matchedFkIDs[attr.ID] {
+			continue
+		}
+		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
+		if lowerName == "id" || (attr.IsPrimaryKey && strings.HasSuffix(lowerName, "id")) {
+			continue
+		}
+		if technicalAuditFields[lowerName] {
+			continue
+		}
+		bizAttrCount++
+	}
+
+	if bizAttrCount > 1 {
+		return false, nil, nil
+	}
+	return true, &matchedParents[0], &matchedParents[1]
+}
+
 func buildConceptualDesignFromEnriched(
 	design domain.ERDesign,
 	payload *inferredSemanticsPayload,
 ) domain.ConceptualDesign {
 	concepts := make([]domain.BusinessConcept, 0, len(design.Entities))
 	entityNameMap := make(map[string]string)
+	junctionEntityIDs := make(map[string]bool)
+	relations := make([]domain.ConceptRelation, 0)
 
 	for _, e := range design.Entities {
 		entityNameMap[e.ID] = e.Name
 		entityNameMap[strings.ToLower(e.Name)] = e.Name
+	}
+
+	for _, e := range design.Entities {
+		if isJunc, leftEnt, rightEnt := detectPhysicalJunctionTable(e, design.Entities); isJunc && leftEnt != nil && rightEnt != nil {
+			junctionEntityIDs[e.ID] = true
+			relName := e.Comment
+			if relName == "" {
+				relName = "关联"
+			}
+			relations = append(relations, domain.ConceptRelation{
+				ID:            "junction_" + e.ID,
+				Name:          relName,
+				SourceConcept: leftEnt.Name,
+				TargetConcept: rightEnt.Name,
+				Cardinality:   "many_to_many",
+			})
+			continue
+		}
 
 		displayName := e.Comment
 		if displayName == "" {
@@ -348,6 +456,10 @@ func buildConceptualDesignFromEnriched(
 
 		attrs := make([]domain.ConceptAttribute, 0, len(e.Attributes))
 		for _, a := range e.Attributes {
+			lowerAttr := strings.ToLower(strings.TrimSpace(a.Name))
+			if technicalAuditFields[lowerAttr] {
+				continue
+			}
 			attrDisplay := a.Comment
 			if attrDisplay == "" {
 				attrDisplay = capitalize(a.Name)
@@ -366,11 +478,11 @@ func buildConceptualDesignFromEnriched(
 			ID:          e.ID,
 			Name:        e.Name,
 			DisplayName: displayName,
+			Position:    e.Position,
 			Attributes:  attrs,
 		})
 	}
 
-	relations := make([]domain.ConceptRelation, 0)
 	verbMap := make(map[string]string)
 	if payload != nil {
 		for _, r := range payload.Relations {
@@ -380,6 +492,9 @@ func buildConceptualDesignFromEnriched(
 	}
 
 	for _, r := range design.Relations {
+		if junctionEntityIDs[r.SourceEntityID] || junctionEntityIDs[r.TargetEntityID] {
+			continue
+		}
 		src := entityNameMap[r.SourceEntityID]
 		if src == "" {
 			src = r.SourceEntityID
