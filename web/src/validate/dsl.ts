@@ -18,29 +18,41 @@ const positionSchema = z.object({
   y: z.number(),
 })
 
+const indexDefinitionSchema = z.object({
+  name: z.string().min(1),
+  columns: z.array(z.string().min(1)),
+  is_unique: z.boolean().optional(),
+  comment: z.string().optional(),
+})
+
 const attributeSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  comment: z.string().optional(),
   db_type: z.string().min(1),
-  code_type: z.string(),
+  code_type: z.string().default(''),
   is_primary_key: z.boolean(),
   is_nullable: z.boolean(),
   is_unique: z.boolean(),
   default_value: z.unknown().optional(),
-  description: z.string(),
+  description: z.string().default(''),
 })
 
 const entitySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  comment: z.string().optional(),
   position: positionSchema.optional(),
   attributes: z.array(attributeSchema),
+  indexes: z.array(indexDefinitionSchema).optional(),
+  is_junction_table: z.boolean().optional(),
 })
 
 const relationSchema = z.object({
   id: z.string().min(1),
   source_entity_id: z.string().min(1),
   target_entity_id: z.string().min(1),
+  relation_type_id: z.string().optional(),
   cardinality: cardinalitySchema,
 })
 
