@@ -242,7 +242,10 @@ async function streamPost<T = any>(
       body: JSON.stringify(params),
       signal,
     })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === 'AbortError' || signal?.aborted) {
+      return
+    }
     const error = new ApiError(0, `无法连接后端服务（${String(err)}）`)
     callbacks.onError?.(error)
     throw error
@@ -329,12 +332,13 @@ async function streamPost<T = any>(
     }
     dispatchEvent()
   } catch (err: any) {
-    if (err.name === 'AbortError') {
+    if (err?.name === 'AbortError' || signal?.aborted) {
       return
     }
     callbacks.onError?.(err)
     throw err
-  } finally {
+  }
+  if (!signal?.aborted) {
     callbacks.onDone?.()
   }
 }

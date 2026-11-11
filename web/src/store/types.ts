@@ -170,6 +170,7 @@ export interface AiChatSlice {
   setReviewReport: (report: SchemaReviewReport | null) => void
 
   runAI: (input: string) => Promise<void>
+  stopAI: () => void
   proposeConcepts: (input: string) => Promise<void>
   derivePhysical: (dialect?: DatabaseDialect) => Promise<void>
   reviewSchema: (dialect?: DatabaseDialect) => Promise<void>

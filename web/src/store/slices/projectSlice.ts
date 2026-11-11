@@ -167,6 +167,9 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
 
   async selectProject(id) {
     if (get().project?.id === id) return
+    if (get().aiRunning) {
+      get().stopAI()
+    }
     // 1. 切换前先尝试将当前项目未落库的防抖变更立即保存
     if (get().project) {
       try {
@@ -248,6 +251,9 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
   async deleteProject(id) {
     // 若当前正在删除活动项目，立即清理其历史与防抖定时器，防止已删除项目异步回写
     if (get().project?.id === id) {
+      if (get().aiRunning) {
+        get().stopAI()
+      }
       get().resetHistory()
     }
     try {

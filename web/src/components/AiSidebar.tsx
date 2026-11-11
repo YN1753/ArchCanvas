@@ -419,6 +419,7 @@ export default function AiSidebar() {
   const aiError = useStore((state) => state.aiError)
   const aiResult = useStore((state) => state.aiResult)
   const proposeConcepts = useStore((state) => state.proposeConcepts)
+  const stopAI = useStore((state) => state.stopAI)
   const dismissAiResult = useStore((state) => state.dismissAiResult)
   const setAgentPhase = useStore((state) => state.setAgentPhase)
   const conceptualDesign = useStore((state) => state.conceptualDesign)
@@ -617,14 +618,23 @@ export default function AiSidebar() {
             {/* 实时推理状态卡片 (当 AI 正在运行且尚未落库完成时展示) */}
             {aiRunning && (
               <div className="rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#df4e3e] opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#df4e3e]" />
-                  </span>
-                  <span className="text-xs font-bold text-stone-800">
-                    {aiStatus || 'AI 架构师正在分析需求并落盘设计…'}
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#df4e3e] opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#df4e3e]" />
+                    </span>
+                    <span className="text-xs font-bold text-stone-800 truncate">
+                      {aiStatus || 'AI 架构师正在分析需求并落盘设计…'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => stopAI()}
+                    className="shrink-0 rounded-lg border border-stone-300 bg-stone-50 px-2 py-0.5 text-[10px] font-bold text-stone-600 hover:border-[#df4e3e] hover:bg-[#fdf0ee] hover:text-[#df4e3e] transition cursor-pointer"
+                  >
+                    停止
+                  </button>
                 </div>
 
                 {aiThinking && <ThinkingBlock thinking={aiThinking} defaultOpen={false} isStreaming={true} />}
@@ -709,21 +719,28 @@ export default function AiSidebar() {
               <div className="flex items-center gap-1.5">
                 <ModelSelector compact />
 
-                <button
-                  type="button"
-                  onClick={() => void submit()}
-                  disabled={!hasProject || aiRunning || input.trim().length === 0}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] text-white shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#c84031] disabled:opacity-40 disabled:cursor-not-allowed active:translate-x-0.5 active:translate-y-0.5 transition shrink-0"
-                  title="发送需求 (Enter)"
-                >
-                  {aiRunning ? (
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  ) : (
+                {aiRunning ? (
+                  <button
+                    type="button"
+                    onClick={() => stopAI()}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#1f1f1f] text-white shadow-[1px_1px_0px_#df4e3e] hover:bg-[#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition shrink-0 cursor-pointer"
+                    title="停止生成"
+                  >
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-white" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void submit()}
+                    disabled={!hasProject || input.trim().length === 0}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] text-white shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#c84031] disabled:opacity-40 disabled:cursor-not-allowed active:translate-x-0.5 active:translate-y-0.5 transition shrink-0"
+                    title="发送需求 (Enter)"
+                  >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
                     </svg>
-                  )}
-                </button>
+                  </button>
+                )}
               </div>
             </div>
           </div>

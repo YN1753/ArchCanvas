@@ -6,7 +6,18 @@ import type { DatabaseDialect, ERDesign, SchemaReviewReport } from '../../types/
 import type { AiChatSlice, Store } from '../types'
 import { errorMessage } from '../utils'
 
-export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set, get) => ({
+export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set, get) => {
+  let activeAbortController: AbortController | null = null
+
+  const resetAbortController = (): AbortController => {
+    if (activeAbortController) {
+      activeAbortController.abort()
+    }
+    activeAbortController = new AbortController()
+    return activeAbortController
+  }
+
+  return {
   aiRunning: false,
   aiThinking: '',
   aiStatus: '',
@@ -77,11 +88,30 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     }
   },
 
+  stopAI() {
+    if (activeAbortController) {
+      activeAbortController.abort()
+      activeAbortController = null
+    }
+    set((state) => ({
+      aiRunning: false,
+      aiStatus: '',
+      agentPhase:
+        state.agentPhase === 'deriving_physical'
+          ? 'concept_ready'
+          : state.agentPhase === 'reviewing'
+            ? 'physical_ready'
+            : state.agentPhase,
+      toast: { kind: 'info', text: '已停止当前 AI 生成任务' },
+    }))
+  },
+
   async runAI(input) {
     const { project, selectedModel } = get()
     if (!project) {
       return
     }
+    const controller = resetAbortController()
 
     const tempUserMsg: ProjectMessage = {
       id: `temp_${Date.now()}`,
@@ -256,9 +286,12 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
             }
           },
         },
+        controller.signal,
       )
     } catch (error) {
-      set({ aiRunning: false, aiError: errorMessage(error) })
+      if (!controller.signal.aborted) {
+        set({ aiRunning: false, aiError: errorMessage(error) })
+      }
     }
   },
 
@@ -267,6 +300,7 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     if (!project) return
     const trimmed = input.trim()
     if (!trimmed) return
+    const controller = resetAbortController()
 
     const tempUserMsg: ProjectMessage = {
       id: `temp_${Date.now()}`,
@@ -361,15 +395,19 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
             }
           },
         },
+        controller.signal,
       )
     } catch (error) {
-      set({ aiRunning: false, aiError: errorMessage(error) })
+      if (!controller.signal.aborted) {
+        set({ aiRunning: false, aiError: errorMessage(error) })
+      }
     }
   },
 
   async derivePhysical(dialect?: DatabaseDialect) {
     const { project, selectedModel, conceptualDesign } = get()
     if (!project) return
+    const controller = resetAbortController()
     const targetDialect = dialect || get().targetDialect || 'mysql'
     set({
       targetDialect,
@@ -473,15 +511,19 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
             }
           },
         },
+        controller.signal,
       )
     } catch (error) {
-      set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'concept_ready' })
+      if (!controller.signal.aborted) {
+        set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'concept_ready' })
+      }
     }
   },
 
   async reviewSchema(dialect?: DatabaseDialect) {
     const { project, selectedModel } = get()
     if (!project) return
+    const controller = resetAbortController()
     const targetDialect = dialect || get().targetDialect || 'mysql'
     set({
       targetDialect,
@@ -533,9 +575,12 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
             }
           },
         },
+        controller.signal,
       )
     } catch (error) {
-      set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'physical_ready' })
+      if (!controller.signal.aborted) {
+        set({ aiRunning: false, aiError: errorMessage(error), agentPhase: 'physical_ready' })
+      }
     }
   },
 
@@ -611,4 +656,5 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
       })
     }
   },
-})
+  }
+}

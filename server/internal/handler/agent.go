@@ -7,6 +7,7 @@ import (
 	"archcanvas/request"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/sse"
 	"github.com/gin-gonic/gin"
@@ -136,7 +137,7 @@ func (a *AgentHandler) EnrichSemantics(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// streamSSE 统一的 SSE 事件流写入与刷写辅助函数
+// streamSSE 统一的 SSE 事件流写入与刷写辅助函数（带分块写超时续期与心跳保活，防止长时推理触发 WriteTimeout 断连）
 func streamSSE(c *gin.Context, eventCh <-chan service.StreamEvent) {
 	traceID := middleware.GetTraceID(c.Request.Context())
 	c.Header("Content-Type", "text/event-stream")
@@ -148,23 +149,37 @@ func streamSSE(c *gin.Context, eventCh <-chan service.StreamEvent) {
 	}
 	c.Status(http.StatusOK)
 
+	rc := http.NewResponseController(c.Writer)
+	extendDeadline := func() {
+		_ = rc.SetWriteDeadline(time.Now().Add(90 * time.Second))
+	}
+
 	flusher, _ := c.Writer.(http.Flusher)
 	flush := func() {
+		extendDeadline()
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 	flush()
 
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	ctx := c.Request.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			extendDeadline()
+			_, _ = c.Writer.Write([]byte(": ping\n\n"))
+			flush()
 		case event, ok := <-eventCh:
 			if !ok {
 				return
 			}
+			extendDeadline()
 			c.Render(-1, sse.Event{
 				Id:    traceID,
 				Event: string(event.Type),
