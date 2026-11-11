@@ -1,7 +1,8 @@
 .idea
 .DS_Store
 server/.air.toml
-server/tmp
+server/tmp/
+**/tmp/
 *.log
 node_modules/
 web/dist/
@@ -15,3 +16,5 @@ server/configs/config.yaml
 server/data/
 archcanvas
 archcanvas.exe
+server/archcanvas
+server/archcanvas.exe
