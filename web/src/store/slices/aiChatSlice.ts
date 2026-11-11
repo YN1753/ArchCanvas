@@ -268,12 +268,22 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     const trimmed = input.trim()
     if (!trimmed) return
 
-    set({
+    const tempUserMsg: ProjectMessage = {
+      id: `temp_${Date.now()}`,
+      conversation_id: '',
+      role: 'user',
+      content: trimmed,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    set((state) => ({
       aiRunning: true,
       aiThinking: '',
       aiStatus: '正在分析业务需求并构建高阶概念模型...',
       aiError: null,
-    })
+      messages: [...state.messages, tempUserMsg],
+    }))
 
     let rawResult: any = null
 
@@ -305,6 +315,7 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
           },
           onError: (err) => {
             set({ aiRunning: false, aiError: errorMessage(err) })
+            void get().fetchProjectMessages(project.id)
           },
           onDone: async () => {
             set({ aiRunning: false, aiStatus: '' })
