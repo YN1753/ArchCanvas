@@ -1438,7 +1438,7 @@ export function conceptualToChenFlowElements(
   for (const c of concepts) {
     const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
     const defaultPos = layout.entityPositions.get(cid) || { x: 100, y: 100 }
-    const customEntityPos = customPositions ? customPositions[cid] : c.position
+    const customEntityPos = customPositions?.[cid] ?? c.position
 
     const entityX = customEntityPos ? customEntityPos.x : defaultPos.x
     const entityY = customEntityPos ? customEntityPos.y : defaultPos.y
@@ -1592,9 +1592,7 @@ export function conceptualToChenFlowElements(
   // 7. 生成联系菱形节点
   for (const rel of resolvedRelations) {
     const defaultPos = layout.relationPositions.get(rel.id) || { x: 250, y: 250 }
-    const customPos = customPositions
-      ? (customPositions[rel.id] ?? customPositions[rel.rawId])
-      : rel.position
+    const customPos = customPositions?.[rel.id] ?? customPositions?.[rel.rawId] ?? rel.position
 
     nodes.push({
       id: rel.id,

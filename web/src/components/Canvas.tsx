@@ -154,7 +154,7 @@ export default function Canvas() {
     chenPositions,
   ])
 
-  // 页面刷新、初次挂载或切换项目/视图模式时，默认自动执行一次排版整理与适屏居中
+  // 页面刷新、初次挂载或切换项目/视图模式时，保留用户已保存的节点坐标并自动适屏居中；仅当物理表全处于原点无有效坐标时才自动排版
   useEffect(() => {
     if (!projectID) return
     const count =
@@ -167,21 +167,13 @@ export default function Canvas() {
     if (initialFittedKeyRef.current === key) return
     initialFittedKeyRef.current = key
 
-    // 默认自动调用整理逻辑：重置坐标并应用规范化拓扑排版
-    if (canvasViewMode === 'chen') {
-      resetChenPositions()
-      const currentConceptual = useStore.getState().conceptualDesign
-      const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
-        conceptualDesign: currentConceptual,
-        design,
-        agentPhase,
-        selectedId: selectedEntityID ?? selectedRelationID,
-        customPositions: {},
-      })
-      setNodes(chenNodes)
-      setEdges(chenEdges)
-    } else {
-      autoLayout()
+    if (canvasViewMode === 'relational') {
+      const needsAutoLayout =
+        design.entities.length > 1 &&
+        design.entities.every((e) => !e.position || (e.position.x === 0 && e.position.y === 0))
+      if (needsAutoLayout) {
+        autoLayout()
+      }
     }
 
     // 多阶延迟适屏调度：在 60ms, 180ms, 360ms 各触发一次，确保 ReactFlow 测量 DOM 节点后 100% 成功适屏居中
@@ -196,10 +188,6 @@ export default function Canvas() {
     canvasViewMode,
     conceptualDesign,
     design,
-    agentPhase,
-    selectedEntityID,
-    selectedRelationID,
-    resetChenPositions,
     autoLayout,
     fitView,
   ])

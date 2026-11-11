@@ -76,10 +76,13 @@ export function ensureLayout(design: ERDesign): ERDesign {
   const cleanedDesign = { ...design, relations: cleanRelations }
 
   const missing = cleanedDesign.entities.filter((entity) => !entity.position)
-  if (missing.length === 0) {
+  const allAtOrigin =
+    cleanedDesign.entities.length > 1 &&
+    cleanedDesign.entities.every((e) => !e.position || (e.position.x === 0 && e.position.y === 0))
+  if (missing.length === 0 && !allAtOrigin) {
     return cleanedDesign
   }
-  if (missing.length === cleanedDesign.entities.length) {
+  if (missing.length === cleanedDesign.entities.length || allAtOrigin) {
     return layoutDesign(cleanedDesign)
   }
   return placeNewEntities(
