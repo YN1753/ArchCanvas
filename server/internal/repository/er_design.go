@@ -480,11 +480,12 @@ func (r *ERDesignRepository) SaveByProjectID(
 			if err := tx.Model(&model.Entity{}).
 				Where("id = ?", ent.ID).
 				Updates(map[string]interface{}{
-					"name":    ent.Name,
-					"comment": ent.Comment,
-					"indexes": ent.Indexes,
-					"pos_x":   ent.PosX,
-					"pos_y":   ent.PosY,
+					"name":              ent.Name,
+					"comment":           ent.Comment,
+					"indexes":           ent.Indexes,
+					"is_junction_table": ent.IsJunctionTable,
+					"pos_x":             ent.PosX,
+					"pos_y":             ent.PosY,
 				}).Error; err != nil {
 				return fmt.Errorf("update entity %s: %w", ent.ID, err)
 			}
