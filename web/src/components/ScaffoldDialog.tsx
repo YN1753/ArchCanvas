@@ -67,104 +67,112 @@ function highlightLine(line: string, path: string): string {
   return highlightGo(escaped)
 }
 
+const YAML_VALUE_TOKEN_REGEX =
+  /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b(true|false|yes|no)\b|\b(\d+(?:\.\d+)?)\b/gi
+
 function highlightYaml(line: string): string {
-  const commentIdx = line.indexOf('#')
+  // 单趟扫描提取非引号内的 # 注释起点
+  let commentIdx = -1
+  let inSingle = false
+  let inDouble = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === "'" && !inDouble) inSingle = !inSingle
+    else if (ch === '"' && !inSingle && line[i - 1] !== '\\') inDouble = !inDouble
+    else if (ch === '#' && !inSingle && !inDouble) {
+      commentIdx = i
+      break
+    }
+  }
+
   if (commentIdx !== -1) {
     const before = line.slice(0, commentIdx)
     const after = line.slice(commentIdx)
     return `${highlightYaml(before)}<span style="color:#78716c;font-style:italic">${after}</span>`
   }
-  return line
-    .replace(/^(\s*[\w.-]+)(:)/, '<span style="color:#df4e3e;font-weight:bold">$1</span><span style="color:#1f1f1f">$2</span>')
-    .replace(/"(.*?)"/g, '<span style="color:#15803d">"$1"</span>')
-    .replace(/\b(true|false|yes|no)\b/gi, '<span style="color:#9a3412;font-weight:bold">$1</span>')
-    .replace(/\b(\d+)\b/g, '<span style="color:#c2410c">$1</span>')
-}
 
-function highlightGo(line: string): string {
-  // 1. 注释识别 (深灰微斜体)
-  const commentIdx = line.indexOf('//')
-  if (commentIdx !== -1) {
-    const before = line.slice(0, commentIdx)
-    const after = line.slice(commentIdx)
-    return `${highlightGo(before)}<span style="color:#78716c;font-style:italic">${after}</span>`
+  let keyPrefix = ''
+  let rest = line
+  const keyMatch = line.match(/^(\s*[\w.-]+)(:)(.*)$/)
+  if (keyMatch) {
+    keyPrefix = `<span style="color:#df4e3e;font-weight:bold">${keyMatch[1]}</span><span style="color:#1f1f1f">${keyMatch[2]}</span>`
+    rest = keyMatch[3]
   }
 
-  // 2. 结构体标签（GORM & JSON Tags）：复古暖烟草棕
-  let processed = line.replace(/`([^`]+)`/g, (_match, p1) => {
-    const tagged = p1.replace(
-      /(\w+)(:)(&quot;|")(.*?)(&quot;|")/g,
-      '<span style="color:#9a3412;font-weight:bold">$1</span>$2<span style="color:#15803d">$3$4$5</span>',
-    )
-    return `<span style="color:#9a3412;background-color:#faf5ee;padding:0 2px;border-radius:2px">\`${tagged}\`</span>`
-  })
+  const highlightedRest = rest.replace(
+    YAML_VALUE_TOKEN_REGEX,
+    (match, strLit?: string, boolLit?: string, numLit?: string) => {
+      if (strLit !== undefined) {
+        return `<span style="color:#15803d">${strLit}</span>`
+      }
+      if (boolLit !== undefined) {
+        return `<span style="color:#9a3412;font-weight:bold">${boolLit}</span>`
+      }
+      if (numLit !== undefined) {
+        return `<span style="color:#c2410c">${numLit}</span>`
+      }
+      return match
+    },
+  )
 
-  // 3. 字符串字面量（墨绿橄榄色）
-  processed = processed.replace(/(&quot;.*?&quot;)/g, '<span style="color:#15803d">$1</span>')
+  return keyPrefix + highlightedRest
+}
 
-  // 4. 关键字（ArchCanvas 品牌陶土红，加粗）
-  const keywords = [
-    'package',
-    'import',
-    'type',
-    'struct',
-    'interface',
-    'func',
-    'return',
-    'var',
-    'const',
-    'if',
-    'else',
-    'switch',
-    'case',
-    'default',
-    'for',
-    'range',
-    'go',
-    'defer',
-    'select',
-    'chan',
-    'make',
-    'new',
-    'nil',
-    'true',
-    'false',
-  ]
-  const kwRegex = new RegExp(`\\b(${keywords.join('|')})\\b`, 'g')
-  processed = processed.replace(kwRegex, '<span style="color:#df4e3e;font-weight:bold">$1</span>')
+const GO_TOKEN_REGEX = new RegExp(
+  [
+    // Group 1: 行内注释
+    '(\\/\\/.*$)',
+    // Group 2: 反引号结构体标签 / 原始字符串
+    '`([^`]*)`',
+    // Group 3: 双引号字符串字面量
+    '("(?:[^"\\\\]|\\\\.)*")',
+    // Group 4: 基本类型与常用框架类型
+    '\\b(time\\.Time|gorm\\.DeletedAt|context\\.Context|gin\\.Context|string|int64|int32|int16|int8|int|uint64|uint32|uint16|uint8|uint|float64|float32|bool|byte|rune|any|error)\\b',
+    // Group 5: Go 关键字
+    '\\b(package|import|type|struct|interface|func|return|var|const|if|else|switch|case|default|for|range|go|defer|select|chan|make|new|nil|true|false)\\b',
+    // Group 6: 函数调用标识符
+    '\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\()',
+  ].join('|'),
+  'g',
+)
 
-  // 5. 基本类型与常用框架类型（深海墨蓝）
-  const types = [
-    'string',
-    'int',
-    'int64',
-    'int32',
-    'int16',
-    'int8',
-    'uint',
-    'uint64',
-    'uint32',
-    'uint16',
-    'uint8',
-    'float64',
-    'float32',
-    'bool',
-    'byte',
-    'rune',
-    'any',
-    'error',
-    'time\\.Time',
-    'gorm\\.DeletedAt',
-    'context\\.Context',
-    'gin\\.Context',
-  ]
-  const typeRegex = new RegExp(`\\b(${types.join('|')})\\b`, 'g')
-  processed = processed.replace(typeRegex, '<span style="color:#1d4ed8;font-weight:600">$1</span>')
-
-  // 6. 函数名调用（深青色）
-  processed = processed.replace(/\b([A-Za-z0-9_]+)\(/g, '<span style="color:#0f766e;font-weight:600">$1</span>(')
-
-  return processed
+function highlightGo(line: string): string {
+  return line.replace(
+    GO_TOKEN_REGEX,
+    (
+      match,
+      comment?: string,
+      backtickInner?: string,
+      strLit?: string,
+      typeIdent?: string,
+      keyword?: string,
+      funcCall?: string,
+    ) => {
+      if (comment !== undefined) {
+        return `<span style="color:#78716c;font-style:italic">${comment}</span>`
+      }
+      if (backtickInner !== undefined) {
+        const tagged = backtickInner.replace(
+          /(\w+)(:)(".*?")/g,
+          '<span style="color:#9a3412;font-weight:bold">$1</span>$2<span style="color:#15803d">$3</span>',
+        )
+        return `<span style="color:#9a3412;background-color:#faf5ee;padding:0 2px;border-radius:2px">\`${tagged}\`</span>`
+      }
+      if (strLit !== undefined) {
+        return `<span style="color:#15803d">${strLit}</span>`
+      }
+      if (typeIdent !== undefined) {
+        return `<span style="color:#1d4ed8;font-weight:600">${typeIdent}</span>`
+      }
+      if (keyword !== undefined) {
+        return `<span style="color:#df4e3e;font-weight:bold">${keyword}</span>`
+      }
+      if (funcCall !== undefined) {
+        return `<span style="color:#0f766e;font-weight:600">${funcCall}</span>`
+      }
+      return match
+    },
+  )
 }
 
 interface DirectoryGroup {
