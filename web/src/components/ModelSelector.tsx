@@ -22,7 +22,7 @@ const PRESETS: PresetConfig[] = [
   {
     name: 'openai',
     label: 'OpenAI',
-    baseURL: 'https://api.ssstoken.net/v1',
+    baseURL: 'https://api.openai.com/v1',
     suggestedModels: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
     placeholderKey: '留空使用原有配置或输入 sk-...',
   },
