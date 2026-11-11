@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -156,12 +158,40 @@ func (m *ModelManager) SwitchModel(ctx context.Context, name string, provider st
 	return chatModel, nil
 }
 
+// validateModelEndpointURL 校验模型探测 BaseURL 的协议合法性，并拦截云元数据与链路本地地址以防范 SSRF
+func validateModelEndpointURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid base_url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported url scheme %q: only http and https are allowed", parsed.Scheme)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return errors.New("base_url host is required")
+	}
+	if host == "metadata.google.internal" || host == "metadata" || host == "169.254.169.254" {
+		return fmt.Errorf("disallowed host %q", host)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("disallowed IP address %q", host)
+		}
+	}
+	return nil
+}
+
 // FetchModelsFromBaseURL 请求指定 baseURL 的 OpenAI/Ollama 兼容 models 接口，动态获取可用模型
 func FetchModelsFromBaseURL(ctx context.Context, baseURL, apiKey string) ([]string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	baseURL = strings.TrimRight(baseURL, "/")
 	if baseURL == "" {
 		return nil, errors.New("base_url is required")
+	}
+	if err := validateModelEndpointURL(baseURL); err != nil {
+		return nil, err
 	}
 
 	targetURL := baseURL
@@ -247,7 +277,8 @@ func fetchModelsHTTP(ctx context.Context, targetURL, apiKey string) ([]string, i
 		return nil, resp.StatusCode, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	const maxModelListBodyBytes = 2 << 20 // 2 MiB 上限，防止恶意超大响应耗尽内存
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelListBodyBytes))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -381,14 +412,13 @@ func (m *ModelManager) SaveAndSwitchModel(ctx context.Context, req request.SaveM
 	return m.getAvailableModelsLocked(ctx), nil
 }
 
-// GetAvailableModels 获取可用模型列表。如果指定了 BaseURL 则从该 BaseURL 动态获取；未指定则遍历配置中的各 Provider BaseURL。
+// GetAvailableModels 获取可用模型列表。如果指定了 BaseURL 则从该 BaseURL 动态探测（只读，不污染内存配置）；未指定则遍历配置中的各 Provider BaseURL。
 func (m *ModelManager) GetAvailableModels(ctx context.Context, req request.GetModelsReq) (AvailableModels, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// 指定了 BaseURL：向该 BaseURL 发起网络请求获取模型
 	if strings.TrimSpace(req.BaseURL) != "" {
 		baseURL := strings.TrimSpace(req.BaseURL)
+
+		m.mu.RLock()
 		provider := req.Provider
 		if provider == "" {
 			for pName, pCfg := range m.Configs {
@@ -409,34 +439,34 @@ func (m *ModelManager) GetAvailableModels(ctx context.Context, req request.GetMo
 			}
 		}
 
+		var providers []ProviderInfo
+		hasProvider := false
+		for pName, pCfg := range m.Configs {
+			if pName == provider {
+				hasProvider = true
+			}
+			providers = append(providers, ProviderInfo{
+				Name:         pName,
+				BaseURL:      pCfg.BaseURL,
+				DefaultModel: pCfg.DefaultModel,
+			})
+		}
+		m.mu.RUnlock()
+
 		models, err := FetchModelsFromBaseURL(ctx, baseURL, apiKey)
 		if err != nil {
 			return AvailableModels{}, fmt.Errorf("通过 BaseURL (%s) 获取模型列表失败: %w", baseURL, err)
 		}
 
-		cfg, ok := m.Configs[provider]
-		if !ok {
-			cfg = config.ModelConfig{
-				Type:        "openai",
-				Temperature: 0.3,
-				MaxTokens:   8192,
+		if !hasProvider {
+			defaultModel := ""
+			if len(models) > 0 {
+				defaultModel = models[0]
 			}
-		}
-		cfg.BaseURL = baseURL
-		if apiKey != "" {
-			cfg.APIKey = apiKey
-		}
-		if len(models) > 0 && cfg.DefaultModel == "" {
-			cfg.DefaultModel = models[0]
-		}
-		m.Configs[provider] = cfg
-
-		var providers []ProviderInfo
-		for pName, pCfg := range m.Configs {
 			providers = append(providers, ProviderInfo{
-				Name:         pName,
-				BaseURL:      pCfg.BaseURL,
-				DefaultModel: pCfg.DefaultModel,
+				Name:         provider,
+				BaseURL:      baseURL,
+				DefaultModel: defaultModel,
 			})
 		}
 		sort.Slice(providers, func(i, j int) bool {
@@ -462,6 +492,8 @@ func (m *ModelManager) GetAvailableModels(ctx context.Context, req request.GetMo
 		}, nil
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.getAvailableModelsLocked(ctx), nil
 }
 

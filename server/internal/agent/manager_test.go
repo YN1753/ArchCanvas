@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"archcanvas/internal/config"
+	"archcanvas/request"
 )
 
 func TestNewModelManager_GracefulDegradation(t *testing.T) {
@@ -128,4 +129,49 @@ func TestFetchModelsHTTPWithRetry_ExponentialBackoff(t *testing.T) {
 		t.Errorf("expected exactly 3 attempts, got %d", attempts)
 	}
 }
+
+func TestGetAvailableModels_ReadOnlyAndSSRFGuard(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. 拦截非法协议与云元数据地址
+	if _, err := FetchModelsFromBaseURL(ctx, "file:///etc/passwd", ""); err == nil {
+		t.Error("expected error for file:// scheme, got nil")
+	}
+	if _, err := FetchModelsFromBaseURL(ctx, "http://169.254.169.254/latest/meta-data", ""); err == nil {
+		t.Error("expected error for link-local metadata IP, got nil")
+	}
+
+	// 2. 验证只读探测 GetAvailableModels 不会污染内存中的 Configs
+	originalTransport := httpClient.Transport
+	defer func() { httpClient.Transport = originalTransport }()
+
+	httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "custom-model-1"}]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	configs := map[string]config.ModelConfig{
+		"openai": {Type: "openai", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-4o"},
+	}
+	mgr := NewModelManager(ctx, configs, "openai", t.TempDir())
+
+	res, err := mgr.GetAvailableModels(ctx, request.GetModelsReq{
+		Provider: "probed_provider",
+		BaseURL:  "https://example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("GetAvailableModels failed: %v", err)
+	}
+	if len(res.Models) != 1 || res.Models[0].Model != "custom-model-1" {
+		t.Errorf("unexpected models: %+v", res.Models)
+	}
+	if _, exists := mgr.Configs["probed_provider"]; exists {
+		t.Error("expected GetAvailableModels not to mutate mgr.Configs with probed_provider")
+	}
+}
+
 
