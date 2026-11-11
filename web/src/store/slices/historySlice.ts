@@ -11,26 +11,27 @@ import { errorMessage, saveChenPositions } from '../utils'
 const SAVE_DEBOUNCE_MS = 700
 const MAX_HISTORY = 50
 
-/** 本地变更计数：用来判断一次保存请求返回时，用户是否又改了东西。 */
-let mutationCount = 0
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-let saveConceptualTimer: ReturnType<typeof setTimeout> | null = null
-let saveInFlight = false
-let savePending = false
-
-let pastStack: HistoryEntry[] = []
-let futureStack: HistoryEntry[] = []
-let lastSnapshotTime = 0
-let lastDebounceKey: string | null = null
-let pendingBaseline: ERDesign | null = null
-let debounceBaseline: ERDesign | null = null
-
-let lastConceptualSnapshotTime = 0
-let lastConceptualDebounceKey: string | null = null
-let pendingConceptualBaseline: ConceptualDesign | null = null
-let debounceConceptualBaseline: ConceptualDesign | null = null
-
 export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (set, get) => {
+  /** 本地变更计数：用来判断一次保存请求返回时，用户是否又改了东西。 */
+  let mutationCount = 0
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let saveConceptualTimer: ReturnType<typeof setTimeout> | null = null
+  let saveInFlight = false
+  let savePending = false
+  let saveConceptualInFlight = false
+  let saveConceptualPending = false
+
+  let pastStack: HistoryEntry[] = []
+  let futureStack: HistoryEntry[] = []
+  let lastSnapshotTime = 0
+  let lastDebounceKey: string | null = null
+  let pendingBaseline: ERDesign | null = null
+  let debounceBaseline: ERDesign | null = null
+
+  let lastConceptualSnapshotTime = 0
+  let lastConceptualDebounceKey: string | null = null
+  let pendingConceptualBaseline: ConceptualDesign | null = null
+  let debounceConceptualBaseline: ConceptualDesign | null = null
   function recompute(design: ERDesign, extras?: Partial<Store>) {
     if (pendingBaseline !== null && pendingBaseline !== design) {
       const baseline = pendingBaseline
@@ -158,6 +159,12 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     const { project, conceptualDesign } = get()
     if (!project) return
     const targetProjectId = project.id
+    if (saveConceptualInFlight) {
+      saveConceptualPending = true
+      return
+    }
+
+    saveConceptualInFlight = true
     set({ saveState: 'saving' })
     try {
       await api.saveConceptualDesign(targetProjectId, conceptualDesign)
@@ -171,6 +178,14 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
         return
       }
       set({ saveState: 'error', saveError: errorMessage(err) })
+    } finally {
+      saveConceptualInFlight = false
+      if (saveConceptualPending && get().project?.id === targetProjectId) {
+        saveConceptualPending = false
+        scheduleSaveConceptual()
+      } else {
+        saveConceptualPending = false
+      }
     }
   }
 
@@ -288,6 +303,8 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     }
     saveInFlight = false
     savePending = false
+    saveConceptualInFlight = false
+    saveConceptualPending = false
     pastStack = []
     futureStack = []
     lastSnapshotTime = 0
