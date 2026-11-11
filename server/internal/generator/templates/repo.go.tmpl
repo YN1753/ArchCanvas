@@ -53,7 +53,7 @@ func (r *{{ .Entity.VarName }}Repository) List(ctx context.Context, offset, limi
 }
 
 func (r *{{ .Entity.VarName }}Repository) Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
-	return r.db.WithContext(ctx).Save(item).Error
+	return r.db.WithContext(ctx).Omit("created_at").Save(item).Error
 }
 
 func (r *{{ .Entity.VarName }}Repository) Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error {

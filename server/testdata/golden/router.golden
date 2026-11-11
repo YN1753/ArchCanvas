@@ -22,6 +22,7 @@ func SetupRouter(handlers Handlers) *gin.Engine {
 			userGroup.GET("/:id", handlers.User.GetDetail)
 			userGroup.GET("", handlers.User.List)
 			userGroup.PUT("", handlers.User.Update)
+			userGroup.PUT("/:id", handlers.User.Update)
 			userGroup.DELETE("/:id", handlers.User.Delete)
 		}
 		orderGroup := api.Group("/orders")
@@ -30,6 +31,7 @@ func SetupRouter(handlers Handlers) *gin.Engine {
 			orderGroup.GET("/:id", handlers.Order.GetDetail)
 			orderGroup.GET("", handlers.Order.List)
 			orderGroup.PUT("", handlers.Order.Update)
+			orderGroup.PUT("/:id", handlers.Order.Update)
 			orderGroup.DELETE("/:id", handlers.Order.Delete)
 		}
 	}

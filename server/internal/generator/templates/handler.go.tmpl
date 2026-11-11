@@ -73,6 +73,27 @@ func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
 		response.Fail(c, 400, "参数格式错误: "+err.Error())
 		return
 	}
+	{{- if .Entity.PrimaryKey.FieldName }}
+	if idStr := c.Param("id"); idStr != "" {
+		{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			response.Fail(c, 400, "无效的 ID 参数")
+			return
+		}
+		item.{{ .Entity.PrimaryKey.FieldName }} = {{ .Entity.PrimaryKey.GoType }}(id)
+		{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			response.Fail(c, 400, "无效的 ID 参数")
+			return
+		}
+		item.{{ .Entity.PrimaryKey.FieldName }} = {{ .Entity.PrimaryKey.GoType }}(id)
+		{{- else if eq .Entity.PrimaryKey.GoType "string" }}
+		item.{{ .Entity.PrimaryKey.FieldName }} = idStr
+		{{- end }}
+	}
+	{{- end }}
 	if err := h.svc.Update(c.Request.Context(), &item); err != nil {
 		response.Fail(c, 500, "更新失败: "+err.Error())
 		return
