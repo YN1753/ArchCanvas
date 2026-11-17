@@ -6,6 +6,7 @@ import {
   type ERDesign,
   type SchemaReviewReport,
 } from '../types/dsl'
+import { downloadBlob } from '../utils/download'
 
 const BASE = import.meta.env?.VITE_API_BASE || '/api/v1'
 const VISITOR_STORAGE_KEY = 'archcanvas_visitor_id'
@@ -148,15 +149,6 @@ export interface SaveModelParams {
   set_as_default?: boolean
 }
 
-export interface RequirementDecision {
-  operation: 'create' | 'modify' | 'delete'
-  target_type: 'entity' | 'attribute' | 'relation' | 'constraint'
-  target: string
-  description: string
-  reason: string
-  source: 'explicit' | 'inferred'
-}
-
 export interface ClarificationOption {
   id: string
   label: string
@@ -174,10 +166,6 @@ export interface ClarificationCard {
 export interface RequirementResult {
   operation_scope: string
   summary: string
-  explicit_requirements: string[]
-  negative_constraints: string[]
-  assumptions: string[]
-  decisions: RequirementDecision[]
   need_clarification: boolean
   clarification_cards?: ClarificationCard[]
   questions: string[]
@@ -200,8 +188,8 @@ export interface SaveERDesignResult {
 export class ApiError extends Error {
   readonly status: number
 
-  constructor(status: number, message: string) {
-    super(message)
+  constructor(status: number, message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'ApiError'
     this.status = status
   }
@@ -219,7 +207,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     })
   } catch (error) {
-    throw new ApiError(0, `无法连接后端服务，请确认 server 已启动（${String(error)}）`)
+    throw new ApiError(0, `无法连接后端服务，请确认 server 已启动（${String(error)}）`, {
+      cause: error,
+    })
   }
 
   captureResponseMetadata(response)
@@ -229,8 +219,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (text) {
     try {
       envelope = JSON.parse(text) as Envelope<T>
-    } catch {
-      throw new ApiError(response.status, `响应不是合法 JSON：${text.slice(0, 200)}`)
+    } catch (error) {
+      throw new ApiError(response.status, `响应不是合法 JSON：${text.slice(0, 200)}`, {
+        cause: error,
+      })
     }
   }
 
@@ -329,7 +321,7 @@ export async function streamPost<T = unknown>(
     if (isAbort || signal?.aborted) {
       return
     }
-    const error = new ApiError(0, `无法连接后端服务（${String(err)}）`)
+    const error = new ApiError(0, `无法连接后端服务（${String(err)}）`, { cause: err })
     callbacks.onError?.(error)
     throw error
   }
@@ -550,9 +542,6 @@ export const api = {
       }),
     }),
 
-  getConceptualDesign: (id: string) =>
-    request<ConceptualDesign>(`/projects/get-conceptual-design?id=${encodeURIComponent(id)}`),
-
   saveConceptualDesign: (id: string, design: ConceptualDesign) =>
     request<string>('/projects/save-conceptual-design', {
       method: 'POST',
@@ -641,20 +630,11 @@ export const api = {
       throw new ApiError(res.status, message)
     }
     const blob = await res.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
     let filename = `${params.module_name || 'archcanvas-app'}.zip`
     if (filename.includes('/')) {
       filename = filename.substring(filename.lastIndexOf('/') + 1)
     }
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    window.setTimeout(() => {
-      window.URL.revokeObjectURL(url)
-    }, 1000)
+    downloadBlob(blob, filename)
   },
 
   /**

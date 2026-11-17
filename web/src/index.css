@@ -63,3 +63,13 @@ body {
 .react-flow__edge-path {
   transition: stroke 200ms ease, stroke-width 200ms ease, opacity 200ms ease;
 }
+
+/* 原生模态 <dialog> 滚动隔离（禁止切换 body overflow: hidden 引起布局抖动） */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

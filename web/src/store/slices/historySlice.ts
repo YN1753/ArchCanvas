@@ -1,57 +1,399 @@
 import type { StateCreator } from 'zustand'
 
-import { api } from '../../api/client'
+import { api, type SaveERDesignResult } from '../../api/client'
+import { normalizeConceptualDesign } from '../../domain/conceptNormalize'
 import { ensureLayout } from '../../flow/layout'
-import type { ConceptualDesign, Entity, ERDesign } from '../../types/dsl'
+import type { ConceptualDesign, Entity, ERDesign, Position } from '../../types/dsl'
 import { validateDesign } from '../../validate/dsl'
-import { applyPatch, createPatch, invertPatch, type HistoryEntry } from '../patch'
+import {
+  applyPatch,
+  createPatch,
+  invertPatch,
+  type DomainPatchPair,
+  type HistoryDomainKey,
+  type HistoryEntry,
+} from '../patch'
 import type { HistorySlice, SaveState, Store } from '../types'
 import { errorMessage, saveChenPositions } from '../utils'
 
 const SAVE_DEBOUNCE_MS = 700
+const HISTORY_DEBOUNCE_MS = 600
 const MAX_HISTORY = 50
 
+interface DomainPatchTracker<T> {
+  lastSnapshotTime: number
+  lastDebounceKey: string | null
+  pendingBaseline: T | null
+  debounceBaseline: T | null
+}
+
+function createPatchTracker<T>(): DomainPatchTracker<T> {
+  return {
+    lastSnapshotTime: 0,
+    lastDebounceKey: null,
+    pendingBaseline: null,
+    debounceBaseline: null,
+  }
+}
+
+function resetPatchTracker<T>(tracker: DomainPatchTracker<T>): void {
+  tracker.lastSnapshotTime = 0
+  tracker.lastDebounceKey = null
+  tracker.pendingBaseline = null
+  tracker.debounceBaseline = null
+}
+
+function captureSnapshot<T>(
+  tracker: DomainPatchTracker<T>,
+  current: T,
+  debounceKey?: string,
+): void {
+  const now = Date.now()
+  if (
+    debounceKey &&
+    tracker.lastDebounceKey === debounceKey &&
+    now - tracker.lastSnapshotTime < HISTORY_DEBOUNCE_MS
+  ) {
+    tracker.lastSnapshotTime = now
+    tracker.pendingBaseline = tracker.debounceBaseline ?? current
+    return
+  }
+
+  tracker.lastSnapshotTime = now
+  tracker.lastDebounceKey = debounceKey ?? null
+  tracker.pendingBaseline = current
+  tracker.debounceBaseline = current
+}
+
+function buildDomainPair<T>(before: T, after: T): DomainPatchPair | null {
+  const redo = createPatch(before, after)
+  if (redo.length === 0) return null
+  return {
+    undo: invertPatch(redo),
+    redo,
+  }
+}
+
+function recordDomainPatch<T>(params: {
+  domainKey: HistoryDomainKey
+  tracker: DomainPatchTracker<T>
+  nextValue: T
+  pastStack: HistoryEntry[]
+  futureStack: HistoryEntry[]
+  onStackStateChange: (canUndo: boolean, canRedo: boolean) => void
+}): void {
+  const { domainKey, tracker, nextValue, pastStack, futureStack, onStackStateChange } = params
+
+  if (tracker.pendingBaseline === null || tracker.pendingBaseline === nextValue) {
+    return
+  }
+
+  const baseline = tracker.pendingBaseline
+  tracker.pendingBaseline = null
+
+  const now = Date.now()
+  const topEntry = pastStack[pastStack.length - 1]
+  const isDebouncing =
+    tracker.lastDebounceKey !== null &&
+    topEntry !== undefined &&
+    topEntry.debounceKey === tracker.lastDebounceKey &&
+    topEntry.patches[domainKey] !== undefined &&
+    tracker.debounceBaseline !== null &&
+    now - tracker.lastSnapshotTime < HISTORY_DEBOUNCE_MS
+
+  if (isDebouncing) {
+    const pair = buildDomainPair(tracker.debounceBaseline, nextValue)
+    if (pair) {
+      pastStack[pastStack.length - 1] = {
+        patches: { ...topEntry.patches, [domainKey]: pair },
+        debounceKey: tracker.lastDebounceKey ?? undefined,
+      }
+    } else {
+      const remainingPatches = { ...topEntry.patches }
+      delete remainingPatches[domainKey]
+      if (Object.keys(remainingPatches).length > 0) {
+        pastStack[pastStack.length - 1] = {
+          patches: remainingPatches,
+          debounceKey: topEntry.debounceKey,
+        }
+      } else {
+        pastStack.pop()
+      }
+      tracker.lastDebounceKey = null
+      tracker.debounceBaseline = null
+      onStackStateChange(pastStack.length > 0, futureStack.length > 0)
+    }
+    return
+  }
+
+  const pair = buildDomainPair(baseline, nextValue)
+  if (pair) {
+    pastStack.push({
+      patches: { [domainKey]: pair },
+      debounceKey: tracker.lastDebounceKey ?? undefined,
+    })
+    if (pastStack.length > MAX_HISTORY) {
+      pastStack.shift()
+    }
+    futureStack.length = 0
+    onStackStateChange(true, false)
+  }
+}
+
+interface HistoryDomainDescriptor<T = unknown> {
+  readonly key: HistoryDomainKey
+  readonly tracker: DomainPatchTracker<T>
+  getSnapshot(): T
+  applySnapshot(snapshot: T, entry: HistoryEntry): void
+  scheduleSave(): void
+}
+
+interface DebouncedSaver {
+  readonly state: SaveState
+  readonly error: string | null
+  schedule: () => void
+  flush: () => Promise<void>
+  cancelTimer: () => boolean
+  waitForInFlight: () => Promise<void>
+  needsFlush: (hadTimer: boolean, flushOnIdle: boolean) => boolean
+  reset: () => void
+}
+
+function createDebouncedSaver<TResult>(config: {
+  get: () => Store
+  getMutationCount: () => number
+  onStateChange: (extras?: Partial<Store>) => void
+  saveOnTemplateForkedDirectly?: boolean
+  performSave: (projectId: string) => Promise<TResult>
+  onSuccess?: (result: TResult, changedDuringRequest: boolean) => void
+}): DebouncedSaver {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let pending = false
+  let inFlightPromise: Promise<void> | null = null
+  let dirtyVersion = 0
+  let savedVersion = 0
+  let saveState: SaveState = 'idle'
+  let saveError: string | null = null
+
+  function startTimer() {
+    if (timer !== null) {
+      clearTimeout(timer)
+    }
+    timer = setTimeout(() => {
+      timer = null
+      void flush()
+    }, SAVE_DEBOUNCE_MS)
+  }
+
+  async function flush(): Promise<void> {
+    let { project } = config.get()
+    if (!project) return
+
+    if (project.is_template) {
+      const forkedId = await config.get().ensureWritableProject()
+      if (!forkedId) return
+      if (config.saveOnTemplateForkedDirectly) {
+        savedVersion = dirtyVersion
+        saveState = 'saved'
+        saveError = null
+        config.onStateChange()
+        return
+      }
+      project = config.get().project
+      if (!project) return
+    }
+
+    const targetProjectId = project.id
+    if (inFlightPromise) {
+      pending = true
+      return
+    }
+
+    const countAtStart = config.getMutationCount()
+    const versionAtStart = dirtyVersion
+    saveState = 'saving'
+    saveError = null
+    config.onStateChange()
+
+    const run = (async () => {
+      try {
+        const result = await config.performSave(targetProjectId)
+        if (config.get().project?.id !== targetProjectId) {
+          return
+        }
+        savedVersion = Math.max(savedVersion, versionAtStart)
+        const changedDuringRequest = config.getMutationCount() !== countAtStart
+        saveState = 'saved'
+        saveError = null
+        if (config.onSuccess) {
+          config.onSuccess(result, changedDuringRequest)
+        } else {
+          config.onStateChange()
+        }
+      } catch (err) {
+        if (config.get().project?.id === targetProjectId) {
+          saveState = 'error'
+          saveError = errorMessage(err)
+          config.onStateChange()
+        }
+      } finally {
+        inFlightPromise = null
+        if (pending && config.get().project?.id === targetProjectId) {
+          pending = false
+          startTimer()
+        } else {
+          pending = false
+        }
+      }
+    })()
+
+    inFlightPromise = run
+    return run
+  }
+
+  return {
+    get state() {
+      return saveState
+    },
+    get error() {
+      return saveError
+    },
+    schedule() {
+      dirtyVersion += 1
+      startTimer()
+    },
+    flush,
+    cancelTimer() {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+        return true
+      }
+      return false
+    },
+    async waitForInFlight() {
+      if (inFlightPromise) {
+        await inFlightPromise
+      }
+    },
+    needsFlush(hadTimer: boolean, flushOnIdle: boolean) {
+      const shouldFlush =
+        hadTimer ||
+        pending ||
+        dirtyVersion > savedVersion ||
+        saveState === 'error' ||
+        (flushOnIdle && saveState === 'idle')
+      if (shouldFlush) {
+        pending = false
+      }
+      return shouldFlush
+    },
+    reset() {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+      inFlightPromise = null
+      pending = false
+      dirtyVersion = 0
+      savedVersion = 0
+      saveState = 'idle'
+      saveError = null
+    },
+  }
+}
+
 export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (set, get) => {
-  /** 本地变更计数：用来判断一次保存请求返回时，用户是否又改了东西。 */
   let mutationCount = 0
-  let dirtyErVersion = 0
-  let savedErVersion = 0
-  let dirtyConceptualVersion = 0
-  let savedConceptualVersion = 0
-
-  let saveTimer: ReturnType<typeof setTimeout> | null = null
-  let saveConceptualTimer: ReturnType<typeof setTimeout> | null = null
-  let savePending = false
-  let saveConceptualPending = false
-  let inFlightErPromise: Promise<void> | null = null
-  let inFlightConceptualPromise: Promise<void> | null = null
-
-  let erSaveState: SaveState = 'idle'
-  let erSaveError: string | null = null
-  let conceptualSaveState: SaveState = 'idle'
-  let conceptualSaveError: string | null = null
-
   let pastStack: HistoryEntry[] = []
   let futureStack: HistoryEntry[] = []
-  let lastSnapshotTime = 0
-  let lastDebounceKey: string | null = null
-  let pendingBaseline: ERDesign | null = null
-  let debounceBaseline: ERDesign | null = null
 
-  let lastConceptualSnapshotTime = 0
-  let lastConceptualDebounceKey: string | null = null
-  let pendingConceptualBaseline: ConceptualDesign | null = null
-  let debounceConceptualBaseline: ConceptualDesign | null = null
+  const erTracker = createPatchTracker<ERDesign>()
+  const conceptualTracker = createPatchTracker<ConceptualDesign>()
+  const chenPositionsTracker = createPatchTracker<Record<string, Position>>()
+
+  const erSaver: DebouncedSaver = createDebouncedSaver<SaveERDesignResult>({
+    get,
+    getMutationCount: () => mutationCount,
+    onStateChange: syncCombinedSaveState,
+    saveOnTemplateForkedDirectly: true,
+    performSave: (projectId) => api.saveERDesign(projectId, get().design),
+    onSuccess: (result, changedDuringRequest) => {
+      syncCombinedSaveState({ serverWarnings: result.warnings ?? [] })
+      if (changedDuringRequest) return
+
+      const localEntities = get().design.entities
+      const localRelations = get().design.relations
+      const currentPositions = new Map(localEntities.map((e) => [e.id, e.position]))
+      const posByName = new Map(localEntities.map((e) => [e.name.toLowerCase(), e.position]))
+      const mergedEntities = result.design.entities.map((e) => ({
+        ...e,
+        position:
+          e.position ?? currentPositions.get(e.id) ?? posByName.get(e.name.toLowerCase()),
+      }))
+
+      const entityIdByLowerName = new Map(
+        mergedEntities.map((e) => [e.name.toLowerCase(), e.id]),
+      )
+      const oldEntityNameById = new Map(
+        localEntities.map((e) => [e.id, e.name.toLowerCase()]),
+      )
+
+      const currentSel = get().selection
+      let nextSelection = currentSel
+      if (currentSel?.kind === 'entity') {
+        if (!mergedEntities.some((e) => e.id === currentSel.id)) {
+          const oldName = oldEntityNameById.get(currentSel.id)
+          const mappedId = oldName ? entityIdByLowerName.get(oldName) : undefined
+          if (mappedId) {
+            nextSelection = { kind: 'entity', id: mappedId }
+          }
+        }
+      } else if (currentSel?.kind === 'relation') {
+        if (!result.design.relations.some((r) => r.id === currentSel.id)) {
+          const oldRel = localRelations.find((r) => r.id === currentSel.id)
+          if (oldRel) {
+            const mappedSrc =
+              entityIdByLowerName.get(oldEntityNameById.get(oldRel.source_entity_id) ?? '') ??
+              oldRel.source_entity_id
+            const mappedTgt =
+              entityIdByLowerName.get(oldEntityNameById.get(oldRel.target_entity_id) ?? '') ??
+              oldRel.target_entity_id
+            const matched = result.design.relations.find(
+              (r) =>
+                r.source_entity_id === mappedSrc &&
+                r.target_entity_id === mappedTgt &&
+                r.cardinality === oldRel.cardinality,
+            )
+            if (matched) {
+              nextSelection = { kind: 'relation', id: matched.id }
+            }
+          }
+        }
+      }
+
+      recompute(ensureLayout({ ...result.design, entities: mergedEntities }), {
+        selection: nextSelection,
+      })
+    },
+  })
+
+  const conceptualSaver: DebouncedSaver = createDebouncedSaver<string>({
+    get,
+    getMutationCount: () => mutationCount,
+    onStateChange: syncCombinedSaveState,
+    performSave: (projectId) => api.saveConceptualDesign(projectId, get().conceptualDesign),
+  })
 
   function syncCombinedSaveState(extras?: Partial<Store>) {
     let combinedState: SaveState = 'idle'
     let combinedError: string | null = null
-    if (erSaveState === 'saving' || conceptualSaveState === 'saving') {
+    if (erSaver.state === 'saving' || conceptualSaver.state === 'saving') {
       combinedState = 'saving'
-    } else if (erSaveState === 'error' || conceptualSaveState === 'error') {
+    } else if (erSaver.state === 'error' || conceptualSaver.state === 'error') {
       combinedState = 'error'
-      combinedError = erSaveError ?? conceptualSaveError
-    } else if (erSaveState === 'saved' || conceptualSaveState === 'saved') {
+      combinedError = erSaver.error ?? conceptualSaver.error
+    } else if (erSaver.state === 'saved' || conceptualSaver.state === 'saved') {
       combinedState = 'saved'
     }
     set({
@@ -61,59 +403,25 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     })
   }
 
+  function scheduleSave() {
+    mutationCount += 1
+    erSaver.schedule()
+  }
+
+  function scheduleSaveConceptual() {
+    mutationCount += 1
+    conceptualSaver.schedule()
+  }
+
   function recompute(design: ERDesign, extras?: Partial<Store>) {
-    if (pendingBaseline !== null && pendingBaseline !== design) {
-      const baseline = pendingBaseline
-      pendingBaseline = null
-
-      const now = Date.now()
-      const isDebouncing =
-        lastDebounceKey !== null &&
-        pastStack.length > 0 &&
-        pastStack[pastStack.length - 1].debounceKey === lastDebounceKey &&
-        pastStack[pastStack.length - 1].redo !== undefined &&
-        debounceBaseline !== null &&
-        now - lastSnapshotTime < 600
-
-      if (isDebouncing) {
-        const redo = createPatch(debounceBaseline, design)
-        if (redo.length > 0) {
-          const undo = invertPatch(redo)
-          pastStack[pastStack.length - 1] = {
-            undo,
-            redo,
-            debounceKey: lastDebounceKey ?? undefined,
-          }
-        } else {
-          // 防抖窗口内编辑回退到初始原值，弹出残留栈顶补丁
-          pastStack.pop()
-          lastDebounceKey = null
-          debounceBaseline = null
-          set({
-            canUndo: pastStack.length > 0,
-            canRedo: futureStack.length > 0,
-          })
-        }
-      } else {
-        const redo = createPatch(baseline, design)
-        if (redo.length > 0) {
-          const undo = invertPatch(redo)
-          pastStack.push({
-            undo,
-            redo,
-            debounceKey: lastDebounceKey ?? undefined,
-          })
-          if (pastStack.length > MAX_HISTORY) {
-            pastStack.shift()
-          }
-          futureStack = []
-          set({
-            canUndo: true,
-            canRedo: false,
-          })
-        }
-      }
-    }
+    recordDomainPatch({
+      domainKey: 'erDesign',
+      tracker: erTracker,
+      nextValue: design,
+      pastStack,
+      futureStack,
+      onStackStateChange: (canUndo, canRedo) => set({ canUndo, canRedo }),
+    })
 
     set({
       design,
@@ -123,57 +431,14 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
   }
 
   function recomputeConceptual(conceptualDesign: ConceptualDesign, extras?: Partial<Store>) {
-    if (pendingConceptualBaseline !== null && pendingConceptualBaseline !== conceptualDesign) {
-      const baseline = pendingConceptualBaseline
-      pendingConceptualBaseline = null
-
-      const now = Date.now()
-      const isDebouncing =
-        lastConceptualDebounceKey !== null &&
-        pastStack.length > 0 &&
-        pastStack[pastStack.length - 1].debounceKey === lastConceptualDebounceKey &&
-        pastStack[pastStack.length - 1].conceptualRedo !== undefined &&
-        debounceConceptualBaseline !== null &&
-        now - lastConceptualSnapshotTime < 600
-
-      if (isDebouncing) {
-        const redo = createPatch(debounceConceptualBaseline, conceptualDesign)
-        if (redo.length > 0) {
-          const undo = invertPatch(redo)
-          pastStack[pastStack.length - 1] = {
-            conceptualUndo: undo,
-            conceptualRedo: redo,
-            debounceKey: lastConceptualDebounceKey ?? undefined,
-          }
-        } else {
-          pastStack.pop()
-          lastConceptualDebounceKey = null
-          debounceConceptualBaseline = null
-          set({
-            canUndo: pastStack.length > 0,
-            canRedo: futureStack.length > 0,
-          })
-        }
-      } else {
-        const redo = createPatch(baseline, conceptualDesign)
-        if (redo.length > 0) {
-          const undo = invertPatch(redo)
-          pastStack.push({
-            conceptualUndo: undo,
-            conceptualRedo: redo,
-            debounceKey: lastConceptualDebounceKey ?? undefined,
-          })
-          if (pastStack.length > MAX_HISTORY) {
-            pastStack.shift()
-          }
-          futureStack = []
-          set({
-            canUndo: true,
-            canRedo: false,
-          })
-        }
-      }
-    }
+    recordDomainPatch({
+      domainKey: 'conceptualDesign',
+      tracker: conceptualTracker,
+      nextValue: conceptualDesign,
+      pastStack,
+      futureStack,
+      onStackStateChange: (canUndo, canRedo) => set({ canUndo, canRedo }),
+    })
 
     set({
       conceptualDesign,
@@ -181,267 +446,113 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     })
   }
 
-  function startErSaveTimer() {
-    if (saveTimer !== null) {
-      clearTimeout(saveTimer)
-    }
-    saveTimer = setTimeout(() => {
-      saveTimer = null
-      void flushSave()
-    }, SAVE_DEBOUNCE_MS)
-  }
-
-  function scheduleSave() {
-    mutationCount += 1
-    dirtyErVersion += 1
-    startErSaveTimer()
-  }
-
-  function startConceptualSaveTimer() {
-    if (saveConceptualTimer !== null) {
-      clearTimeout(saveConceptualTimer)
-    }
-    saveConceptualTimer = setTimeout(() => {
-      saveConceptualTimer = null
-      void flushSaveConceptual()
-    }, SAVE_DEBOUNCE_MS)
-  }
-
-  function scheduleSaveConceptual() {
-    mutationCount += 1
-    dirtyConceptualVersion += 1
-    startConceptualSaveTimer()
-  }
-
-  async function flushSaveConceptual(): Promise<void> {
-    let { project } = get()
-    const { conceptualDesign } = get()
-    if (!project) return
-    if (project.is_template) {
-      const forkedId = await get().ensureWritableProject()
-      if (!forkedId) return
-      project = get().project
-      if (!project) return
-    }
-    const targetProjectId = project.id
-    if (inFlightConceptualPromise) {
-      saveConceptualPending = true
-      return
-    }
-
-    const versionAtStart = dirtyConceptualVersion
-    conceptualSaveState = 'saving'
-    conceptualSaveError = null
-    syncCombinedSaveState()
-
-    const run = (async () => {
-      try {
-        await api.saveConceptualDesign(targetProjectId, conceptualDesign)
-        if (get().project?.id !== targetProjectId) {
-          return
+  /**
+   * 声明式多领域历史描述符表（OCP 扩展点：新增可撤销领域无需改动 `stepHistory` 主循环）
+   */
+  const domainDescriptors: readonly HistoryDomainDescriptor[] = [
+    {
+      key: 'conceptualDesign',
+      tracker: conceptualTracker,
+      getSnapshot: () => get().conceptualDesign,
+      applySnapshot: (rawSnapshot, entry) => {
+        const updatedConceptual = normalizeConceptualDesign(rawSnapshot as ConceptualDesign)
+        const currentSelection = get().selection
+        let validSelection = false
+        if (currentSelection?.kind === 'entity') {
+          validSelection = updatedConceptual.concepts.some(
+            (c) => c.id === currentSelection.id || c.name === currentSelection.id,
+          )
+        } else if (currentSelection?.kind === 'relation') {
+          validSelection = updatedConceptual.relations.some(
+            (r) => r.id === currentSelection.id,
+          )
         }
-        savedConceptualVersion = Math.max(savedConceptualVersion, versionAtStart)
-        conceptualSaveState = 'saved'
-        conceptualSaveError = null
-        syncCombinedSaveState()
-      } catch (err) {
-        if (get().project?.id !== targetProjectId) {
-          return
-        }
-        conceptualSaveState = 'error'
-        conceptualSaveError = errorMessage(err)
-        syncCombinedSaveState()
-      } finally {
-        inFlightConceptualPromise = null
-        if (saveConceptualPending && get().project?.id === targetProjectId) {
-          saveConceptualPending = false
-          startConceptualSaveTimer()
-        } else {
-          saveConceptualPending = false
-        }
-      }
-    })()
 
-    inFlightConceptualPromise = run
-    return run
-  }
-
-  async function flushSave(): Promise<void> {
-    let { project } = get()
-    const { design } = get()
-    if (!project) {
-      return
-    }
-    if (project.is_template) {
-      const forkedId = await get().ensureWritableProject()
-      if (!forkedId) return
-      savedErVersion = dirtyErVersion
-      erSaveState = 'saved'
-      erSaveError = null
-      syncCombinedSaveState()
-      return
-    }
-    const targetProjectId = project.id
-    if (inFlightErPromise) {
-      savePending = true
-      return
-    }
-
-    const countAtStart = mutationCount
-    const versionAtStart = dirtyErVersion
-    erSaveState = 'saving'
-    erSaveError = null
-    syncCombinedSaveState()
-
-    const run = (async () => {
-      try {
-        const result = await api.saveERDesign(targetProjectId, design)
-        if (get().project?.id !== targetProjectId) {
-          return
-        }
-        savedErVersion = Math.max(savedErVersion, versionAtStart)
-        const changedDuringRequest = mutationCount !== countAtStart
-        erSaveState = 'saved'
-        erSaveError = null
-        syncCombinedSaveState({
-          serverWarnings: result.warnings ?? [],
-        })
-
-        // 保存期间用户又改了东西时，不要用服务端返回值覆盖本地编辑。
-        if (!changedDuringRequest) {
-          const localEntities = get().design.entities
-          const localRelations = get().design.relations
-          const currentPositions = new Map(localEntities.map((e) => [e.id, e.position]))
-          const posByName = new Map(localEntities.map((e) => [e.name.toLowerCase(), e.position]))
-          const mergedEntities = result.design.entities.map((e) => ({
-            ...e,
-            position: e.position ?? currentPositions.get(e.id) ?? posByName.get(e.name.toLowerCase()),
-          }))
-
-          const entityIdByLowerName = new Map(mergedEntities.map((e) => [e.name.toLowerCase(), e.id]))
-          const oldEntityNameById = new Map(localEntities.map((e) => [e.id, e.name.toLowerCase()]))
-
-          const currentSel = get().selection
-          let nextSelection = currentSel
-          if (currentSel?.kind === 'entity') {
-            const stillValid = mergedEntities.some((e) => e.id === currentSel.id)
-            if (!stillValid) {
-              const oldName = oldEntityNameById.get(currentSel.id)
-              const mappedId = oldName ? entityIdByLowerName.get(oldName) : undefined
-              if (mappedId) {
-                nextSelection = { kind: 'entity', id: mappedId }
-              }
-            }
-          } else if (currentSel?.kind === 'relation') {
-            const stillValid = result.design.relations.some((r) => r.id === currentSel.id)
-            if (!stillValid) {
-              const oldRel = localRelations.find((r) => r.id === currentSel.id)
-              if (oldRel) {
-                const mappedSrc =
-                  entityIdByLowerName.get(oldEntityNameById.get(oldRel.source_entity_id) ?? '') ??
-                  oldRel.source_entity_id
-                const mappedTgt =
-                  entityIdByLowerName.get(oldEntityNameById.get(oldRel.target_entity_id) ?? '') ??
-                  oldRel.target_entity_id
-                const matched = result.design.relations.find(
-                  (r) =>
-                    r.source_entity_id === mappedSrc &&
-                    r.target_entity_id === mappedTgt &&
-                    r.cardinality === oldRel.cardinality,
-                )
-                if (matched) {
-                  nextSelection = { kind: 'relation', id: matched.id }
-                }
-              }
+        const hasExplicitChenPositionsPatch = entry.patches.chenPositions !== undefined
+        const nextChenPositions = { ...get().chenPositions }
+        if (!hasExplicitChenPositionsPatch) {
+          for (const c of updatedConceptual.concepts) {
+            if (c.position && c.id) {
+              nextChenPositions[c.id] = c.position
             }
           }
+          for (const r of updatedConceptual.relations) {
+            if (r.position && r.id) {
+              nextChenPositions[r.id] = r.position
+              nextChenPositions[`rel-${r.id}`] = r.position
+            }
+          }
+          const project = get().project
+          if (project) {
+            saveChenPositions(project.id, nextChenPositions)
+          }
+        }
 
-          recompute(ensureLayout({ ...result.design, entities: mergedEntities }), {
-            selection: nextSelection,
-          })
+        set({
+          conceptualDesign: updatedConceptual,
+          ...(!hasExplicitChenPositionsPatch ? { chenPositions: nextChenPositions } : {}),
+          selection:
+            entry.patches.erDesign !== undefined
+              ? get().selection
+              : validSelection
+                ? currentSelection
+                : null,
+        })
+      },
+      scheduleSave: scheduleSaveConceptual,
+    } satisfies HistoryDomainDescriptor<ConceptualDesign> as HistoryDomainDescriptor,
+    {
+      key: 'chenPositions',
+      tracker: chenPositionsTracker,
+      getSnapshot: () => get().chenPositions,
+      applySnapshot: (rawSnapshot) => {
+        const restoredPositions = structuredClone(rawSnapshot as Record<string, Position>)
+        const project = get().project
+        if (project) {
+          saveChenPositions(project.id, restoredPositions)
         }
-      } catch (error) {
-        if (get().project?.id === targetProjectId) {
-          erSaveState = 'error'
-          erSaveError = errorMessage(error)
-          syncCombinedSaveState()
-        }
-      } finally {
-        inFlightErPromise = null
-        if (savePending && get().project?.id === targetProjectId) {
-          savePending = false
-          startErSaveTimer()
-        } else {
-          savePending = false
-        }
-      }
-    })()
+        set({ chenPositions: restoredPositions })
+      },
+      scheduleSave: () => {},
+    } satisfies HistoryDomainDescriptor<Record<string, Position>> as HistoryDomainDescriptor,
+    {
+      key: 'erDesign',
+      tracker: erTracker,
+      getSnapshot: () => get().design,
+      applySnapshot: (rawSnapshot) => {
+        const updatedEr = rawSnapshot as ERDesign
+        const currentSelection = get().selection
+        const validEntity =
+          currentSelection?.kind === 'entity' &&
+          updatedEr.entities.some((e) => e.id === currentSelection.id)
+        const validRelation =
+          currentSelection?.kind === 'relation' &&
+          updatedEr.relations.some((r) => r.id === currentSelection.id)
 
-    inFlightErPromise = run
-    return run
-  }
+        recompute(updatedEr, {
+          selection: validEntity || validRelation ? currentSelection : null,
+        })
+      },
+      scheduleSave,
+    } satisfies HistoryDomainDescriptor<ERDesign> as HistoryDomainDescriptor,
+  ]
 
   function recordSnapshot(debounceKey?: string) {
-    const now = Date.now()
-    if (debounceKey && lastDebounceKey === debounceKey && now - lastSnapshotTime < 600) {
-      lastSnapshotTime = now
-      pendingBaseline = debounceBaseline ?? get().design
-      return
-    }
-
-    lastSnapshotTime = now
-    lastDebounceKey = debounceKey ?? null
-    const currentDesign = get().design
-    pendingBaseline = currentDesign
-    debounceBaseline = currentDesign
+    captureSnapshot(erTracker, get().design, debounceKey)
   }
 
   function recordConceptualSnapshot(debounceKey?: string) {
-    const now = Date.now()
-    if (debounceKey && lastConceptualDebounceKey === debounceKey && now - lastConceptualSnapshotTime < 600) {
-      lastConceptualSnapshotTime = now
-      pendingConceptualBaseline = debounceConceptualBaseline ?? get().conceptualDesign
-      return
-    }
-
-    lastConceptualSnapshotTime = now
-    lastConceptualDebounceKey = debounceKey ?? null
-    const currentConceptual = get().conceptualDesign
-    pendingConceptualBaseline = currentConceptual
-    debounceConceptualBaseline = currentConceptual
+    captureSnapshot(conceptualTracker, get().conceptualDesign, debounceKey)
   }
 
   function resetHistory() {
-    if (saveTimer !== null) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-    }
-    if (saveConceptualTimer !== null) {
-      clearTimeout(saveConceptualTimer)
-      saveConceptualTimer = null
-    }
-    inFlightErPromise = null
-    inFlightConceptualPromise = null
-    savePending = false
-    saveConceptualPending = false
-    dirtyErVersion = 0
-    savedErVersion = 0
-    dirtyConceptualVersion = 0
-    savedConceptualVersion = 0
-    erSaveState = 'idle'
-    erSaveError = null
-    conceptualSaveState = 'idle'
-    conceptualSaveError = null
+    erSaver.reset()
+    conceptualSaver.reset()
     pastStack = []
     futureStack = []
-    lastSnapshotTime = 0
-    lastDebounceKey = null
-    pendingBaseline = null
-    debounceBaseline = null
-    lastConceptualSnapshotTime = 0
-    lastConceptualDebounceKey = null
-    pendingConceptualBaseline = null
-    debounceConceptualBaseline = null
+    for (const descriptor of domainDescriptors) {
+      resetPatchTracker(descriptor.tracker)
+    }
     set({
       saveState: 'idle',
       saveError: null,
@@ -450,59 +561,66 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     })
   }
 
+  function pushMultiDomainEntry(patches: Partial<Record<HistoryDomainKey, DomainPatchPair>>): boolean {
+    if (Object.keys(patches).length === 0) {
+      return false
+    }
+    for (const descriptor of domainDescriptors) {
+      resetPatchTracker(descriptor.tracker)
+    }
+    pastStack.push({ patches })
+    if (pastStack.length > MAX_HISTORY) {
+      pastStack.shift()
+    }
+    futureStack = []
+    return true
+  }
+
   function mutate(next: ERDesign, debounceKey?: string, extras?: Partial<Store>) {
     recordSnapshot(debounceKey)
     recompute(next, extras)
     scheduleSave()
   }
 
-  function mutateConceptual(next: ConceptualDesign, debounceKey?: string, extras?: Partial<Store>) {
+  function mutateConceptual(
+    rawNext: ConceptualDesign,
+    debounceKey?: string,
+    extras?: Partial<Store>,
+  ) {
+    const next = normalizeConceptualDesign(rawNext)
     recordConceptualSnapshot(debounceKey)
     recomputeConceptual(next, extras)
     scheduleSaveConceptual()
   }
 
-  function mutateBoth(nextDesign: ERDesign, nextConceptual: ConceptualDesign, extras?: Partial<Store>) {
-    const prevDesign = get().design
-    const prevConceptual = get().conceptualDesign
-    const redo = createPatch(prevDesign, nextDesign)
-    const conceptualRedo = createPatch(prevConceptual, nextConceptual)
+  function mutateBoth(
+    nextDesign: ERDesign,
+    rawNextConceptual: ConceptualDesign,
+    extras?: Partial<Store>,
+  ) {
+    const nextConceptual = normalizeConceptualDesign(rawNextConceptual)
+    const erPair = buildDomainPair(get().design, nextDesign)
+    const conceptualPair = buildDomainPair(get().conceptualDesign, nextConceptual)
 
-    lastDebounceKey = null
-    lastSnapshotTime = 0
-    pendingBaseline = null
-    debounceBaseline = null
-    lastConceptualDebounceKey = null
-    lastConceptualSnapshotTime = 0
-    pendingConceptualBaseline = null
-    debounceConceptualBaseline = null
-
-    if (redo.length > 0 || conceptualRedo.length > 0) {
-      pastStack.push({
-        ...(redo.length > 0 ? { undo: invertPatch(redo), redo } : {}),
-        ...(conceptualRedo.length > 0
-          ? { conceptualUndo: invertPatch(conceptualRedo), conceptualRedo }
-          : {}),
-      })
-      if (pastStack.length > MAX_HISTORY) {
-        pastStack.shift()
-      }
-      futureStack = []
+    const patches: Partial<Record<HistoryDomainKey, DomainPatchPair>> = {
+      ...(erPair ? { erDesign: erPair } : {}),
+      ...(conceptualPair ? { conceptualDesign: conceptualPair } : {}),
     }
+    pushMultiDomainEntry(patches)
 
     set({
       design: nextDesign,
       report: validateDesign(nextDesign),
       conceptualDesign: nextConceptual,
       canUndo: pastStack.length > 0,
-      canRedo: false,
+      canRedo: futureStack.length > 0,
       ...extras,
     })
 
-    if (redo.length > 0) {
+    if (erPair) {
       scheduleSave()
     }
-    if (conceptualRedo.length > 0) {
+    if (conceptualPair) {
       scheduleSaveConceptual()
     }
   }
@@ -513,53 +631,33 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
   }
 
   function mutateChenPositions(
-    nextPositions: Record<string, { x: number; y: number }>,
-    nextConceptual?: ConceptualDesign,
+    nextPositions: Record<string, Position>,
+    rawNextConceptual?: ConceptualDesign,
   ) {
-    const prevPositions = structuredClone(get().chenPositions)
+    const nextConceptual =
+      rawNextConceptual !== undefined ? normalizeConceptualDesign(rawNextConceptual) : undefined
     const targetPositions = structuredClone(nextPositions)
-    const entry: HistoryEntry = {
-      chenPositionsUndo: prevPositions,
-      chenPositionsRedo: targetPositions,
-    }
 
-    let conceptualChanged = false
-    if (nextConceptual !== undefined) {
-      const currentConceptual = get().conceptualDesign
-      const cRedo = createPatch(currentConceptual, nextConceptual)
-      if (cRedo.length > 0) {
-        entry.conceptualRedo = cRedo
-        entry.conceptualUndo = invertPatch(cRedo)
-        conceptualChanged = true
-      }
-    }
+    const posPair = buildDomainPair(get().chenPositions, targetPositions)
+    const conceptualPair =
+      nextConceptual !== undefined
+        ? buildDomainPair(get().conceptualDesign, nextConceptual)
+        : null
 
-    const posChanged = JSON.stringify(prevPositions) !== JSON.stringify(targetPositions)
-    if (!posChanged && !conceptualChanged) {
+    const recorded = pushMultiDomainEntry({
+      ...(posPair ? { chenPositions: posPair } : {}),
+      ...(conceptualPair ? { conceptualDesign: conceptualPair } : {}),
+    })
+    if (!recorded) {
       return
     }
-
-    lastDebounceKey = null
-    lastSnapshotTime = 0
-    pendingBaseline = null
-    debounceBaseline = null
-    lastConceptualDebounceKey = null
-    lastConceptualSnapshotTime = 0
-    pendingConceptualBaseline = null
-    debounceConceptualBaseline = null
-
-    pastStack.push(entry)
-    if (pastStack.length > MAX_HISTORY) {
-      pastStack.shift()
-    }
-    futureStack = []
 
     const project = get().project
     if (project) {
       saveChenPositions(project.id, targetPositions)
     }
 
-    if (conceptualChanged && nextConceptual !== undefined) {
+    if (conceptualPair && nextConceptual !== undefined) {
       mutationCount += 1
       set({
         conceptualDesign: nextConceptual,
@@ -577,6 +675,34 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     }
   }
 
+  /**
+   * 统一参数化历史栈步进引擎：遍历注册领域描述符自动回放/前移补丁，零硬编码领域分支。
+   */
+  function stepHistory(direction: 'undo' | 'redo') {
+    const sourceStack = direction === 'undo' ? pastStack : futureStack
+    const destStack = direction === 'undo' ? futureStack : pastStack
+    if (sourceStack.length === 0) return
+
+    const entry = sourceStack.pop()!
+    destStack.push(entry)
+
+    for (const descriptor of domainDescriptors) {
+      const pair = entry.patches[descriptor.key]
+      const patchList = pair ? (direction === 'undo' ? pair.undo : pair.redo) : undefined
+      if (!patchList || patchList.length === 0) continue
+
+      resetPatchTracker(descriptor.tracker)
+      const nextSnapshot = applyPatch(descriptor.getSnapshot(), patchList)
+      descriptor.applySnapshot(nextSnapshot, entry)
+      descriptor.scheduleSave()
+    }
+
+    set({
+      canUndo: pastStack.length > 0,
+      canRedo: futureStack.length > 0,
+    })
+  }
+
   return {
     saveState: 'idle',
     saveError: null,
@@ -586,9 +712,9 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
 
     recompute,
     scheduleSave,
-    flushSave,
+    flushSave: () => erSaver.flush(),
     scheduleSaveConceptual,
-    flushSaveConceptual,
+    flushSaveConceptual: () => conceptualSaver.flush(),
     recordSnapshot,
     resetHistory,
     mutate,
@@ -598,246 +724,38 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
     withEntities,
 
     undo() {
-      if (pastStack.length === 0) return
-      const entry = pastStack.pop()!
-      futureStack.push(entry)
-
-      if (entry.conceptualUndo && entry.conceptualUndo.length > 0) {
-        const currentConceptual = get().conceptualDesign
-        const previousConceptual = applyPatch(currentConceptual, entry.conceptualUndo)
-        lastConceptualDebounceKey = null
-        lastConceptualSnapshotTime = 0
-        pendingConceptualBaseline = null
-        debounceConceptualBaseline = null
-
-        const currentSelection = get().selection
-        let validSelection = false
-        if (currentSelection?.kind === 'entity') {
-          validSelection = (previousConceptual.concepts || []).some(
-            (c) => c.id === currentSelection.id || c.name === currentSelection.id,
-          )
-        } else if (currentSelection?.kind === 'relation') {
-          validSelection = (previousConceptual.relations || []).some(
-            (r) => r.id === currentSelection.id,
-          )
-        }
-
-        const project = get().project
-        const nextChenPositions =
-          entry.chenPositionsUndo !== undefined
-            ? structuredClone(entry.chenPositionsUndo)
-            : { ...get().chenPositions }
-        if (entry.chenPositionsUndo === undefined) {
-          for (const c of previousConceptual.concepts || []) {
-            const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-            if (c.position) {
-              nextChenPositions[cid] = c.position
-              if (c.id) nextChenPositions[c.id] = c.position
-            }
-          }
-          for (const r of previousConceptual.relations || []) {
-            if (r.position) {
-              if (r.id) nextChenPositions[r.id] = r.position
-              nextChenPositions[`rel-${r.id}`] = r.position
-            }
-          }
-        }
-        if (project) {
-          saveChenPositions(project.id, nextChenPositions)
-        }
-
-        set({
-          conceptualDesign: previousConceptual,
-          chenPositions: nextChenPositions,
-          selection: entry.undo && entry.undo.length > 0 ? get().selection : validSelection ? currentSelection : null,
-        })
-        scheduleSaveConceptual()
-      } else if (entry.chenPositionsUndo !== undefined) {
-        const restoredPositions = structuredClone(entry.chenPositionsUndo)
-        const project = get().project
-        if (project) {
-          saveChenPositions(project.id, restoredPositions)
-        }
-        set({ chenPositions: restoredPositions })
-      }
-
-      if (entry.undo && entry.undo.length > 0) {
-        const current = get().design
-        const previous = applyPatch(current, entry.undo)
-
-        lastDebounceKey = null
-        lastSnapshotTime = 0
-        pendingBaseline = null
-        debounceBaseline = null
-
-        const currentSelection = get().selection
-        const validEntity =
-          currentSelection?.kind === 'entity' && previous.entities.some((e) => e.id === currentSelection.id)
-        const validRelation =
-          currentSelection?.kind === 'relation' && previous.relations.some((r) => r.id === currentSelection.id)
-
-        recompute(previous, {
-          selection: validEntity || validRelation ? currentSelection : null,
-        })
-        scheduleSave()
-      }
-
-      set({
-        canUndo: pastStack.length > 0,
-        canRedo: true,
-      })
+      stepHistory('undo')
     },
 
     redo() {
-      if (futureStack.length === 0) return
-      const entry = futureStack.pop()!
-      pastStack.push(entry)
-
-      if (entry.conceptualRedo && entry.conceptualRedo.length > 0) {
-        const currentConceptual = get().conceptualDesign
-        const nextConceptual = applyPatch(currentConceptual, entry.conceptualRedo)
-        lastConceptualDebounceKey = null
-        lastConceptualSnapshotTime = 0
-        pendingConceptualBaseline = null
-        debounceConceptualBaseline = null
-
-        const currentSelection = get().selection
-        let validSelection = false
-        if (currentSelection?.kind === 'entity') {
-          validSelection = (nextConceptual.concepts || []).some(
-            (c) => c.id === currentSelection.id || c.name === currentSelection.id,
-          )
-        } else if (currentSelection?.kind === 'relation') {
-          validSelection = (nextConceptual.relations || []).some(
-            (r) => r.id === currentSelection.id,
-          )
-        }
-
-        const project = get().project
-        const nextChenPositions =
-          entry.chenPositionsRedo !== undefined
-            ? structuredClone(entry.chenPositionsRedo)
-            : { ...get().chenPositions }
-        if (entry.chenPositionsRedo === undefined) {
-          for (const c of nextConceptual.concepts || []) {
-            const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-            if (c.position) {
-              nextChenPositions[cid] = c.position
-              if (c.id) nextChenPositions[c.id] = c.position
-            }
-          }
-          for (const r of nextConceptual.relations || []) {
-            if (r.position) {
-              if (r.id) nextChenPositions[r.id] = r.position
-              nextChenPositions[`rel-${r.id}`] = r.position
-            }
-          }
-        }
-        if (project) {
-          saveChenPositions(project.id, nextChenPositions)
-        }
-
-        set({
-          conceptualDesign: nextConceptual,
-          chenPositions: nextChenPositions,
-          selection: entry.redo && entry.redo.length > 0 ? get().selection : validSelection ? currentSelection : null,
-        })
-        scheduleSaveConceptual()
-      } else if (entry.chenPositionsRedo !== undefined) {
-        const restoredPositions = structuredClone(entry.chenPositionsRedo)
-        const project = get().project
-        if (project) {
-          saveChenPositions(project.id, restoredPositions)
-        }
-        set({ chenPositions: restoredPositions })
-      }
-
-      if (entry.redo && entry.redo.length > 0) {
-        const current = get().design
-        const next = applyPatch(current, entry.redo)
-
-        lastDebounceKey = null
-        lastSnapshotTime = 0
-        pendingBaseline = null
-        debounceBaseline = null
-
-        const currentSelection = get().selection
-        const validEntity =
-          currentSelection?.kind === 'entity' && next.entities.some((e) => e.id === currentSelection.id)
-        const validRelation =
-          currentSelection?.kind === 'relation' && next.relations.some((r) => r.id === currentSelection.id)
-
-        recompute(next, {
-          selection: validEntity || validRelation ? currentSelection : null,
-        })
-        scheduleSave()
-      }
-
-      set({
-        canUndo: true,
-        canRedo: futureStack.length > 0,
-      })
+      stepHistory('redo')
     },
 
     async saveNow() {
-      const hadErTimer = saveTimer !== null
-      if (saveTimer !== null) {
-        clearTimeout(saveTimer)
-        saveTimer = null
-      }
-      const hadConceptualTimer = saveConceptualTimer !== null
-      if (saveConceptualTimer !== null) {
-        clearTimeout(saveConceptualTimer)
-        saveConceptualTimer = null
-      }
+      const hadErTimer = erSaver.cancelTimer()
+      const hadConceptualTimer = conceptualSaver.cancelTimer()
 
       const targetProjectId = get().project?.id
       if (!targetProjectId) {
         return
       }
 
-      // 1. 先等待当前已在途的请求返回，防止切换项目时提前放行丢弃最新编辑
-      if (inFlightErPromise) {
-        await inFlightErPromise
-      }
-      if (inFlightConceptualPromise) {
-        await inFlightConceptualPromise
-      }
+      await erSaver.waitForInFlight()
+      await conceptualSaver.waitForInFlight()
 
-      // 清理在途请求收尾阶段可能挂上的重试定时器，改为立即落盘
-      if (saveTimer !== null) {
-        clearTimeout(saveTimer)
-        saveTimer = null
-      }
-      if (saveConceptualTimer !== null) {
-        clearTimeout(saveConceptualTimer)
-        saveConceptualTimer = null
-      }
+      erSaver.cancelTimer()
+      conceptualSaver.cancelTimer()
 
       if (get().project?.id !== targetProjectId) {
         return
       }
 
       const tasks: Promise<void>[] = []
-      const needErFlush =
-        hadErTimer ||
-        savePending ||
-        dirtyErVersion > savedErVersion ||
-        erSaveState === 'error' ||
-        erSaveState === 'idle'
-      const needConceptualFlush =
-        hadConceptualTimer ||
-        saveConceptualPending ||
-        dirtyConceptualVersion > savedConceptualVersion ||
-        conceptualSaveState === 'error'
-
-      if (needErFlush) {
-        savePending = false
-        tasks.push(flushSave())
+      if (erSaver.needsFlush(hadErTimer, true)) {
+        tasks.push(erSaver.flush())
       }
-      if (needConceptualFlush) {
-        saveConceptualPending = false
-        tasks.push(flushSaveConceptual())
+      if (conceptualSaver.needsFlush(hadConceptualTimer, false)) {
+        tasks.push(conceptualSaver.flush())
       }
 
       if (tasks.length > 0) {

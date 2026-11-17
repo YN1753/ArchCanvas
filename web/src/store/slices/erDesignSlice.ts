@@ -9,12 +9,6 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
   design: { entities: [], relations: [] },
   report: { errors: [], warnings: [] },
 
-  moveEntity(id, position) {
-    get().withEntities((entities) =>
-      entities.map((entity) => (entity.id === id ? { ...entity, position } : entity)),
-    )
-  },
-
   moveEntities(moves) {
     if (moves.length === 0) return
     const moveMap = new Map(moves.map((m) => [m.id, m.position]))
@@ -30,7 +24,7 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
     const { design } = get()
     const name = uniqueEntityName(design, 'new_table')
     const entity: Entity = {
-      id: localID('ent'),
+      id: localID(),
       name,
       position: customPosition
         ? {
@@ -40,10 +34,10 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
         : undefined,
       attributes: [
         {
-          id: localID('attr'),
+          id: localID(),
           name: 'id',
           db_type: 'BIGINT',
-          code_type: 'uint64',
+          code_type: defaultCodeType('BIGINT'),
           is_primary_key: true,
           is_nullable: false,
           is_unique: false,
@@ -136,7 +130,7 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
               attributes: [
                 ...entity.attributes,
                 {
-                  id: localID('attr'),
+                  id: localID(),
                   name: uniqueFieldName(entity, 'field'),
                   db_type: 'VARCHAR(255)',
                   code_type: 'string',
@@ -231,7 +225,7 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
     }
 
     const relation: Relation = {
-      id: localID('rel'),
+      id: localID(),
       source_entity_id: sourceEntityID,
       target_entity_id: targetEntityID,
       cardinality: 'one_to_many',

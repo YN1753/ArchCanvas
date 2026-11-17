@@ -1,6 +1,14 @@
 import { Position, type Edge, type Node } from '@xyflow/react'
 
-import type { Attribute, Entity, ERDesign, Relation } from '../types/dsl'
+import {
+  isForeignKeyColumnName,
+  matchesEntityForeignKeyColumn,
+  resolvePrimaryKeyAttribute,
+  resolveRelationForeignKey,
+} from '../domain/foreignKey'
+import type { Entity, ERDesign, Relation } from '../types/dsl'
+
+export { isForeignKeyColumnName }
 
 /**
  * DSL ↔ React Flow 适配层。
@@ -40,51 +48,11 @@ export function nodeWidth(): number {
 
 /** 节点高度必须与 TableNode 的真实渲染一致，否则 dagre 布局会出现重叠。 */
 export function nodeHeight(entity: Entity): number {
-  return NODE_HEADER_HEIGHT + Math.max(entity.attributes?.length ?? 0, 1) * NODE_ROW_HEIGHT + NODE_FOOTER_PADDING
-}
-
-export function isForeignKeyColumnName(rawName: string): boolean {
-  const lower = rawName.toLowerCase()
-  if (lower === 'id') return false
-  return lower.endsWith('_id') || /[a-z0-9]Id$/.test(rawName)
-}
-
-/** 查找宿端匹配源端的外键属性 */
-function findTargetForeignKeyAttribute(
-  sourceEntity: Entity,
-  targetEntity: Entity,
-  usedAttrIds: Set<string>,
-): Attribute | undefined {
-  const srcName = sourceEntity.name.toLowerCase()
-  const srcSingular = srcName.endsWith('s') ? srcName.slice(0, -1) : srcName
-
-  const targetAttrs = targetEntity.attributes ?? []
-  // 1. 优先精确匹配以源实体名开头的外键字段（如 user_id, users_id, product_id）
-  const exactCandidates = targetAttrs.filter((attr) => {
-    if (attr.is_primary_key || usedAttrIds.has(attr.id)) return false
-    const name = attr.name.toLowerCase()
-    return (
-      name === `${srcName}_id` ||
-      name === `${srcSingular}_id` ||
-      name === `${srcName}id` ||
-      name === `${srcSingular}id`
-    )
-  })
-  if (exactCandidates.length > 0) {
-    return exactCandidates[0]
-  }
-
-  // 2. 角色语义外键（如 seller_id, buyer_id, reviewer_id, parentId 等），避免误匹配 paid/valid/uuid
-  const fkCandidates = targetAttrs.filter((attr) => {
-    if (attr.is_primary_key || usedAttrIds.has(attr.id)) return false
-    return isForeignKeyColumnName(attr.name)
-  })
-  if (fkCandidates.length > 0) {
-    return fkCandidates[0]
-  }
-
-  // 3. 兜底返回第一个非主键字段
-  return targetAttrs.find((attr) => !attr.is_primary_key && !usedAttrIds.has(attr.id))
+  return (
+    NODE_HEADER_HEIGHT +
+    Math.max(entity.attributes?.length ?? 0, 1) * NODE_ROW_HEIGHT +
+    NODE_FOOTER_PADDING
+  )
 }
 
 export function toFlowNodes(
@@ -93,27 +61,33 @@ export function toFlowNodes(
 ): TableNode[] {
   const entityMap = new Map(design.entities.map((e) => [e.id, e]))
 
-  // 收集每个实体拥有的外键字段名
+  // 收集每个实体拥有的外键字段名（包含关系解析出的角色外键与语法外键）
   const fkNamesByEntity = new Map<string, Set<string>>()
+  const usedFkByEntity = new Map<string, Set<string>>()
+
   for (const rel of design.relations) {
     const src = entityMap.get(rel.source_entity_id)
     const tgt = entityMap.get(rel.target_entity_id)
-    if (src && tgt) {
-      const prefix = src.name.toLowerCase()
-      const singular = prefix.endsWith('s') ? prefix.slice(0, -1) : prefix
-      for (const attr of tgt.attributes ?? []) {
-        const attrLower = attr.name.toLowerCase()
-        if (
-          !attr.is_primary_key &&
-          (attrLower === `${prefix}_id` ||
-            attrLower === `${singular}_id` ||
-            attrLower === `${prefix}id` ||
-            attrLower === `${singular}id` ||
-            isForeignKeyColumnName(attr.name))
-        ) {
-          if (!fkNamesByEntity.has(tgt.id)) fkNamesByEntity.set(tgt.id, new Set())
-          fkNamesByEntity.get(tgt.id)!.add(attr.name)
-        }
+    if (!src || !tgt) continue
+
+    if (!fkNamesByEntity.has(tgt.id)) fkNamesByEntity.set(tgt.id, new Set())
+    if (!usedFkByEntity.has(tgt.id)) usedFkByEntity.set(tgt.id, new Set())
+    const fkSet = fkNamesByEntity.get(tgt.id)!
+    const usedSet = usedFkByEntity.get(tgt.id)!
+
+    const resolvedFk = resolveRelationForeignKey(src, tgt, {
+      usedAttrIds: usedSet,
+      allEntities: design.entities,
+      fallbackToAnyNonPk: false,
+    })
+    if (resolvedFk) {
+      usedSet.add(resolvedFk.id)
+      fkSet.add(resolvedFk.name)
+    }
+
+    for (const attr of tgt.attributes ?? []) {
+      if (!attr.is_primary_key && matchesEntityForeignKeyColumn(attr.name, src.name)) {
+        fkSet.add(attr.name)
       }
     }
   }
@@ -150,10 +124,7 @@ export function toFlowEdges(
   const nameByID = new Map(design.entities.map((entity) => [entity.id, entity.name]))
   const entityMap = new Map(design.entities.map((e) => [e.id, e]))
 
-  // 记录每个实体已分配的外键字段 ID，避免多个同源关系竞争同一个外键字段
   const usedFkByEntity = new Map<string, Set<string>>()
-
-  // 统计每张表的出边序号
   const outCountByEntity = new Map<string, number>()
 
   return design.relations
@@ -165,40 +136,26 @@ export function toFlowEdges(
     .map((relation) => {
       const srcEnt = entityMap.get(relation.source_entity_id)
       const tgtEnt = entityMap.get(relation.target_entity_id)
-      const isSelf = relation.source_entity_id === relation.target_entity_id
 
       const laneIndex = outCountByEntity.get(relation.source_entity_id) ?? 0
       outCountByEntity.set(relation.source_entity_id, laneIndex + 1)
 
-      // 方案 A：精准解析源主键属性与目标外键属性
-      const sourceAttr = srcEnt?.attributes?.find((a) => a.is_primary_key) ?? srcEnt?.attributes?.[0]
+      const sourceAttr = resolvePrimaryKeyAttribute(srcEnt)
 
       if (!usedFkByEntity.has(relation.target_entity_id)) {
         usedFkByEntity.set(relation.target_entity_id, new Set())
       }
       const usedSet = usedFkByEntity.get(relation.target_entity_id)!
-      let targetAttr: Attribute | undefined
-      if (isSelf) {
-        targetAttr = srcEnt?.attributes?.find((a) => {
-          if (a.is_primary_key || usedSet.has(a.id)) return false
-          const n = a.name.toLowerCase()
-          return (
-            n.startsWith('parent_') ||
-            n === 'parent_id' ||
-            n === 'pid' ||
-            n.endsWith('_pid') ||
-            isForeignKeyColumnName(a.name)
-          )
-        })
-      } else {
-        targetAttr = srcEnt && tgtEnt ? findTargetForeignKeyAttribute(srcEnt, tgtEnt, usedSet) : undefined
-      }
+      const targetAttr = resolveRelationForeignKey(srcEnt, tgtEnt, {
+        usedAttrIds: usedSet,
+        allEntities: design.entities,
+        fallbackToAnyNonPk: relation.source_entity_id !== relation.target_entity_id,
+      })
 
       if (targetAttr) {
         usedSet.add(targetAttr.id)
       }
 
-      // 字段级行锚点：field-src-${id} 与 field-tgt-${id}，无匹配时平滑回退到表级锚点
       const sourceHandle = sourceAttr ? `field-src-${sourceAttr.id}` : 'tbl-src'
       const targetHandle = targetAttr ? `field-tgt-${targetAttr.id}` : 'tbl-tgt'
 

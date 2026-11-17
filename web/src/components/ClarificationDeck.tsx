@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ClarificationCard } from '../api/client'
+import { isImeComposing } from '../utils/keyboard'
 
 interface ClarificationDeckProps {
   cards: ClarificationCard[]
@@ -151,7 +152,7 @@ export default function ClarificationDeck({
 
   const handleCustomKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      if (isImeComposing(e)) {
         return
       }
       e.preventDefault()

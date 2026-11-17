@@ -123,10 +123,6 @@ func (r *ProjectRepository) GetByID(ctx context.Context, id string) (*model.Proj
 	return &project, nil
 }
 
-func (r *ProjectRepository) Create(ctx context.Context, name, description string) (*model.Project, error) {
-	return r.CreateWithVisitor(ctx, name, description, "")
-}
-
 func (r *ProjectRepository) CreateWithVisitor(ctx context.Context, name, description, visitorID string) (*model.Project, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("project repository database is nil")
@@ -204,10 +200,6 @@ func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 	})
 }
 
-func (r *ProjectRepository) Update(ctx context.Context, id, name, description string) (*model.Project, error) {
-	return r.UpdateOptionalDesc(ctx, id, name, &description)
-}
-
 func (r *ProjectRepository) UpdateOptionalDesc(ctx context.Context, id, name string, description *string) (*model.Project, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("project repository database is nil")
@@ -283,37 +275,6 @@ func (r *ProjectRepository) GetAIContext(ctx context.Context, projectID string) 
 		return nil, err
 	}
 	return &content, nil
-}
-
-func (r *ProjectRepository) UpsertAIContext(ctx context.Context, projectID string, content domain.AIContextContent) error {
-	if r == nil || r.db == nil {
-		return errors.New("project repository database is nil")
-	}
-	if projectID == "" {
-		return errors.New("project id is required")
-	}
-	raw, err := json.Marshal(content)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	rec := &model.AIContext{
-		ID:        id.NewUUIDv7(),
-		ProjectID: projectID,
-		Content:   raw,
-		Version:   "v1",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	return r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "project_id"}},
-			DoUpdates: clause.Assignments(map[string]any{
-				"content":    raw,
-				"updated_at": now,
-			}),
-		}).
-		Create(rec).Error
 }
 
 // MergeAIContext 在数据库事务内原子读取、合并并写回 AIContext，避免并发覆盖丢失约束。

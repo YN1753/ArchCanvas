@@ -1,7 +1,9 @@
-import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
+import type { Node, NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
+import { CHEN_NODE_DIMENSIONS } from '../../flow/chen/dimensions'
 import type { Cardinality } from '../../types/dsl'
+import ChenNodeHandles from './ChenNodeHandles'
 
 export interface ChenRelationNodeData extends Record<string, unknown> {
   relationId?: string
@@ -14,60 +16,47 @@ export interface ChenRelationNodeData extends Record<string, unknown> {
 
 export type ChenRelationNodeType = Node<ChenRelationNodeData, 'chenRelation'>
 
+const W = CHEN_NODE_DIMENSIONS.relation.width
+const H = CHEN_NODE_DIMENSIONS.relation.height
+const CX = W / 2
+const CY = H / 2
+const SHADOW_POINTS = `${CX},5 ${W - 3},${CY + 2} ${CX},${H - 1} 3,${CY + 2}`
+const DIAMOND_POINTS = `${CX},3 ${W - 5},${CY} ${CX},${H - 3} 5,${CY}`
+
 function ChenRelationNode({ data, selected }: NodeProps<ChenRelationNodeType>) {
-  const isSelected = selected
-
   return (
-    <div className="group relative flex h-[74px] w-[114px] cursor-pointer items-center justify-center select-none">
-      {/* 4 顶点精确锚点：Top, Right, Bottom, Left（支持双向源/宿对接） */}
-      <Handle type="target" position={Position.Top} id="top" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="target" position={Position.Top} id="top-target" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="source" position={Position.Top} id="top-source" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
+    <div
+      style={{ width: W, height: H }}
+      className="group relative flex cursor-pointer items-center justify-center select-none"
+    >
+      <ChenNodeHandles mode="bidirectional" pinToVertices />
 
-      <Handle type="source" position={Position.Right} id="right" className="!right-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="source" position={Position.Right} id="right-source" className="!right-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="target" position={Position.Right} id="right-target" className="!right-0 !h-2 !w-2 !border-none !bg-transparent" />
-
-      <Handle type="source" position={Position.Bottom} id="bottom" className="!bottom-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="source" position={Position.Bottom} id="bottom-source" className="!bottom-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="target" position={Position.Bottom} id="bottom-target" className="!bottom-0 !h-2 !w-2 !border-none !bg-transparent" />
-
-      <Handle type="target" position={Position.Left} id="left" className="!left-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="target" position={Position.Left} id="left-target" className="!left-0 !h-2 !w-2 !border-none !bg-transparent" />
-      <Handle type="source" position={Position.Left} id="left-source" className="!left-0 !h-2 !w-2 !border-none !bg-transparent" />
-
-      {/* 经典陈氏菱形 SVG 矢量绘制（带暖纸野兽派硬阴影） */}
       <svg
         aria-hidden="true"
         className="absolute inset-0 h-full w-full overflow-visible"
-        viewBox="0 0 114 74"
+        viewBox={`0 0 ${W} ${H}`}
         fill="none"
       >
-        {/* 硬阴影 */}
         <polygon
-          points="57,5 111,39 57,73 3,39"
+          points={SHADOW_POINTS}
           fill="#1f1f1f"
           className="translate-x-[2px] translate-y-[2px]"
         />
-        {/* 菱形本体 */}
         <polygon
-          points="57,3 109,37 57,71 5,37"
-          fill={isSelected ? '#fee2e2' : '#fef9ee'}
-          stroke={isSelected ? '#df4e3e' : '#1f1f1f'}
+          points={DIAMOND_POINTS}
+          fill={selected ? '#fee2e2' : '#fef9ee'}
+          stroke={selected ? '#df4e3e' : '#1f1f1f'}
           strokeWidth="2"
           strokeLinejoin="round"
           className="transition-colors"
         />
       </svg>
 
-      {/* 菱形中心内容 */}
       <div className="relative z-10 flex flex-col items-center justify-center text-center px-2">
         <span className="text-[12px] font-black text-[#1f1f1f] leading-tight">
           {data.name}
         </span>
-        <span
-          className="mt-0.5 rounded px-1.5 py-0.5 text-[9px] font-black font-mono leading-none bg-stone-100 text-stone-700 border border-stone-300"
-        >
+        <span className="mt-0.5 rounded px-1.5 py-0.5 text-[9px] font-black font-mono leading-none bg-stone-100 text-stone-700 border border-stone-300">
           {data.cardinality === 'many_to_many'
             ? 'M:N'
             : data.cardinality === 'one_to_one'

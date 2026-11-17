@@ -1,4 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
+import { useListboxNavigation } from '../hooks/useListboxNavigation'
 
 export interface SelectOption<T = string> {
   value: T
@@ -37,7 +39,6 @@ export default function Select<T extends string = string>({
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [activeIndex, setActiveIndex] = useState(-1)
   const listboxId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -60,89 +61,48 @@ export default function Select<T extends string = string>({
     )
   }, [options, search])
 
-  useEffect(() => {
-    if (!open) return
+  const closeMenu = useCallback(() => {
+    setOpen(false)
+    setSearch('')
+  }, [])
 
-    function handleOutsideClick(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-        setSearch('')
-      }
-    }
-
-    window.addEventListener('mousedown', handleOutsideClick)
-    return () => window.removeEventListener('mousedown', handleOutsideClick)
-  }, [open])
+  useDismissibleLayer(containerRef, open, closeMenu, { closeOnEscape: false })
 
   useEffect(() => {
-    if (open) {
-      const idx = filteredOptions.findIndex((opt) => opt.value === value && !opt.disabled)
-      setActiveIndex(idx >= 0 ? idx : filteredOptions.findIndex((opt) => !opt.disabled))
-      if (enableSearch) {
-        const timer = window.setTimeout(() => {
-          searchInputRef.current?.focus()
-        }, 40)
-        return () => window.clearTimeout(timer)
-      }
+    if (open && enableSearch) {
+      const timer = window.setTimeout(() => {
+        searchInputRef.current?.focus()
+      }, 40)
+      return () => window.clearTimeout(timer)
     }
-  }, [open, enableSearch, filteredOptions, value])
+  }, [open, enableSearch])
 
-  const moveHighlight = (delta: 1 | -1) => {
-    if (filteredOptions.length === 0) return
-    let idx = activeIndex
-    for (let step = 0; step < filteredOptions.length; step++) {
-      idx = (idx + delta + filteredOptions.length) % filteredOptions.length
-      if (!filteredOptions[idx]?.disabled) {
-        setActiveIndex(idx)
-        return
-      }
-    }
-  }
+  const selectedIndex = useMemo(
+    () => filteredOptions.findIndex((opt) => opt.value === value && !opt.disabled),
+    [filteredOptions, value],
+  )
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (disabled) return
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+  const isItemDisabled = useCallback(
+    (index: number) => Boolean(filteredOptions[index]?.disabled),
+    [filteredOptions],
+  )
 
-    if (event.key === 'Escape') {
-      if (open) {
-        event.preventDefault()
-        event.stopPropagation()
-        setOpen(false)
-        setSearch('')
-      }
-      return
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      if (!open) {
-        setOpen(true)
-      } else {
-        moveHighlight(1)
-      }
-      return
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      if (!open) {
-        setOpen(true)
-      } else {
-        moveHighlight(-1)
-      }
-      return
-    }
-
-    if (event.key === 'Enter' && open) {
-      event.preventDefault()
-      const picked = filteredOptions[activeIndex]
+  const { activeIndex, setActiveIndex, listboxRef, handleKeyDown } = useListboxNavigation({
+    open,
+    itemCount: filteredOptions.length,
+    selectedIndex,
+    disabled,
+    isItemDisabled,
+    onOpen: () => setOpen(true),
+    onClose: closeMenu,
+    onSelectIndex: (index) => {
+      const picked = filteredOptions[index]
       if (picked && !picked.disabled) {
         onChange(picked.value)
-        setOpen(false)
-        setSearch('')
+        closeMenu()
       }
-    }
-  }
+    },
+  })
 
   const isSmall = size === 'sm'
 
@@ -154,8 +114,7 @@ export default function Select<T extends string = string>({
       onKeyDown={handleKeyDown}
       onBlur={(event) => {
         if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
-          setOpen(false)
-          setSearch('')
+          closeMenu()
         }
       }}
     >
@@ -167,8 +126,11 @@ export default function Select<T extends string = string>({
         aria-controls={open ? listboxId : undefined}
         onClick={() => {
           if (!disabled) {
-            setOpen((prev) => !prev)
-            if (open) setSearch('')
+            if (open) {
+              closeMenu()
+            } else {
+              setOpen(true)
+            }
           }
         }}
         className={`w-full flex items-center justify-between gap-1.5 rounded border-[1.5px] bg-white transition select-none outline-none focus-visible:ring-2 focus-visible:ring-[#df4e3e]/30 shadow-[1px_1px_0px_#1f1f1f] ${
@@ -229,6 +191,7 @@ export default function Select<T extends string = string>({
           )}
 
           <div
+            ref={listboxRef}
             id={listboxId}
             role="listbox"
             className="max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5"
@@ -254,8 +217,7 @@ export default function Select<T extends string = string>({
                     onClick={() => {
                       if (!opt.disabled) {
                         onChange(opt.value)
-                        setOpen(false)
-                        setSearch('')
+                        closeMenu()
                       }
                     }}
                     className={`w-full flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-left transition select-none text-xs ${

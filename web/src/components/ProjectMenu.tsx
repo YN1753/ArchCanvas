@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { useStore } from '../store/erStore'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '../api/client'
+import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
+import { useStore } from '../store/erStore'
+import { isImeComposing } from '../utils/keyboard'
 
 export default function ProjectMenu() {
   const projects = useStore((state) => state.projects)
@@ -26,12 +28,14 @@ export default function ProjectMenu() {
   const renameInputRef = useRef<HTMLInputElement>(null)
   const cancelDeleteRef = useRef<HTMLButtonElement>(null)
 
+  const closeDropdown = useCallback(() => {
+    setMenuOpen(false)
+  }, [])
+
+  useDismissibleLayer(menuRef, menuOpen && !createOpen && !renameTarget && !deleteTarget, closeDropdown)
+
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
+    if (!createOpen && !renameTarget && !deleteTarget) return
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         if (deleteTarget) {
@@ -40,20 +44,12 @@ export default function ProjectMenu() {
           setRenameTarget(null)
         } else if (createOpen) {
           setCreateOpen(false)
-        } else if (menuOpen) {
-          setMenuOpen(false)
         }
       }
     }
-    if (menuOpen || createOpen || renameTarget || deleteTarget) {
-      document.addEventListener('mousedown', handleClickOutside)
-      document.addEventListener('keydown', handleKeyDown)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [menuOpen, createOpen, renameTarget, deleteTarget])
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [createOpen, renameTarget, deleteTarget])
 
   useEffect(() => {
     if (createOpen) {
@@ -278,7 +274,7 @@ export default function ProjectMenu() {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) {
+                    if (e.key === 'Enter' && isImeComposing(e)) {
                       e.preventDefault()
                       return
                     }
@@ -296,7 +292,7 @@ export default function ProjectMenu() {
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) {
+                    if (e.key === 'Enter' && isImeComposing(e)) {
                       e.preventDefault()
                       return
                     }

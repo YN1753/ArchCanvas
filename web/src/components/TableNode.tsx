@@ -1,12 +1,13 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Handle, Position, useStore as useFlowStore, type NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
+import { resolvePrimaryKeyAttribute, resolveRelationForeignKey } from '../domain/foreignKey'
 import {
-  isForeignKeyColumnName,
   NODE_HEADER_HEIGHT,
   NODE_ROW_HEIGHT,
   NODE_WIDTH,
   nodeHeight,
+  type RelationEdge,
   type TableNode as TableNodeType,
 } from '../flow/adapter'
 import { useStore } from '../store/erStore'
@@ -41,42 +42,48 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
   const fkAttrNames = data.foreignKeyAttrNames ?? []
   const addAttribute = useStore((state) => state.addAttribute)
   const isFocused = useStore((state) => state.focusedEntityId === entity.id)
+  const selectedRelationId = useStore((state) =>
+    state.selection?.kind === 'relation' ? state.selection.id : null,
+  )
 
-  // 使用原始值粒度 Selector 计算高亮字段 ID，避免画布无关实体编辑触发全图节点重绘
-  const highlightedAttrId = useStore((state) => {
-    if (state.selection?.kind !== 'relation') {
-      return null
+  // 优先直接读取 RelationEdgeData 已算好的权威 sourceAttrId / targetAttrId（消除多边消歧不一致）
+  const edgeResolvedKey = useFlowStore((rf) => {
+    if (!selectedRelationId) return null
+    const edge = rf.edgeLookup.get(selectedRelationId) as RelationEdge | undefined
+    if (!edge?.data) return undefined
+    const matched: string[] = []
+    if (edge.source === entity.id && edge.data.sourceAttrId) {
+      matched.push(edge.data.sourceAttrId)
     }
-    const activeRelation = state.design.relations.find((r) => r.id === state.selection!.id)
-    if (!activeRelation) {
-      return null
+    if (edge.target === entity.id && edge.data.targetAttrId) {
+      matched.push(edge.data.targetAttrId)
     }
+    return matched.join('|')
+  })
+
+  // 仅当边尚未挂载到 React Flow edgeLookup 时回退调用统一 foreignKey 领域解析器
+  const fallbackHighlightedKey = useStore((state) => {
+    if (!selectedRelationId || edgeResolvedKey !== undefined) {
+      return ''
+    }
+    const activeRelation = state.design.relations.find((r) => r.id === selectedRelationId)
+    if (!activeRelation) return ''
+
+    const matched: string[] = []
     if (activeRelation.source_entity_id === entity.id) {
-      const pk = entity.attributes.find((a) => a.is_primary_key) ?? entity.attributes[0]
-      return pk?.id ?? null
+      const pk = resolvePrimaryKeyAttribute(entity)
+      if (pk) matched.push(pk.id)
     }
     if (activeRelation.target_entity_id === entity.id) {
       const srcEnt = state.design.entities.find((e) => e.id === activeRelation.source_entity_id)
-      if (!srcEnt) {
-        return null
-      }
-      const srcName = srcEnt.name.toLowerCase()
-      const srcSingular = srcName.endsWith('s') ? srcName.slice(0, -1) : srcName
-      const match = entity.attributes.find((a) => {
-        if (a.is_primary_key) return false
-        const name = a.name.toLowerCase()
-        return (
-          name === `${srcName}_id` ||
-          name === `${srcSingular}_id` ||
-          name === `${srcName}id` ||
-          name === `${srcSingular}id` ||
-          isForeignKeyColumnName(a.name)
-        )
-      })
-      return match?.id ?? null
+      const fk = resolveRelationForeignKey(srcEnt, entity, { allEntities: state.design.entities })
+      if (fk) matched.push(fk.id)
     }
-    return null
+    return matched.join('|')
   })
+
+  const activeHighlightKey = edgeResolvedKey ?? fallbackHighlightedKey
+  const highlightedIds = activeHighlightKey ? activeHighlightKey.split('|').filter(Boolean) : []
 
   const chineseName = entity.comment?.trim() || getEntityChineseName(entity.name, entity.comment)
 
@@ -91,7 +98,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
       }`}
       style={{ width: NODE_WIDTH, minHeight: nodeHeight(entity) }}
     >
-      {/* 表级左右微弱兜底锚点（用于整表直连，平时完全隐藏） */}
       <Handle
         type="target"
         position={Position.Left}
@@ -105,7 +111,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
         className="!-right-[6px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !border-2 !border-white !bg-[#1f1f1f] hover:!scale-125 !transition-all !opacity-0 hover:!opacity-100"
       />
 
-      {/* 表头 (暖色纸感底色 + 1.5px 黑线) */}
       <div
         className={`flex items-center justify-between gap-1.5 rounded-t-[14.5px] border-b-[1.5px] border-[#1f1f1f] px-3.5 transition-colors ${
           selected ? 'bg-[#fdf0ee]' : 'bg-[#faf7f0]'
@@ -113,7 +118,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
         style={{ height: NODE_HEADER_HEIGHT }}
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          {/* 表格图标 */}
           <div
             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-lg transition-colors border border-[#1f1f1f] ${
               selected ? 'bg-[#df4e3e] text-white' : 'bg-white text-[#1f1f1f]'
@@ -147,13 +151,11 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
           </div>
         </div>
 
-        {/* 字段计数徽标 */}
         <span className="shrink-0 rounded-md border border-[#1f1f1f] bg-white px-1.5 py-0.5 font-mono text-[10px] font-bold text-stone-700 shadow-2xs">
           {entity.attributes.length}
         </span>
       </div>
 
-      {/* 字段列表区（方案 A：字段行级独立锚点嵌入） */}
       <div className="divide-y divide-stone-100 bg-white">
         {entity.attributes.length === 0 ? (
           <div
@@ -165,7 +167,7 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
         ) : (
           entity.attributes.map((attribute) => {
             const isFk = fkAttrNames.includes(attribute.name)
-            const isRowHighlighted = highlightedAttrId === attribute.id
+            const isRowHighlighted = highlightedIds.includes(attribute.id)
 
             return (
               <div
@@ -179,7 +181,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
                 }`}
                 style={{ height: NODE_ROW_HEIGHT }}
               >
-                {/* 字段入边连接锚点 (Target Handle) */}
                 <Handle
                   type="target"
                   position={Position.Left}
@@ -193,7 +194,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
                   }`}
                 />
 
-                {/* 左侧：主键/外键标记与字段名 */}
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   {attribute.is_primary_key ? (
                     <span
@@ -227,16 +227,12 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
                   </span>
 
                   {!attribute.is_nullable && !attribute.is_primary_key && (
-                    <span
-                      className="text-[9px] text-stone-400 font-mono"
-                      title="非空 (NOT NULL)"
-                    >
+                    <span className="text-[9px] text-stone-400 font-mono" title="非空 (NOT NULL)">
                       *
                     </span>
                   )}
                 </div>
 
-                {/* 右侧：数据类型徽标 */}
                 <span
                   className={`ident shrink-0 rounded border px-1 py-0.2 text-[10px] ${getTypeBadgeStyle(
                     attribute.db_type,
@@ -245,7 +241,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
                   {attribute.db_type}
                 </span>
 
-                {/* 字段出边连接锚点 (Source Handle) */}
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -264,7 +259,6 @@ function TableNode({ data, selected }: NodeProps<TableNodeType>) {
         )}
       </div>
 
-      {/* 底部微操作条：快速新增字段 */}
       <div
         className="flex items-center rounded-b-[14.5px] border-t-[1.5px] border-[#1f1f1f] bg-[#faf7f0] px-2"
         style={{ height: 41 }}

@@ -181,7 +181,7 @@ export function layoutDesign(design: ERDesign): ERDesign {
 
   // 垂直死区消除（Vertical Dead Space Compaction）：消除列内悬殊的数百像素空白空洞
   const targetGap = 52
-  const sortedColBands = Array.from(colMap.keys()).sort((a, b) => a - b)
+  const sortedColBands = Array.from(colMap.keys()).toSorted((a, b) => a - b)
 
   for (const band of sortedColBands) {
     const colNodes = colMap.get(band)!

@@ -5,59 +5,169 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"go/format"
-	"path"
+	"reflect"
 	"strings"
 	"text/template"
 
 	"archcanvas/internal/domain"
 	"archcanvas/internal/dto"
-	"archcanvas/internal/service"
 	"archcanvas/internal/validator"
 )
 
 //go:embed templates/*
 var templateFS embed.FS
 
-type GeneratorService struct {
-	projectService *service.ProjectService
-	templates      *template.Template
+type TemplateScope int
+
+const (
+	ScopeProject TemplateScope = iota
+	ScopeEntity
+)
+
+// TemplateRule declaratively defines a single scaffold file generation rule.
+type TemplateRule struct {
+	TemplateName string
+	Scope        TemplateScope
+	FormatGo     bool
+	OutputPath   func(proj ProjectTemplateData, ent EntityTemplateData) string
+	BuildContext func(proj ProjectTemplateData, ent EntityTemplateData) any
+	When         func(proj ProjectTemplateData) bool
 }
 
-func NewGeneratorService(projectService *service.ProjectService) (*GeneratorService, error) {
+func buildEntityRenderContext(proj ProjectTemplateData, ent EntityTemplateData) any {
+	hasTime := strings.Contains(ent.PrimaryKey.GoType, "time.Time")
+	if !hasTime {
+		for _, attr := range ent.Attributes {
+			if strings.Contains(attr.GoType, "time.Time") {
+				hasTime = true
+				break
+			}
+		}
+	}
+	return EntityRenderContext{
+		ModuleName: proj.ModuleName,
+		Entity:     ent,
+		HasTime:    hasTime,
+	}
+}
+
+func projectOnlyPath(relPath string) func(ProjectTemplateData, EntityTemplateData) string {
+	return func(ProjectTemplateData, EntityTemplateData) string { return relPath }
+}
+
+func projectOnlyCtx(proj ProjectTemplateData, _ EntityTemplateData) any {
+	return proj
+}
+
+// scaffoldManifest declares the complete ordered manifest of generated project and entity files.
+var scaffoldManifest = []TemplateRule{
+	{TemplateName: "go.mod.tmpl", Scope: ScopeProject, OutputPath: projectOnlyPath("go.mod"), BuildContext: projectOnlyCtx},
+	{TemplateName: "config.example.yaml.tmpl", Scope: ScopeProject, OutputPath: projectOnlyPath("configs/config.example.yaml"), BuildContext: projectOnlyCtx},
+	{TemplateName: "config.example.yaml.tmpl", Scope: ScopeProject, OutputPath: projectOnlyPath("configs/config.yaml"), BuildContext: projectOnlyCtx},
+	{TemplateName: "config.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("internal/config/config.go"), BuildContext: projectOnlyCtx},
+	{TemplateName: "database.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("internal/database/database.go"), BuildContext: projectOnlyCtx},
+	{
+		TemplateName: "redis.go.tmpl",
+		Scope:        ScopeProject,
+		FormatGo:     true,
+		OutputPath:   projectOnlyPath("internal/cache/redis.go"),
+		BuildContext: projectOnlyCtx,
+		When:         func(proj ProjectTemplateData) bool { return proj.EnableRedis },
+	},
+	{TemplateName: "base_model.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("internal/model/base.go"), BuildContext: projectOnlyCtx},
+	{
+		TemplateName: "model.go.tmpl",
+		Scope:        ScopeEntity,
+		FormatGo:     true,
+		OutputPath: func(_ ProjectTemplateData, ent EntityTemplateData) string {
+			return fmt.Sprintf("internal/model/%s.go", ent.FileStem)
+		},
+		BuildContext: buildEntityRenderContext,
+	},
+	{
+		TemplateName: "repo.go.tmpl",
+		Scope:        ScopeEntity,
+		FormatGo:     true,
+		OutputPath: func(_ ProjectTemplateData, ent EntityTemplateData) string {
+			return fmt.Sprintf("internal/repository/%s_repo.go", ent.FileStem)
+		},
+		BuildContext: buildEntityRenderContext,
+	},
+	{
+		TemplateName: "service.go.tmpl",
+		Scope:        ScopeEntity,
+		FormatGo:     true,
+		OutputPath: func(_ ProjectTemplateData, ent EntityTemplateData) string {
+			return fmt.Sprintf("internal/service/%s_service.go", ent.FileStem)
+		},
+		BuildContext: buildEntityRenderContext,
+	},
+	{
+		TemplateName: "handler.go.tmpl",
+		Scope:        ScopeEntity,
+		FormatGo:     true,
+		OutputPath: func(_ ProjectTemplateData, ent EntityTemplateData) string {
+			return fmt.Sprintf("internal/handler/%s_handler.go", ent.FileStem)
+		},
+		BuildContext: buildEntityRenderContext,
+	},
+	{TemplateName: "router.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("internal/router/router.go"), BuildContext: projectOnlyCtx},
+	{TemplateName: "response.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("pkg/response/response.go"), BuildContext: projectOnlyCtx},
+	{TemplateName: "main.go.tmpl", Scope: ScopeProject, FormatGo: true, OutputPath: projectOnlyPath("cmd/server/main.go"), BuildContext: projectOnlyCtx},
+	{TemplateName: "gitignore.tmpl", Scope: ScopeProject, OutputPath: projectOnlyPath(".gitignore"), BuildContext: projectOnlyCtx},
+	{TemplateName: "readme.md.tmpl", Scope: ScopeProject, OutputPath: projectOnlyPath("README.md"), BuildContext: projectOnlyCtx},
+	{
+		TemplateName: "dockerfile.tmpl",
+		Scope:        ScopeProject,
+		OutputPath:   projectOnlyPath("Dockerfile"),
+		BuildContext: projectOnlyCtx,
+		When:         func(proj ProjectTemplateData) bool { return proj.EnableDocker },
+	},
+	{
+		TemplateName: "makefile.tmpl",
+		Scope:        ScopeProject,
+		OutputPath:   projectOnlyPath("Makefile"),
+		BuildContext: projectOnlyCtx,
+		When:         func(proj ProjectTemplateData) bool { return proj.EnableDocker },
+	},
+}
+
+type GeneratorService struct {
+	designReader ERDesignReader
+	templates    *template.Template
+}
+
+func isNilDesignReader(r ERDesignReader) bool {
+	if r == nil {
+		return true
+	}
+	v := reflect.ValueOf(r)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
+func NewGeneratorService(designReader ERDesignReader) (*GeneratorService, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.tmpl")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse generator templates: %w", err)
 	}
-
+	if isNilDesignReader(designReader) {
+		designReader = nil
+	}
 	return &GeneratorService{
-		projectService: projectService,
-		templates:      tmpl,
+		designReader: designReader,
+		templates:    tmpl,
 	}, nil
 }
 
-// cleanSafeZipPath 严格校验生成文件路径，彻底阻断 Zip Slip 目录穿越漏洞。
-func cleanSafeZipPath(rawPath string) (string, error) {
-	normalized := strings.ReplaceAll(strings.TrimSpace(rawPath), "\\", "/")
-	if normalized == "" || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
-		return "", fmt.Errorf("unsafe archive file path: %q", rawPath)
-	}
-	for _, seg := range strings.Split(normalized, "/") {
-		if seg == ".." || seg == "." || seg == "" {
-			return "", fmt.Errorf("path traversal segment detected in %q", rawPath)
-		}
-	}
-	cleaned := path.Clean(normalized)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
-		return "", fmt.Errorf("unsafe cleaned archive path: %q", cleaned)
-	}
-	return cleaned, nil
-}
-
-// GenerateFileTree 生成工程文件列表 (供前端弹窗代码树与预览展示)
+// GenerateFileTree loads the project's ERDesign and renders the full Go scaffold file tree.
 func (s *GeneratorService) GenerateFileTree(ctx context.Context, req dto.GenerateRequest) ([]GeneratedFile, error) {
-	design, err := s.projectService.GetERDesign(ctx, req.ProjectID)
+	if s.designReader == nil {
+		return nil, errors.New("er design reader is not initialized")
+	}
+	design, err := s.designReader.GetERDesign(ctx, req.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("获取项目 ER 设计失败: %w", err)
 	}
@@ -68,167 +178,61 @@ func (s *GeneratorService) GenerateFileTree(ctx context.Context, req dto.Generat
 	return s.GenerateFileTreeFromDesign(design, req)
 }
 
-// GenerateFileTreeFromDesign 根据 ER 模型与生成请求生成完整工程文件树
+// GenerateFileTreeFromDesign renders all scaffold files by iterating over the declarative scaffoldManifest.
 func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, req dto.GenerateRequest) ([]GeneratedFile, error) {
 	if design == nil || len(design.Entities) == 0 {
 		return nil, validator.NewValidationError("当前 ER 设计中没有任何物理数据表，无法生成空工程")
 	}
 
-	projectCtx := BuildProjectContext(req, design)
-	var files []GeneratedFile
+	projectCtx := BuildTemplateData(req, design)
+	files := make([]GeneratedFile, 0, len(scaffoldManifest)+len(projectCtx.Entities)*4)
 
-	// 1. go.mod
-	content, err := s.render("go.mod.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("go.mod", content))
-
-	// 2. configs
-	cfgExample, err := s.render("config.example.yaml.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("configs/config.example.yaml", cfgExample))
-	files = append(files, makeFile("configs/config.yaml", cfgExample))
-
-	// 3. internal/config/config.go
-	cfgGo, err := s.renderGo("config.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("internal/config/config.go", cfgGo))
-
-	// 4. internal/database/database.go
-	dbGo, err := s.renderGo("database.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("internal/database/database.go", dbGo))
-
-	// 5. internal/cache/redis.go (可选)
-	if projectCtx.EnableRedis {
-		redisGo, err := s.renderGo("redis.go.tmpl", projectCtx)
-		if err != nil {
-			return nil, err
+	renderRule := func(rule TemplateRule, ent EntityTemplateData) error {
+		data := rule.BuildContext(projectCtx, ent)
+		var (
+			content string
+			err     error
+		)
+		if rule.FormatGo {
+			content, err = s.renderGo(rule.TemplateName, data)
+		} else {
+			content, err = s.render(rule.TemplateName, data)
 		}
-		files = append(files, makeFile("internal/cache/redis.go", redisGo))
+		if err != nil {
+			if rule.Scope == ScopeEntity {
+				return fmt.Errorf("render %s for %s failed: %w", rule.TemplateName, ent.StructName, err)
+			}
+			return err
+		}
+		safePath, err := cleanSafeZipPath(rule.OutputPath(projectCtx, ent))
+		if err != nil {
+			return err
+		}
+		files = append(files, makeFile(safePath, content))
+		return nil
 	}
 
-	// 6. internal/model/base.go
-	baseModelGo, err := s.renderGo("base_model.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("internal/model/base.go", baseModelGo))
-
-	// 7. 各实体表对应模型、仓储、业务、控制器
-	for _, ent := range projectCtx.Entities {
-		hasTime := strings.Contains(ent.PrimaryKey.GoType, "time.Time")
-		if !hasTime {
-			for _, attr := range ent.Attributes {
-				if strings.Contains(attr.GoType, "time.Time") {
-					hasTime = true
-					break
+	for _, rule := range scaffoldManifest {
+		if rule.When != nil && !rule.When(projectCtx) {
+			continue
+		}
+		if rule.Scope == ScopeEntity {
+			for _, ent := range projectCtx.Entities {
+				if err := renderRule(rule, ent); err != nil {
+					return nil, err
 				}
 			}
+			continue
 		}
-
-		entCtx := struct {
-			ModuleName string
-			Entity     EntityData
-			HasTime    bool
-		}{
-			ModuleName: projectCtx.ModuleName,
-			Entity:     ent,
-			HasTime:    hasTime,
-		}
-
-		mCode, err := s.renderGo("model.go.tmpl", entCtx)
-		if err != nil {
-			return nil, fmt.Errorf("render model %s failed: %w", ent.StructName, err)
-		}
-		files = append(files, makeFile(fmt.Sprintf("internal/model/%s.go", ent.FileStem), mCode))
-
-		rCode, err := s.renderGo("repo.go.tmpl", entCtx)
-		if err != nil {
-			return nil, fmt.Errorf("render repo %s failed: %w", ent.StructName, err)
-		}
-		files = append(files, makeFile(fmt.Sprintf("internal/repository/%s_repo.go", ent.FileStem), rCode))
-
-		sCode, err := s.renderGo("service.go.tmpl", entCtx)
-		if err != nil {
-			return nil, fmt.Errorf("render service %s failed: %w", ent.StructName, err)
-		}
-		files = append(files, makeFile(fmt.Sprintf("internal/service/%s_service.go", ent.FileStem), sCode))
-
-		hCode, err := s.renderGo("handler.go.tmpl", entCtx)
-		if err != nil {
-			return nil, fmt.Errorf("render handler %s failed: %w", ent.StructName, err)
-		}
-		files = append(files, makeFile(fmt.Sprintf("internal/handler/%s_handler.go", ent.FileStem), hCode))
-	}
-
-	// 8. internal/router/router.go
-	routerGo, err := s.renderGo("router.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("internal/router/router.go", routerGo))
-
-	// 9. pkg/response/response.go
-	respGo, err := s.renderGo("response.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("pkg/response/response.go", respGo))
-
-	// 10. cmd/server/main.go
-	mainGo, err := s.renderGo("main.go.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("cmd/server/main.go", mainGo))
-
-	// 11. 辅助文件
-	gitIgnore, err := s.render("gitignore.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile(".gitignore", gitIgnore))
-
-	readme, err := s.render("readme.md.tmpl", projectCtx)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, makeFile("README.md", readme))
-
-	if projectCtx.EnableDocker {
-		dockerfile, err := s.render("dockerfile.tmpl", projectCtx)
-		if err != nil {
+		if err := renderRule(rule, EntityTemplateData{}); err != nil {
 			return nil, err
 		}
-		files = append(files, makeFile("Dockerfile", dockerfile))
-
-		makefile, err := s.render("makefile.tmpl", projectCtx)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, makeFile("Makefile", makefile))
-	}
-
-	for i := range files {
-		safePath, err := cleanSafeZipPath(files[i].Path)
-		if err != nil {
-			return nil, err
-		}
-		files[i].Path = safePath
 	}
 
 	return files, nil
 }
 
-// GenerateZip 在内存中流式打包为 zip 二进制流（全路径防穿越保护）
+// GenerateZip packages all generated scaffold files into an in-memory ZIP archive with Zip Slip defense.
 func (s *GeneratorService) GenerateZip(ctx context.Context, req dto.GenerateRequest) (*bytes.Buffer, error) {
 	files, err := s.GenerateFileTree(ctx, req)
 	if err != nil {

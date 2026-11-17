@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"archcanvas/pkg/id"
+	"archcanvas/pkg/reqctx"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,7 +15,6 @@ type contextKey string
 
 const (
 	TraceIDKey       contextKey = "trace_id"
-	loggerKey        contextKey = "trace_logger"
 	HeaderXRequestID string     = "X-Request-ID"
 	HeaderXTraceID   string     = "X-Trace-ID"
 )
@@ -39,8 +40,8 @@ func TraceMiddleware() gin.HandlerFunc {
 			slog.String("path", c.Request.URL.Path),
 		)
 
-		ctx := context.WithValue(c.Request.Context(), TraceIDKey, traceID)
-		ctx = context.WithValue(ctx, loggerKey, reqLogger)
+		ctx := reqctx.WithTraceID(c.Request.Context(), traceID)
+		ctx = reqctx.WithLogger(ctx, reqLogger)
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Header(HeaderXRequestID, traceID)
@@ -52,24 +53,15 @@ func TraceMiddleware() gin.HandlerFunc {
 
 // GetTraceID 从 Context 中提取绑定的 TraceID。
 func GetTraceID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	if val, ok := ctx.Value(TraceIDKey).(string); ok && val != "" {
-		return val
-	}
-	return ""
+	return reqctx.TraceIDFromContext(ctx)
+}
+
+// TraceIDFromContext 从 Context 中提取绑定的 TraceID。
+func TraceIDFromContext(ctx context.Context) string {
+	return reqctx.TraceIDFromContext(ctx)
 }
 
 // LoggerFromContext 从 Context 中提取已注入 trace_id 的结构化日志器；若不存在则回退至 slog.Default()。
 func LoggerFromContext(ctx context.Context) *slog.Logger {
-	if ctx != nil {
-		if l, ok := ctx.Value(loggerKey).(*slog.Logger); ok && l != nil {
-			return l
-		}
-		if traceID := GetTraceID(ctx); traceID != "" {
-			return slog.Default().With(slog.String("trace_id", traceID))
-		}
-	}
-	return slog.Default()
+	return reqctx.LoggerFromContext(ctx)
 }

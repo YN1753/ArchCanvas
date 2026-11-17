@@ -4,13 +4,7 @@ server:
 
 database:
   driver: "{{ .DBDriver }}" # mysql | postgres | sqlite
-  {{- if eq .DBDriver "mysql" }}
-  dsn: "root:123456@tcp(127.0.0.1:3306)/{{ .DBName }}?charset=utf8mb4&parseTime=True&loc=Local"
-  {{- else if eq .DBDriver "postgres" }}
-  dsn: "host=localhost user=postgres password=postgres dbname={{ .DBName }} port=5432 sslmode=disable TimeZone=Asia/Shanghai"
-  {{- else }}
-  dsn: "data.db"
-  {{- end }}
+  dsn: "{{ .DefaultDSN }}"
   max_open_conns: 100
   max_idle_conns: 10
   conn_max_lifetime: "1h"

@@ -44,7 +44,7 @@ export default function App() {
       }
 
       // 模态框/抽屉打开时暂停画布级快捷键，避免误撤销底层画布
-      if (hasModalOpen || document.querySelector('[role="dialog"]')) {
+      if (hasModalOpen || document.querySelector('[role="dialog"], dialog[open]')) {
         return
       }
 

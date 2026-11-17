@@ -25,6 +25,9 @@ import type {
   SchemaReviewReport,
 } from '../types/dsl'
 import type { ValidationReport } from '../validate/dsl'
+import type { DomainPatchPair, HistoryDomainKey, HistoryEntry } from './patch'
+
+export type { DomainPatchPair, HistoryDomainKey, HistoryEntry }
 
 export type Selection =
   | { kind: 'entity'; id: string }
@@ -45,6 +48,8 @@ export type DataDialogTab =
   | 'export-image'
   | 'import-sql'
   | 'import-json'
+  | `export-${string}`
+  | `import-${string}`
 
 // 1. History & Persistence Slice
 export interface HistorySlice {
@@ -88,8 +93,6 @@ export interface ProjectSlice {
   models: ModelItem[]
   providers: ProviderInfo[]
   selectedModel: { provider: string; model: string; base_url?: string } | null
-  modelsLoading: boolean
-  modelsError: string | null
 
   bootstrap: () => Promise<void>
   retryBootstrap: () => Promise<void>
@@ -111,7 +114,6 @@ export interface ErDesignSlice {
   design: ERDesign
   report: ValidationReport
 
-  moveEntity: (id: string, position: { x: number; y: number }) => void
   moveEntities: (moves: Array<{ id: string; position: { x: number; y: number } }>) => void
   addEntity: (position?: { x: number; y: number }) => string
   renameEntity: (id: string, name: string) => void
@@ -138,7 +140,6 @@ export interface ConceptualSlice {
 
   updateChenPositions: (moves: Array<{ id: string; position: { x: number; y: number } }>) => void
   resetChenPositions: () => void
-  saveConceptualDesign: (design: ConceptualDesign) => Promise<void>
 
   addConcept: (position?: { x: number; y: number }) => void
   updateConcept: (id: string, patch: Partial<BusinessConcept>) => void
@@ -212,7 +213,6 @@ export interface UiSlice {
   openDataDialog: (tab?: DataDialogTab) => void
   closeDataDialog: () => void
   dismissToast: () => void
-  showToast: (text: string, kind?: 'info' | 'error') => void
 
   setCanvasViewMode: (mode: CanvasViewMode) => void
   setDslView: (view: 'canvas' | 'code') => void

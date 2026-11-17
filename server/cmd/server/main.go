@@ -123,9 +123,10 @@ func main() {
 	erDesignRepo := repository.NewERDesignRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
+	quotaRepo := repository.NewShowcaseQuotaRepository(db)
 
 	modelManager := agent.NewModelManager(appCtx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider, configDir)
-	quotaManager := middleware.NewShowcaseQuotaManager(db, cfg.Showcase)
+	quotaManager := middleware.NewShowcaseQuotaManager(quotaRepo, cfg.Showcase)
 
 	projectService := service.NewProjectService(projectRepo, erDesignRepo, messageRepo, modelManager)
 	projectService.SetShowcaseConfig(cfg.Showcase)

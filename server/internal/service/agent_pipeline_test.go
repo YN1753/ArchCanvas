@@ -1,9 +1,15 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"archcanvas/internal/agent"
 	"archcanvas/internal/domain"
+	"archcanvas/internal/dto"
+	"archcanvas/internal/service/tools"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
 // TestDerivePhysicalRuleBased_SliceReallocPreservesForeignKeys 验证 [P0-DATA-03] 修复：
@@ -135,5 +141,126 @@ func TestMergeConceptualDesign_OperationDeleteAndDelta(t *testing.T) {
 	}
 	if len(merged.Relations) != 2 {
 		t.Fatalf("expected User->Order preserved, Order->Coupon pruned, Order->Invoice added (2 total), got: %+v", merged.Relations)
+	}
+}
+
+// TestChat_PreservesConceptualOnClarificationAndForwardsDialect 验证 Stage 2 Divergence #1 修复：
+// Chat 统一复用多阶段管线后，在触发澄清时保护已有概念模型不丢失，且正确向下游物理推导传递 req.Dialect（不硬编码覆盖为 mysql）。
+func TestChat_PreservesConceptualOnClarificationAndForwardsDialect(t *testing.T) {
+	projSvc, _ := setupFileBackedProjectService(t)
+	ctx := context.Background()
+
+	proj, err := projSvc.CreateProject(ctx, "Chat 统一管线测试", "")
+	if err != nil {
+		t.Fatalf("CreateProject failed: %v", err)
+	}
+
+	initialConcept := domain.ConceptualDesign{
+		Summary: "已有核心概念",
+		Concepts: []domain.BusinessConcept{
+			{ID: "c_user", Name: "User", DisplayName: "用户"},
+			{ID: "c_order", Name: "Order", DisplayName: "订单"},
+		},
+	}
+	if err := projSvc.SaveConceptualDesign(ctx, proj.ID, initialConcept); err != nil {
+		t.Fatalf("SaveConceptualDesign failed: %v", err)
+	}
+
+	// 第 1 次 Chat：模型返回澄清且未携带新概念 -> 既有概念模型必须完好保留
+	clarifyMock := NewMockChatModel(
+		[]*schema.Message{
+			makeRequirementToolMsg(tools.ProposeRequirementArgs{
+				Summary:           "需要进一步确认退款策略",
+				NeedClarification: true,
+				Questions:         []string{"是否支持部分退款？"},
+			}),
+		},
+	)
+	clarifySvc := NewAgentService(&agent.ModelManager{
+		CurrentProvider: "mock",
+		CurrentName:     "m",
+		Cache:           map[string]model.ToolCallingChatModel{"mock:m": clarifyMock},
+	}, projSvc)
+
+	ch1, err := clarifySvc.Chat(ctx, dto.ChatReq{
+		ProjectID: proj.ID,
+		Input:     "增加退款模块但规则待定",
+	})
+	if err != nil {
+		t.Fatalf("Chat (clarify) failed: %v", err)
+	}
+	for range ch1 {
+	}
+
+	afterClarify, err := projSvc.GetConceptualDesign(ctx, proj.ID)
+	if err != nil || afterClarify == nil || len(afterClarify.Concepts) != 2 {
+		t.Fatalf("expected existing 2 concepts preserved after Chat clarification, got: %+v (err=%v)", afterClarify, err)
+	}
+
+	// 第 2 次 Chat：传入 Dialect="postgres"，物理推导回退确定性引擎，验证生成 TIMESTAMPTZ 与 BIGINT（而非硬编码 mysql 的 DATETIME / BIGINT UNSIGNED）
+	pgMock := NewMockChatModel(
+		[]*schema.Message{
+			makeRequirementToolMsg(tools.ProposeRequirementArgs{
+				Summary: "新增退款单概念",
+				Concepts: []domain.BusinessConcept{
+					{Name: "Refund", DisplayName: "退款单", Operation: domain.OpCreate, Attributes: []domain.ConceptAttribute{
+						{Name: "amount", DisplayName: "退款金额", Category: domain.AttrNumber, Required: true},
+					}},
+				},
+				NeedClarification: false,
+			}),
+		},
+		// 后续物理阶段让 mock 返回空文本，触发带 Dialect 的确定性推导引擎以便精确断言方言透传
+		[]*schema.Message{schema.AssistantMessage("fallback", nil)},
+		[]*schema.Message{schema.AssistantMessage("fallback", nil)},
+		[]*schema.Message{schema.AssistantMessage("fallback", nil)},
+	)
+	pgSvc := NewAgentService(&agent.ModelManager{
+		CurrentProvider: "mock",
+		CurrentName:     "m",
+		Cache:           map[string]model.ToolCallingChatModel{"mock:m": pgMock},
+	}, projSvc)
+
+	ch2, err := pgSvc.Chat(ctx, dto.ChatReq{
+		ProjectID: proj.ID,
+		Input:     "确认支持全额与部分退款，新增退款单实体",
+		Dialect:   "postgres",
+	})
+	if err != nil {
+		t.Fatalf("Chat (postgres) failed: %v", err)
+	}
+	var gotResult *domain.ERDesign
+	for evt := range ch2 {
+		if evt.Type == EventResult {
+			if d, ok := evt.Data.(*domain.ERDesign); ok {
+				gotResult = d
+			}
+		}
+	}
+	if gotResult == nil {
+		t.Fatal("expected ERDesign result from Chat")
+	}
+
+	var refundsEnt *domain.Entity
+	for i := range gotResult.Entities {
+		if gotResult.Entities[i].Name == "refunds" {
+			refundsEnt = &gotResult.Entities[i]
+			break
+		}
+	}
+	if refundsEnt == nil {
+		t.Fatalf("expected 'refunds' entity, got: %+v", gotResult.Entities)
+	}
+	var sawNumeric, sawTimestamptz bool
+	for _, a := range refundsEnt.Attributes {
+		if a.Name == "amount" && a.DBType == "NUMERIC(10,2)" {
+			sawNumeric = true
+		}
+		if a.Name == "created_at" && a.DBType == "TIMESTAMPTZ" {
+			sawTimestamptz = true
+		}
+	}
+	if !sawNumeric || !sawTimestamptz {
+		t.Fatalf("expected postgres dialect types (NUMERIC(10,2) & TIMESTAMPTZ) forwarded in Chat, got attributes: %+v", refundsEnt.Attributes)
 	}
 }

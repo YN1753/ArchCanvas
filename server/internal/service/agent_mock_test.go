@@ -90,7 +90,7 @@ func makeRequirementToolMsg(args tools.ProposeRequirementArgs) *schema.Message {
 	}
 }
 
-// 辅助创建包含 ProposeDesign 工具调用的消息
+// 辅助创建包含 SaveERDesign 工具调用的消息
 func makeDesignToolMsg(args tools.ProposeSchemaDesignArgs) *schema.Message {
 	argsBytes, _ := json.Marshal(args)
 	return &schema.Message{
@@ -99,7 +99,7 @@ func makeDesignToolMsg(args tools.ProposeSchemaDesignArgs) *schema.Message {
 			{
 				ID: "tc_design_1",
 				Function: schema.FunctionCall{
-					Name:      tools.ProposeSchemaDesignToolName,
+					Name:      tools.SaveERDesignToolName,
 					Arguments: string(argsBytes),
 				},
 			},
@@ -253,7 +253,12 @@ func TestAgent_MockRetryFeedbackLoop(t *testing.T) {
 	svc := NewAgentService(modelManager, nil)
 	var thinkLogs []string
 
-	design, err := svc.DesignSchema(context.Background(), SchemaDesignInput{
+	design, err := svc.DerivePhysicalSchema(context.Background(), DerivePhysicalInput{
+		ConceptualDesign: &domain.ConceptualDesign{
+			Concepts: []domain.BusinessConcept{
+				{ID: "c_user", Name: "User", DisplayName: "用户"},
+			},
+		},
 		ModelProvider: "mock",
 		ModelName:     "mock_model",
 	}, func(chunk string) {
@@ -261,7 +266,7 @@ func TestAgent_MockRetryFeedbackLoop(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Fatalf("DesignSchema failed on retry loop: %v", err)
+		t.Fatalf("DerivePhysicalSchema failed on retry loop: %v", err)
 	}
 	if design == nil || len(design.Entities) != 1 {
 		t.Fatalf("expected 1 entity after retry, got: %v", design)

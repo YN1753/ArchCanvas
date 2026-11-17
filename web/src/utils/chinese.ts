@@ -1,76 +1,49 @@
+import { toSingular } from '../domain/inflect'
+import type { Cardinality } from '../types/dsl'
+
 /**
- * 数据库常见英文命名 → 中文业务概念映射字典
- * 专用于陈氏标准 ER 图的中文概念化展示
+ * 数据库常见英文命名 → 中文业务概念映射字典（仅存储单数规范词根，复数通过 `toSingular` 统一归一化）
+ * 专用于陈氏标准 ER 图与检查器的中文概念化展示。
  */
 
-const ENTITY_DICTIONARY: Record<string, string> = {
+const ENTITY_CHINESE_MAP: Record<string, string> = {
   // 用户与权限
   user: '用户',
-  users: '用户',
   account: '账户',
-  accounts: '账户',
   role: '角色',
-  roles: '角色',
   permission: '权限',
-  permissions: '权限',
   user_role: '用户角色关联',
-  user_roles: '用户角色关联',
   role_permission: '角色权限关联',
-  role_permissions: '角色权限关联',
   department: '部门',
-  departments: '部门',
   org: '组织机构',
   organization: '组织机构',
   tenant: '租户',
-  tenants: '租户',
   position: '岗位',
-  positions: '岗位',
   job: '岗位',
-  jobs: '岗位',
   employee: '员工',
-  employees: '员工',
   staff: '员工',
   member: '成员',
-  members: '成员',
   company: '企业',
-  companies: '企业',
   enterprise: '企业',
-  enterprises: '企业',
 
   // 电商与交易
   order: '订单',
-  orders: '订单',
   order_item: '订单详情',
-  order_items: '订单详情',
   order_detail: '订单明细',
-  order_details: '订单明细',
   product: '商品',
-  products: '商品',
   item: '商品项',
-  items: '商品项',
   goods: '商品',
   sku: '商品规格',
-  skus: '商品规格',
   spu: '标准产品',
-  spus: '标准产品',
   category: '分类',
-  categories: '分类',
   brand: '品牌',
-  brands: '品牌',
   cart: '购物车',
-  carts: '购物车',
   cart_item: '购物车明细',
-  cart_items: '购物车明细',
   address: '收货地址',
-  addresses: '收货地址',
   payment: '支付记录',
-  payments: '支付记录',
   invoice: '发票',
-  invoices: '发票',
   refund: '退款',
-  refunds: '退款',
   coupon: '优惠券',
-  coupons: '优惠券',
   inventory: '库存',
   stock: '库存',
   logistics: '物流',
@@ -78,91 +51,52 @@ const ENTITY_DICTIONARY: Record<string, string> = {
 
   // 社交与内容
   article: '文章',
-  articles: '文章',
   post: '帖子',
-  posts: '帖子',
   comment: '评论',
-  comments: '评论',
   reply: '回复',
-  replies: '回复',
   like: '点赞',
-  likes: '点赞',
   favorite: '收藏',
-  favorites: '收藏',
   collection: '收藏集',
-  collections: '收藏集',
   tag: '标签',
-  tags: '标签',
   topic: '话题',
-  topics: '话题',
   message: '消息',
-  messages: '消息',
   notification: '通知',
-  notifications: '通知',
 
   // 教育与教务
   student: '学生',
-  students: '学生',
   teacher: '教师',
-  teachers: '教师',
   course: '课程',
-  courses: '课程',
   class: '班级',
-  classes: '班级',
   grade: '成绩',
-  grades: '成绩',
   score: '分数',
-  scores: '分数',
   major: '专业',
-  majors: '专业',
   college: '学院',
-  colleges: '学院',
   school: '学校',
-  schools: '学校',
 
   // 企业与通用
   customer: '客户',
-  customers: '客户',
   supplier: '供应商',
-  suppliers: '供应商',
   warehouse: '仓库',
-  warehouses: '仓库',
   project: '项目',
-  projects: '项目',
   task: '任务',
+
   // 文件、媒体与存储
   media: '媒体',
-  medias: '媒体',
   media_resource: '媒体资源',
-  media_resources: '媒体资源',
   asset: '资产',
-  assets: '资产',
   resource: '资源',
-  resources: '资源',
   upload: '上传',
-  uploads: '上传文件',
   storage: '存储',
-  storages: '存储',
   file: '文件',
-  files: '文件',
   folder: '文件夹',
-  folders: '文件夹',
   attachment: '附件',
-  attachments: '附件',
   image: '图片',
-  images: '图片',
   video: '视频',
-  videos: '视频',
   audio: '音频',
-  audios: '音频',
   document: '文档',
-  documents: '文档',
   log: '日志',
-  logs: '日志',
   config: '系统配置',
-  configs: '系统配置',
   setting: '设置',
-  settings: '设置',
 }
 
 const ATTRIBUTE_DICTIONARY: Record<string, string> = {
@@ -298,16 +232,13 @@ export function hasChinese(text: string): boolean {
 }
 
 /**
- * 清理长文本描述，提取精简纯粹的核心名词（2~4字，过滤任何标点符号及“唯一”、“非空”等约束词）
+ * 清理长文本描述，提取精简纯粹的核心名词（2~6字，过滤标点符号及“唯一”、“非空”等约束词）
  */
 function cleanChineseDescription(desc: string): string {
   const trimmed = desc.trim()
   if (!trimmed) return ''
 
-  // 1. 取第一个标点符号或括号之前的主词
   const firstChunk = trimmed.split(/[,，;；(（:：\s]/)[0]?.trim() ?? ''
-
-  // 2. 剥离无意义的前后缀与约束词
   const cleaned = firstChunk
     .replace(/^(用户的|文章的|媒体的|标签的|评论的|记录|表示|存储|当前|该|登录|注册)/g, '')
     .replace(/(唯一标识|主键标识|外键标识|唯一|主键|外键|非空|自增|必填|代码生成|全局唯一)/g, '')
@@ -325,36 +256,25 @@ function cleanChineseDescription(desc: string): string {
  */
 export function getEntityChineseName(name: string, description?: string): string {
   const normalized = name.trim().toLowerCase()
-  if (ENTITY_DICTIONARY[normalized]) {
-    return ENTITY_DICTIONARY[normalized]
+  if (ENTITY_CHINESE_MAP[normalized]) {
+    return ENTITY_CHINESE_MAP[normalized]
   }
 
   if (hasChinese(name)) {
     return name
   }
 
-  // 尝试单复数归一化转换（如 medias -> media, categories -> category）
-  if (normalized.endsWith('ies')) {
-    const singular = normalized.slice(0, -3) + 'y'
-    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
-  }
-  if (normalized.endsWith('es')) {
-    const singular = normalized.slice(0, -2)
-    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
-  }
-  if (normalized.endsWith('s')) {
-    const singular = normalized.slice(0, -1)
-    if (ENTITY_DICTIONARY[singular]) return ENTITY_DICTIONARY[singular]
+  const singular = toSingular(normalized)
+  if (ENTITY_CHINESE_MAP[singular]) {
+    return ENTITY_CHINESE_MAP[singular]
   }
 
-  // 尝试复合拆词（如 order_items -> 订单详情, media_files -> 媒体文件）
+  // 尝试复合拆词（如 media_files -> 媒体文件）
   const parts = normalized.split(/[-_]/).filter(Boolean)
   if (parts.length > 1) {
-    const translatedParts = parts.map((p) => {
-      if (ENTITY_DICTIONARY[p]) return ENTITY_DICTIONARY[p]
-      const pSingular = p.endsWith('s') ? p.slice(0, -1) : p
-      return ENTITY_DICTIONARY[pSingular] ?? p
-    })
+    const translatedParts = parts.map(
+      (p) => ENTITY_CHINESE_MAP[p] ?? ENTITY_CHINESE_MAP[toSingular(p)] ?? p,
+    )
     if (translatedParts.some((p) => hasChinese(p))) {
       return translatedParts.join('')
     }
@@ -379,39 +299,43 @@ export function getAttributeChineseName(
 ): string {
   const normalized = name.trim().toLowerCase()
 
-  // 1. 主键优先级最高：纯净主键命名
   if (isPrimaryKey) {
     if (normalized === 'id' || normalized === 'pk') {
       return '编号'
     }
     if (normalized.endsWith('_id')) {
-      const base = normalized.slice(0, -3)
-      const baseName = ENTITY_DICTIONARY[base] ?? base
+      const base = toSingular(normalized.slice(0, -3))
+      const baseName = ENTITY_CHINESE_MAP[base] ?? base
       return `${baseName}编号`
     }
     return '编号'
   }
 
-  // 2. 核心字典精确匹配（最标准干净的名词）
   if (ATTRIBUTE_DICTIONARY[normalized]) {
     return ATTRIBUTE_DICTIONARY[normalized]
   }
 
-  // 3. 常见下划线复合匹配（如 tag_name -> 标签名, file_size -> 文件大小）
   if (normalized.includes('_')) {
     const parts = normalized.split('_').filter(Boolean)
-    const translated = parts.map((p) => ATTRIBUTE_DICTIONARY[p] ?? ENTITY_DICTIONARY[p] ?? '')
+    const translated = parts.map((p) => {
+      const pSing = toSingular(p)
+      return (
+        ATTRIBUTE_DICTIONARY[p] ??
+        ATTRIBUTE_DICTIONARY[pSing] ??
+        ENTITY_CHINESE_MAP[p] ??
+        ENTITY_CHINESE_MAP[pSing] ??
+        ''
+      )
+    })
     if (translated.every((t) => t.length > 0)) {
       return translated.join('')
     }
   }
 
-  // 4. 若 name 本身就是简短中文
   if (hasChinese(name) && name.length <= 6) {
     return name.replace(/(字段|信息|属性)$/, '')
   }
 
-  // 5. 从 description 中提取最简核心名词（仅在有效提取且不带标点时生效）
   if (description && hasChinese(description)) {
     const fromDesc = cleanChineseDescription(description)
     if (fromDesc) {
@@ -419,15 +343,14 @@ export function getAttributeChineseName(
     }
   }
 
-  // 6. 兜底返回英文字段名
   return name
 }
 
 /**
  * 关系基数中文标签
  */
-export const CARDINALITY_CHINESE: Record<string, { label: string; source: string; target: string }> = {
-  one_to_one: { label: '一对一', source: '1', target: '1' },
-  one_to_many: { label: '一对多', source: '1', target: '多' },
-  many_to_many: { label: '多对多', source: '多', target: '多' },
+export const CARDINALITY_CHINESE: Record<Cardinality, { label: string }> = {
+  one_to_one: { label: '一对一' },
+  one_to_many: { label: '一对多' },
+  many_to_many: { label: '多对多' },
 }

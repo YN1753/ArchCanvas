@@ -56,11 +56,6 @@ func matchOrigin(origin string, requestHost string) (allowed bool, wildcard bool
 	return false, false
 }
 
-func isAllowedOrigin(origin string, requestHost string) bool {
-	allowed, _ := matchOrigin(origin, requestHost)
-	return allowed
-}
-
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 始终声明 Vary: Origin，防止中间缓存污染不同源响应

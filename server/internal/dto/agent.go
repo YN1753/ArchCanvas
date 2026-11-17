@@ -5,6 +5,7 @@ import "archcanvas/internal/domain"
 type ChatReq struct {
 	ProjectID     string `json:"project_id"`
 	Input         string `json:"input" binding:"required"`
+	Dialect       string `json:"dialect,omitempty"`        // 可选目标数据库方言: mysql / postgres / sqlite，默认 mysql
 	ModelProvider string `json:"model_provider,omitempty"` // 可选模型提供商，如 deepseek / openai
 	ModelName     string `json:"model_name,omitempty"`     // 可选模型名称，方便测试与切换
 }

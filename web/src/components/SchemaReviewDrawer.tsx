@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStore } from '../store/erStore'
-import type { DatabaseDialect, SchemaIssue, SchemaIssueCategory, SchemaIssueSeverity } from '../types/dsl'
+import type { SchemaIssue, SchemaIssueCategory, SchemaIssueSeverity } from '../types/dsl'
+import DialectSegment from './ui/DialectSegment'
 
 const CATEGORY_LABELS: Record<SchemaIssueCategory, string> = {
   index: '索引覆盖',
@@ -66,12 +67,6 @@ export default function SchemaReviewDrawer({ onClose }: { onClose: () => void })
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
-
-  const dialects: Array<{ id: DatabaseDialect; label: string }> = [
-    { id: 'mysql', label: 'MySQL 8.0' },
-    { id: 'postgres', label: 'PostgreSQL' },
-    { id: 'sqlite', label: 'SQLite' },
-  ]
 
   const issues = reviewReport?.issues ?? []
 
@@ -156,31 +151,18 @@ export default function SchemaReviewDrawer({ onClose }: { onClose: () => void })
             <span className="text-[11px] font-mono text-stone-500 font-semibold">
               检测方言:
             </span>
-            <div className="flex items-center rounded-lg border border-stone-300 bg-white p-0.5 shadow-2xs">
-              {dialects.map((d) => {
-                const active = targetDialect === d.id
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    disabled={aiRunning || isCanvasEmpty}
-                    onClick={() => {
-                      setTargetDialect(d.id)
-                      if (!isCanvasEmpty) {
-                        void reviewSchema(d.id)
-                      }
-                    }}
-                    className={`rounded px-2 py-0.5 text-[10px] font-mono font-bold transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                      active
-                        ? 'border border-[#1f1f1f] bg-[#1f1f1f] text-white shadow-2xs'
-                        : 'text-stone-600 hover:text-stone-900'
-                    }`}
-                  >
-                    {d.label}
-                  </button>
-                )
-              })}
-            </div>
+            <DialectSegment
+              value={targetDialect}
+              variant="subtle"
+              disabled={aiRunning || isCanvasEmpty}
+              ariaLabel="检测数据库方言"
+              onChange={(d) => {
+                setTargetDialect(d)
+                if (!isCanvasEmpty) {
+                  void reviewSchema(d)
+                }
+              }}
+            />
           </div>
 
           <button

@@ -19,6 +19,27 @@ func New{{ .Entity.StructName }}Handler(svc service.{{ .Entity.StructName }}Serv
 	return &{{ .Entity.StructName }}Handler{svc: svc}
 }
 
+func (h *{{ .Entity.StructName }}Handler) parse{{ .Entity.StructName }}ID(c *gin.Context) ({{ .Entity.PrimaryKey.GoType }}, bool) {
+	idStr := c.Param("id")
+	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return 0, false
+	}
+	return {{ .Entity.PrimaryKey.GoType }}(id), true
+	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		response.Fail(c, 400, "无效的 ID 参数")
+		return 0, false
+	}
+	return {{ .Entity.PrimaryKey.GoType }}(id), true
+	{{- else }}
+	return idStr, true
+	{{- end }}
+}
+
 func (h *{{ .Entity.StructName }}Handler) Create(c *gin.Context) {
 	var item model.{{ .Entity.StructName }}
 	if err := c.ShouldBindJSON(&item); err != nil {
@@ -33,24 +54,11 @@ func (h *{{ .Entity.StructName }}Handler) Create(c *gin.Context) {
 }
 
 func (h *{{ .Entity.StructName }}Handler) GetDetail(c *gin.Context) {
-	idStr := c.Param("id")
-	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		response.Fail(c, 400, "无效的 ID 参数")
+	id, ok := h.parse{{ .Entity.StructName }}ID(c)
+	if !ok {
 		return
 	}
-	item, err := h.svc.GetDetail(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		response.Fail(c, 400, "无效的 ID 参数")
-		return
-	}
-	item, err := h.svc.GetDetail(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else }}
-	item, err := h.svc.GetDetail(c.Request.Context(), idStr)
-	{{- end }}
+	item, err := h.svc.GetDetail(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.Fail(c, 404, "记录不存在")
@@ -80,24 +88,12 @@ func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
 		return
 	}
 	{{- if .Entity.PrimaryKey.FieldName }}
-	if idStr := c.Param("id"); idStr != "" {
-		{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
-		id, err := strconv.ParseUint(idStr, 10, 64)
-		if err != nil {
-			response.Fail(c, 400, "无效的 ID 参数")
+	if c.Param("id") != "" {
+		id, ok := h.parse{{ .Entity.StructName }}ID(c)
+		if !ok {
 			return
 		}
-		item.{{ .Entity.PrimaryKey.FieldName }} = {{ .Entity.PrimaryKey.GoType }}(id)
-		{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			response.Fail(c, 400, "无效的 ID 参数")
-			return
-		}
-		item.{{ .Entity.PrimaryKey.FieldName }} = {{ .Entity.PrimaryKey.GoType }}(id)
-		{{- else if eq .Entity.PrimaryKey.GoType "string" }}
-		item.{{ .Entity.PrimaryKey.FieldName }} = idStr
-		{{- end }}
+		item.{{ .Entity.PrimaryKey.FieldName }} = id
 	}
 	{{- end }}
 	if err := h.svc.Update(c.Request.Context(), &item); err != nil {
@@ -112,25 +108,11 @@ func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
 }
 
 func (h *{{ .Entity.StructName }}Handler) Delete(c *gin.Context) {
-	idStr := c.Param("id")
-	{{- if or (eq .Entity.PrimaryKey.GoType "uint64") (eq .Entity.PrimaryKey.GoType "uint") (eq .Entity.PrimaryKey.GoType "uint32") (eq .Entity.PrimaryKey.GoType "uint16") (eq .Entity.PrimaryKey.GoType "uint8") }}
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		response.Fail(c, 400, "无效的 ID 参数")
+	id, ok := h.parse{{ .Entity.StructName }}ID(c)
+	if !ok {
 		return
 	}
-	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else if or (eq .Entity.PrimaryKey.GoType "int64") (eq .Entity.PrimaryKey.GoType "int") (eq .Entity.PrimaryKey.GoType "int32") (eq .Entity.PrimaryKey.GoType "int16") (eq .Entity.PrimaryKey.GoType "int8") }}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		response.Fail(c, 400, "无效的 ID 参数")
-		return
-	}
-	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
-	{{- else }}
-	err := h.svc.Delete(c.Request.Context(), idStr)
-	{{- end }}
-	if err != nil {
+	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
 		response.Fail(c, 500, "删除失败: "+err.Error())
 		return
 	}

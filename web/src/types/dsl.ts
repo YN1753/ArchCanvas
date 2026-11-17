@@ -86,43 +86,47 @@ export interface ERDesign {
   relations: Relation[]
 }
 
-export function emptyDesign(): ERDesign {
-  return { entities: [], relations: [] }
-}
-
-/** 后端类型映射表的子集，用于字段类型变更时同步 Go 标准库类型。 */
+/**
+ * 与后端 `generator/model.go` 100% 对齐的数据库类型 → Go 标准类型映射（精确区分有符号/无符号整型）。
+ */
 export function defaultCodeType(dbType: string): string {
-  const upperFull = dbType.trim().toUpperCase()
-  if (upperFull === 'TINYINT(1)') {
+  const upperFull = dbType.trim().toUpperCase().replace(/\s+/g, ' ')
+  if (upperFull === 'TINYINT(1)' || upperFull.startsWith('TINYINT(1) ')) {
     return 'bool'
   }
-  const normalized = upperFull.split('(')[0].replace(/\s+UNSIGNED\b/g, '').trim()
+
+  const isUnsigned = /\bUNSIGNED\b/.test(upperFull)
+  const normalized = upperFull
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\b(?:UNSIGNED|ZEROFILL)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
   switch (normalized) {
-    case 'BIGINT':
-    case 'BIGSERIAL':
-      return 'uint64'
-    case 'INT':
-    case 'INTEGER':
-    case 'MEDIUMINT':
-    case 'SMALLINT':
-    case 'TINYINT':
-    case 'SERIAL':
-      return 'int'
-    case 'VARCHAR':
-    case 'CHAR':
-    case 'TEXT':
-    case 'MEDIUMTEXT':
-    case 'LONGTEXT':
-    case 'JSON':
-    case 'JSONB':
-    case 'UUID':
-      return 'string'
     case 'BOOLEAN':
     case 'BOOL':
       return 'bool'
+    case 'BIGINT':
+    case 'BIGSERIAL':
+    case 'INT8':
+      return isUnsigned ? 'uint64' : 'int64'
+    case 'TINYINT':
+      return isUnsigned ? 'uint8' : 'int8'
+    case 'SMALLINT':
+    case 'SMALLSERIAL':
+    case 'INT2':
+      return isUnsigned ? 'uint16' : 'int16'
+    case 'INT':
+    case 'INTEGER':
+    case 'MEDIUMINT':
+    case 'SERIAL':
+    case 'INT4':
+      return isUnsigned ? 'uint' : 'int'
     case 'DATETIME':
     case 'TIMESTAMP':
     case 'TIMESTAMPTZ':
+    case 'TIMESTAMP WITH TIME ZONE':
+    case 'TIMESTAMP WITHOUT TIME ZONE':
     case 'DATE':
     case 'TIME':
       return 'time.Time'
@@ -135,6 +139,10 @@ export function defaultCodeType(dbType: string): string {
       return 'float64'
     case 'BLOB':
     case 'LONGBLOB':
+    case 'MEDIUMBLOB':
+    case 'TINYBLOB':
+    case 'BINARY':
+    case 'VARBINARY':
     case 'BYTEA':
       return '[]byte'
     default:
@@ -151,7 +159,7 @@ let uuidV7Seq = 0
  * 前后端统一使用合法 UUIDv7：后端 `SaveByProjectID` 对归属本项目的合法 UUID 直接保留原值，
  * 从而彻底消除 700ms 自动保存后因换发 ID 或重排引起的 Undo/Redo JSON Pointer 错位与选中态丢失。
  */
-export function localID(_prefix?: 'ent' | 'attr' | 'rel'): string {
+export function localID(): string {
   const rand = new Uint8Array(16)
   crypto.getRandomValues(rand)
 
@@ -183,10 +191,6 @@ export function localID(_prefix?: 'ent' | 'attr' | 'rel'): string {
 
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
-export function isLocalID(id: string): boolean {
-  return id.includes('_local_')
 }
 
 // ---------------------------------------------------------------------------

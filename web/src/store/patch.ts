@@ -16,13 +16,15 @@ export interface Patch {
   oldValue?: unknown
 }
 
+export type HistoryDomainKey = 'erDesign' | 'conceptualDesign' | 'chenPositions'
+
+export interface DomainPatchPair {
+  undo: Patch[]
+  redo: Patch[]
+}
+
 export interface HistoryEntry {
-  undo?: Patch[]
-  redo?: Patch[]
-  conceptualUndo?: Patch[]
-  conceptualRedo?: Patch[]
-  chenPositionsUndo?: Record<string, { x: number; y: number }>
-  chenPositionsRedo?: Record<string, { x: number; y: number }>
+  patches: Partial<Record<HistoryDomainKey, DomainPatchPair>>
   debounceKey?: string
 }
 

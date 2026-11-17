@@ -1,4 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
+import { useListboxNavigation } from '../hooks/useListboxNavigation'
 
 interface ComboboxProps {
   value: string
@@ -18,7 +20,6 @@ export default function Combobox({
   inputClassName = '',
 }: ComboboxProps) {
   const [open, setOpen] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(-1)
   const listboxId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -31,64 +32,31 @@ export default function Combobox({
     return matches.length > 0 ? matches : suggestions
   }, [suggestions, value])
 
-  useEffect(() => {
-    if (!open) return
+  const closeMenu = useCallback(() => {
+    setOpen(false)
+  }, [])
 
-    function handleOutsideClick(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
+  useDismissibleLayer(containerRef, open, closeMenu, { closeOnEscape: false })
+
+  const selectedIndex = useMemo(
+    () => filteredSuggestions.findIndex((s) => s.toLowerCase() === value.toLowerCase()),
+    [filteredSuggestions, value],
+  )
+
+  const { activeIndex, setActiveIndex, listboxRef, handleKeyDown } = useListboxNavigation({
+    open,
+    itemCount: filteredSuggestions.length,
+    selectedIndex,
+    onOpen: () => setOpen(true),
+    onClose: closeMenu,
+    onSelectIndex: (index) => {
+      const picked = filteredSuggestions[index]
+      if (picked) {
+        onChange(picked)
+        closeMenu()
       }
-    }
-
-    window.addEventListener('mousedown', handleOutsideClick)
-    return () => window.removeEventListener('mousedown', handleOutsideClick)
-  }, [open])
-
-  useEffect(() => {
-    if (open) {
-      const idx = filteredSuggestions.findIndex((s) => s.toLowerCase() === value.toLowerCase())
-      setActiveIndex(idx >= 0 ? idx : 0)
-    }
-  }, [open, filteredSuggestions, value])
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return
-
-    if (event.key === 'Escape') {
-      if (open) {
-        event.preventDefault()
-        event.stopPropagation()
-        setOpen(false)
-      }
-      return
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      if (!open) {
-        setOpen(true)
-      } else if (filteredSuggestions.length > 0) {
-        setActiveIndex((prev) => (prev + 1) % filteredSuggestions.length)
-      }
-      return
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      if (!open) {
-        setOpen(true)
-      } else if (filteredSuggestions.length > 0) {
-        setActiveIndex((prev) => (prev - 1 + filteredSuggestions.length) % filteredSuggestions.length)
-      }
-      return
-    }
-
-    if (event.key === 'Enter' && open && activeIndex >= 0 && filteredSuggestions[activeIndex]) {
-      event.preventDefault()
-      onChange(filteredSuggestions[activeIndex])
-      setOpen(false)
-    }
-  }
+    },
+  })
 
   return (
     <div
@@ -96,7 +64,7 @@ export default function Combobox({
       className={`relative ${className}`}
       onBlur={(event) => {
         if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
-          setOpen(false)
+          closeMenu()
         }
       }}
     >
@@ -142,6 +110,7 @@ export default function Combobox({
 
       {open && (
         <div
+          ref={listboxRef}
           id={listboxId}
           role="listbox"
           className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100"
@@ -160,12 +129,11 @@ export default function Combobox({
                 aria-selected={isSelected}
                 onMouseEnter={() => setActiveIndex(idx)}
                 onMouseDown={(e) => {
-                  // 防止点击选项前触发输入框 blur 提前卸载列表
                   e.preventDefault()
                 }}
                 onClick={() => {
                   onChange(suggestion)
-                  setOpen(false)
+                  closeMenu()
                 }}
                 className={`w-full flex items-center justify-between rounded px-2 py-1 text-left text-xs font-mono cursor-pointer transition ${
                   isSelected

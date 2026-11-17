@@ -1081,3 +1081,33 @@ func TestGenerateFileTree_EmptyOrMessyModuleName(t *testing.T) {
 		}
 	}
 }
+
+func TestInferGoTypeFromDBType_AlignedUnsignedAndSerial(t *testing.T) {
+	cases := []struct {
+		dbType string
+		want   string
+	}{
+		{"TINYINT(1)", "bool"},
+		{"BOOLEAN", "bool"},
+		{"BIGINT UNSIGNED", "uint64"},
+		{"BIGINT", "int64"},
+		{"BIGSERIAL", "int64"},
+		{"TINYINT UNSIGNED", "uint8"},
+		{"TINYINT", "int8"},
+		{"SMALLINT UNSIGNED", "uint16"},
+		{"SMALLINT", "int16"},
+		{"SMALLSERIAL", "int16"},
+		{"INT UNSIGNED", "uint"},
+		{"INTEGER", "int"},
+		{"MEDIUMINT UNSIGNED", "uint"},
+		{"MEDIUMINT", "int"},
+		{"SERIAL", "int"},
+		{"POINT", "string"},
+		{"INTERVAL", "string"},
+	}
+	for _, tc := range cases {
+		if got := inferGoTypeFromDBType(tc.dbType); got != tc.want {
+			t.Errorf("inferGoTypeFromDBType(%q) = %q, want %q", tc.dbType, got, tc.want)
+		}
+	}
+}

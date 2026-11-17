@@ -54,8 +54,9 @@ func setupShowcaseRouter(t *testing.T, ipLimit, globalLimit int) (*gin.Engine, *
 	projRepo := repository.NewProjectRepository(db)
 	erRepo := repository.NewERDesignRepository(db)
 	msgRepo := repository.NewMessageRepository(db)
+	quotaRepo := repository.NewShowcaseQuotaRepository(db)
 
-	quotaMgr := middleware.NewShowcaseQuotaManager(db, scCfg)
+	quotaMgr := middleware.NewShowcaseQuotaManager(quotaRepo, scCfg)
 	projSvc := service.NewProjectService(projRepo, erRepo, msgRepo, nil)
 	projSvc.SetShowcaseConfig(scCfg)
 	if err := projSvc.SeedOfficialShowcaseProjects(context.Background()); err != nil {

@@ -23,8 +23,3 @@ func BuildDesignTools(ctx context.Context) ([]*schema.ToolInfo, error) {
 	}
 	return []*schema.ToolInfo{saveInfo}, nil
 }
-
-// BuildTools 兼容旧接口
-func BuildTools(ctx context.Context) ([]*schema.ToolInfo, error) {
-	return BuildDesignTools(ctx)
-}

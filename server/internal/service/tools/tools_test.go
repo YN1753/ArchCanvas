@@ -65,12 +65,4 @@ func TestBuildDesignTools(t *testing.T) {
 	if len(tools) != 1 || tools[0].Name != SaveERDesignToolName {
 		t.Fatalf("expected 1 tool 'save_er_design', got: %+v", tools)
 	}
-
-	legacyTools, err := BuildTools(ctx)
-	if err != nil {
-		t.Fatalf("BuildTools failed: %v", err)
-	}
-	if len(legacyTools) != 1 || legacyTools[0].Name != SaveERDesignToolName {
-		t.Fatalf("expected legacy BuildTools to align with BuildDesignTools, got: %+v", legacyTools)
-	}
 }

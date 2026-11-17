@@ -6,7 +6,7 @@ import {
   type EdgeProps,
 } from '@xyflow/react'
 import { memo } from 'react'
-import { getSelfLoopPath } from '../../flow/chenAdapter'
+import { getSelfLoopPath } from '../../flow/chen/geometry'
 
 export interface ChenEdgeData extends Record<string, unknown> {
   cardinalityLabel?: string // '1', 'N', 'M'

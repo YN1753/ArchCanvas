@@ -15,10 +15,7 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 
 // InitRouterWithShowcase 初始化 Gin 路由引擎，并在开启 SHOWCASE_MODE 时挂载访客沙盒隔离、敏感接口封锁与 AI 体验配额限流。
 func InitRouterWithShowcase(handlers handler.TotalHandler, quotaMgr *middleware.ShowcaseQuotaManager) *gin.Engine {
-	showcaseEnabled := quotaMgr != nil && quotaMgr.Enabled()
-	if !showcaseEnabled && handlers.Project.ProjectService != nil && handlers.Project.ProjectService.ShowcaseCfg.Enabled {
-		showcaseEnabled = true
-	}
+	showcaseEnabled := (quotaMgr != nil && quotaMgr.Enabled()) || handlers.Project.IsShowcaseEnabled()
 
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil) // 显式禁用默认全信任反向代理，防范客户端 IP 伪造

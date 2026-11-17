@@ -5,29 +5,34 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"archcanvas/internal/config"
-	"archcanvas/internal/model"
 	"archcanvas/pkg/id"
+	"archcanvas/pkg/reqctx"
 	"archcanvas/pkg/response"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
-	VisitorIDKey      contextKey = "visitor_id"
-	ShowcaseModeKey   contextKey = "showcase_mode"
-	HeaderXVisitorID  string     = "X-Visitor-ID"
-	VisitorCookieName string     = "archcanvas_vid"
-	GlobalQuotaScope  string     = "__global__"
-	OfficialVisitorID string     = "__official__"
+	HeaderXVisitorID  string = "X-Visitor-ID"
+	VisitorCookieName string = "archcanvas_vid"
+	GlobalQuotaScope  string = "__global__"
+	OfficialVisitorID string = reqctx.OfficialVisitorID
 )
+
+// ShowcaseQuotaStore 抽象演示配额存储接口，使 middleware 层彻底零依赖 GORM 与持久化模型。
+type ShowcaseQuotaStore interface {
+	GetDailyUsage(ctx context.Context, dayKey, ipScope string) (ipUsed int, globalUsed int, err error)
+	TryConsumeDailyQuota(ctx context.Context, dayKey, ipScope string, ipDailyLimit, globalDailyLimit int, now time.Time) (ipRem int, globalRem int, ipExhausted bool, globalExhausted bool, err error)
+	RefundDailyQuota(ctx context.Context, dayKey, ipScope string) error
+	DeleteQuotasBefore(ctx context.Context, cutoffDay string) error
+}
 
 var (
 	showcaseLoc     = time.FixedZone("CST", 8*3600)
@@ -111,9 +116,7 @@ func NormalizeQuotaIP(raw string) string {
 	return masked.String() + "/64"
 }
 
-// ExtractShowcaseClientIP 提取真实访客 IP：
-// 仅当直接连接对端属于受信任反向代理（本机回环、内网网关或 Cloudflare 官方边缘网段）时才采信 CF-Connecting-IP / X-Forwarded-For，
-// 防止外部攻击者直连源站伪造请求头绕过单 IP 每日限额。
+// ExtractShowcaseClientIP 提取真实访客 IP（仅当直接连接对端属于受信任反向代理时才采信转发头）。
 func ExtractShowcaseClientIP(r *http.Request) string {
 	if r == nil {
 		return "unknown"
@@ -147,7 +150,7 @@ func ExtractShowcaseClientIP(r *http.Request) string {
 	return "unknown"
 }
 
-// ShowcaseVisitorMiddleware 在演示沙盒模式下为每位匿名访客签发/识别隔离的 UUIDv7 访客身份（支持 Cookie 与 X-Visitor-ID 双通道）。
+// ShowcaseVisitorMiddleware 在演示沙盒模式下为每位匿名访客签发/识别隔离的 UUIDv7 访客身份。
 func ShowcaseVisitorMiddleware(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !enabled {
@@ -177,8 +180,7 @@ func ShowcaseVisitorMiddleware(enabled bool) gin.HandlerFunc {
 		})
 		c.Header(HeaderXVisitorID, vid)
 
-		ctx := context.WithValue(c.Request.Context(), ShowcaseModeKey, true)
-		ctx = context.WithValue(ctx, VisitorIDKey, vid)
+		ctx := reqctx.WithShowcaseVisitor(c.Request.Context(), vid)
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
@@ -187,29 +189,25 @@ func ShowcaseVisitorMiddleware(enabled bool) gin.HandlerFunc {
 
 // IsShowcaseMode 判断当前请求上下文是否处于公开演示沙盒模式。
 func IsShowcaseMode(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	v, _ := ctx.Value(ShowcaseModeKey).(bool)
-	return v
+	return reqctx.IsShowcaseMode(ctx)
 }
 
 // GetVisitorID 从请求上下文中获取匿名访客隔离 ID。
 func GetVisitorID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	v, _ := ctx.Value(VisitorIDKey).(string)
-	return v
+	return reqctx.VisitorIDFromContext(ctx)
+}
+
+// VisitorIDFromContext 从请求上下文中获取匿名访客隔离 ID。
+func VisitorIDFromContext(ctx context.Context) string {
+	return reqctx.VisitorIDFromContext(ctx)
 }
 
 // WithShowcaseVisitor 为内部调用或测试显式注入演示沙盒模式与访客标识。
 func WithShowcaseVisitor(ctx context.Context, visitorID string) context.Context {
-	ctx = context.WithValue(ctx, ShowcaseModeKey, true)
-	return context.WithValue(ctx, VisitorIDKey, visitorID)
+	return reqctx.WithShowcaseVisitor(ctx, visitorID)
 }
 
-// ShowcaseModelGuardMiddleware 在公开演示沙盒模式下锁死模型配置保存与任意 BaseURL 探测接口，彻底阻断改配置与本机端口探测 SSRF。
+// ShowcaseModelGuardMiddleware 在公开演示沙盒模式下锁死模型配置保存与任意 BaseURL 探测接口。
 func ShowcaseModelGuardMiddleware(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !enabled {
@@ -243,15 +241,26 @@ func ShowcaseModelGuardMiddleware(enabled bool) gin.HandlerFunc {
 
 // ShowcaseQuotaManager 负责管理公开演示模式下按自然日持久化的单 IP 与全站 AI 调用限额。
 type ShowcaseQuotaManager struct {
-	db  *gorm.DB
-	cfg config.ShowcaseConfig
+	store ShowcaseQuotaStore
+	cfg   config.ShowcaseConfig
 }
 
-func NewShowcaseQuotaManager(db *gorm.DB, cfg config.ShowcaseConfig) *ShowcaseQuotaManager {
+func isNilQuotaStore(s ShowcaseQuotaStore) bool {
+	if s == nil {
+		return true
+	}
+	v := reflect.ValueOf(s)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
+func NewShowcaseQuotaManager(store ShowcaseQuotaStore, cfg config.ShowcaseConfig) *ShowcaseQuotaManager {
 	cfg.NormalizeDefaults()
+	if isNilQuotaStore(store) {
+		store = nil
+	}
 	return &ShowcaseQuotaManager{
-		db:  db,
-		cfg: cfg,
+		store: store,
+		cfg:   cfg,
 	}
 }
 
@@ -274,31 +283,17 @@ func currentDayKey(now time.Time) string {
 
 // GetUsage 查询当前 IP 与全局今日已用次数。
 func (m *ShowcaseQuotaManager) GetUsage(ctx context.Context, clientIP string) (ipUsed int, globalUsed int, err error) {
-	if m == nil || m.db == nil {
+	if m == nil || m.store == nil {
 		return 0, 0, nil
 	}
 	dayKey := currentDayKey(time.Now())
 	ipScope := "ip:" + NormalizeQuotaIP(clientIP)
-
-	var rows []model.ShowcaseQuota
-	if err := m.db.WithContext(ctx).
-		Where("day_key = ? AND scope_key IN ?", dayKey, []string{GlobalQuotaScope, ipScope}).
-		Find(&rows).Error; err != nil {
-		return 0, 0, err
-	}
-	for _, row := range rows {
-		if row.ScopeKey == GlobalQuotaScope {
-			globalUsed = row.UsedCount
-		} else if row.ScopeKey == ipScope {
-			ipUsed = row.UsedCount
-		}
-	}
-	return ipUsed, globalUsed, nil
+	return m.store.GetDailyUsage(ctx, dayKey, ipScope)
 }
 
 // TryConsume 原子检查并扣减 1 次当前 IP 与全局今日 AI 体验配额。
 func (m *ShowcaseQuotaManager) TryConsume(ctx context.Context, clientIP string) (ipRem int, globalRem int, blockedMsg string, err error) {
-	if m == nil || !m.cfg.Enabled || m.db == nil {
+	if m == nil || !m.cfg.Enabled || m.store == nil {
 		return 999, 999, "", nil
 	}
 
@@ -306,87 +301,43 @@ func (m *ShowcaseQuotaManager) TryConsume(ctx context.Context, clientIP string) 
 	dayKey := currentDayKey(now)
 	ipScope := "ip:" + NormalizeQuotaIP(clientIP)
 
-	txErr := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var rows []model.ShowcaseQuota
-		if err := tx.Where("day_key = ? AND scope_key IN ?", dayKey, []string{GlobalQuotaScope, ipScope}).
-			Find(&rows).Error; err != nil {
-			return err
-		}
-
-		var ipUsed, globalUsed int
-		for _, row := range rows {
-			if row.ScopeKey == GlobalQuotaScope {
-				globalUsed = row.UsedCount
-			} else if row.ScopeKey == ipScope {
-				ipUsed = row.UsedCount
-			}
-		}
-
-		if globalUsed >= m.cfg.GlobalDailyLimit {
-			ipRem = max(0, m.cfg.IPDailyLimit-ipUsed)
-			globalRem = 0
-			blockedMsg = fmt.Sprintf(
-				"今日全站 AI 架构师公开体验总额度（%d 次/日）已用完，明日 00:00 自动恢复。您仍可免限流体验双视图切换、SQL 逆向解析与 Go 工程代码导出！",
-				m.cfg.GlobalDailyLimit,
-			)
-			return nil
-		}
-		if ipUsed >= m.cfg.IPDailyLimit {
-			ipRem = 0
-			globalRem = max(0, m.cfg.GlobalDailyLimit-globalUsed)
-			blockedMsg = fmt.Sprintf(
-				"您今日的 AI 架构师免费体验额度（%d 次/日）已达上限，明日 00:00 自动恢复。您仍可免限流体验陈氏/物理双视图、拓扑排版与 Go 脚手架导出！",
-				m.cfg.IPDailyLimit,
-			)
-			return nil
-		}
-
-		for _, scope := range []string{GlobalQuotaScope, ipScope} {
-			upsert := model.ShowcaseQuota{
-				DayKey:    dayKey,
-				ScopeKey:  scope,
-				UsedCount: 1,
-				UpdatedAt: now,
-			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "day_key"}, {Name: "scope_key"}},
-				DoUpdates: clause.Assignments(map[string]any{
-					"used_count": gorm.Expr("used_count + 1"),
-					"updated_at": now,
-				}),
-			}).Create(&upsert).Error; err != nil {
-				return err
-			}
-		}
-
-		ipRem = max(0, m.cfg.IPDailyLimit-(ipUsed+1))
-		globalRem = max(0, m.cfg.GlobalDailyLimit-(globalUsed+1))
-		return nil
-	})
-
-	return ipRem, globalRem, blockedMsg, txErr
+	ipRem, globalRem, ipExhausted, globalExhausted, err := m.store.TryConsumeDailyQuota(
+		ctx, dayKey, ipScope, m.cfg.IPDailyLimit, m.cfg.GlobalDailyLimit, now,
+	)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	if globalExhausted {
+		blockedMsg = fmt.Sprintf(
+			"今日全站 AI 架构师公开体验总额度（%d 次/日）已用完，明日 00:00 自动恢复。您仍可免限流体验双视图切换、SQL 逆向解析与 Go 工程代码导出！",
+			m.cfg.GlobalDailyLimit,
+		)
+	} else if ipExhausted {
+		blockedMsg = fmt.Sprintf(
+			"您今日的 AI 架构师免费体验额度（%d 次/日）已达上限，明日 00:00 自动恢复。您仍可免限流体验陈氏/物理双视图、拓扑排版与 Go 脚手架导出！",
+			m.cfg.IPDailyLimit,
+		)
+	}
+	return ipRem, globalRem, blockedMsg, nil
 }
 
 // Refund 在请求因参数错误（400/403/404）未能真正进入大模型调用前退还 1 次预扣配额。
 func (m *ShowcaseQuotaManager) Refund(ctx context.Context, clientIP string) {
-	if m == nil || !m.cfg.Enabled || m.db == nil {
+	if m == nil || !m.cfg.Enabled || m.store == nil {
 		return
 	}
 	dayKey := currentDayKey(time.Now())
 	ipScope := "ip:" + NormalizeQuotaIP(clientIP)
-	_ = m.db.WithContext(ctx).
-		Model(&model.ShowcaseQuota{}).
-		Where("day_key = ? AND scope_key IN ? AND used_count > 0", dayKey, []string{GlobalQuotaScope, ipScope}).
-		UpdateColumn("used_count", gorm.Expr("used_count - 1")).Error
+	_ = m.store.RefundDailyQuota(ctx, dayKey, ipScope)
 }
 
 // CleanupExpiredQuotas 清理 3 天前的历史日配额记录，防止统计表无限增长。
 func (m *ShowcaseQuotaManager) CleanupExpiredQuotas(ctx context.Context) error {
-	if m == nil || m.db == nil {
+	if m == nil || m.store == nil {
 		return nil
 	}
 	cutoffDay := currentDayKey(time.Now().Add(-72 * time.Hour))
-	return m.db.WithContext(ctx).Where("day_key < ?", cutoffDay).Delete(&model.ShowcaseQuota{}).Error
+	return m.store.DeleteQuotasBefore(ctx, cutoffDay)
 }
 
 // AgentRateLimitMiddleware 对 /api/v1/agent/* 路由组施加 Cloudflare 真实访客 IP 每日限额与全站每日总上限保护。
@@ -423,7 +374,6 @@ func (m *ShowcaseQuotaManager) AgentRateLimitMiddleware() gin.HandlerFunc {
 
 		c.Next()
 
-		// 若请求因前置参数校验或只读模板拦截（400/403/404）未实际消耗大模型算力，自动退还本次预扣额度
 		status := c.Writer.Status()
 		if status == http.StatusBadRequest || status == http.StatusForbidden || status == http.StatusNotFound {
 			rCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

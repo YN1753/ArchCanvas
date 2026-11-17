@@ -8,35 +8,6 @@ import (
 	"archcanvas/internal/model"
 )
 
-// 类型别名重新导出，保持包内与测试调用简洁一致
-type ConceptOperation = domain.ConceptOperation
-
-const (
-	OpCreate = domain.OpCreate
-	OpModify = domain.OpModify
-	OpRetain = domain.OpRetain
-	OpDelete = domain.OpDelete
-)
-
-type ConceptCardinality = domain.ConceptCardinality
-
-const (
-	CardOneToOne   = domain.CardOneToOne
-	CardOneToMany  = domain.CardOneToMany
-	CardManyToMany = domain.CardManyToMany
-)
-
-type AttributeCategory = domain.AttributeCategory
-
-const (
-	AttrString   = domain.AttrString
-	AttrNumber   = domain.AttrNumber
-	AttrBoolean  = domain.AttrBoolean
-	AttrDateTime = domain.AttrDateTime
-	AttrEnum     = domain.AttrEnum
-	AttrMedia    = domain.AttrMedia
-)
-
 // RequirementInput 需求分析算子的输入契约
 type RequirementInput struct {
 	ProjectID               string                   `json:"project_id"`
@@ -60,14 +31,6 @@ type RequirementOutput struct {
 	NeedClarification   bool                       `json:"need_clarification" jsonschema:"description=需求是否存在重大歧义导致无法确定设计"`
 	ClarificationCards  []domain.ClarificationCard `json:"clarification_cards,omitempty" jsonschema:"description=宏观广泛需求下按逻辑递进排列的澄清确认卡片组"`
 	Questions           []string                   `json:"questions,omitempty" jsonschema:"description=需要用户进一步澄清确认的问题"`
-}
-
-// SchemaDesignInput 物理建模算子的输入契约
-type SchemaDesignInput struct {
-	Requirement     *RequirementOutput `json:"requirement"`
-	CurrentERDesign *domain.ERDesign   `json:"current_er_design,omitempty"`
-	ModelProvider   string             `json:"model_provider,omitempty"`
-	ModelName       string             `json:"model_name,omitempty"`
 }
 
 // DerivePhysicalInput Layer 2 物理工程推导算子的输入契约

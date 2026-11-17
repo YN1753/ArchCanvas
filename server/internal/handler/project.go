@@ -26,6 +26,12 @@ func (h ProjectHandler) WithQuotaManager(qm *middleware.ShowcaseQuotaManager) Pr
 	return h
 }
 
+// IsShowcaseEnabled 返回当前实例是否处于公开演示沙盒模式（封装内部服务层状态读取）。
+func (h ProjectHandler) IsShowcaseEnabled() bool {
+	return (h.QuotaManager != nil && h.QuotaManager.Enabled()) ||
+		(h.ProjectService != nil && h.ProjectService.IsShowcaseEnabled())
+}
+
 // ListProjects 获取全部项目列表 (GET /api/v1/projects/list)
 func (h *ProjectHandler) ListProjects(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -281,16 +287,13 @@ func (h *ProjectHandler) ForkProject(c *gin.Context) {
 // ShowcaseStatus 返回当前实例演示沙盒模式状态与当前访客 IP 剩余免费 AI 体验额度 (GET /api/v1/showcase/status)
 func (h *ProjectHandler) ShowcaseStatus(c *gin.Context) {
 	ctx := c.Request.Context()
-	enabled := (h.QuotaManager != nil && h.QuotaManager.Enabled()) ||
-		(h.ProjectService != nil && h.ProjectService.ShowcaseCfg.Enabled) ||
-		middleware.IsShowcaseMode(ctx)
+	enabled := h.IsShowcaseEnabled() || middleware.IsShowcaseMode(ctx)
 	if !enabled {
 		response.Success(c, dto.ShowcaseStatusResp{Enabled: false})
 		return
 	}
 
-	cfg := h.ProjectService.ShowcaseCfg
-	cfg.NormalizeDefaults()
+	cfg := h.ProjectService.ShowcaseConfig()
 	if h.QuotaManager != nil {
 		cfg = h.QuotaManager.Config()
 	}

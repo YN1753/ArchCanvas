@@ -47,28 +47,7 @@ func IsForbiddenError(err error) bool {
 	return errors.As(err, &target)
 }
 
-// RateLimitError 表示请求超出体验配额上限（映射为 HTTP 429）。
-type RateLimitError struct {
-	Message string
-}
-
-func (e *RateLimitError) Error() string {
-	return e.Message
-}
-
-func NewRateLimitError(format string, args ...any) error {
-	return &RateLimitError{Message: fmt.Sprintf(format, args...)}
-}
-
-func IsRateLimitError(err error) bool {
-	var target *RateLimitError
-	return errors.As(err, &target)
-}
-
-var (
-	providerNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
-	sqlIdentRe     = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,127}$`)
-)
+var providerNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
 // ValidateProviderName 校验模型提供商标识，防止配置键注入或路径污染。
 func ValidateProviderName(provider string) error {
@@ -103,14 +82,6 @@ func ValidateRequiredText(fieldName, val string, maxRunes int) (string, error) {
 		return "", NewValidationError("%s 长度超出上限（最大 %d 字符）", fieldName, maxRunes)
 	}
 	return trimmed, nil
-}
-
-// ValidateSQLIdentifier 校验严格 ASCII SQL 标识符。
-func ValidateSQLIdentifier(ident string) error {
-	if !sqlIdentRe.MatchString(ident) {
-		return NewValidationError("标识符 %q 非法，仅允许字母或下划线开头并由字母、数字、下划线组成", ident)
-	}
-	return nil
 }
 
 // ValidateERDesignInput 校验保存物理 ER 设计时的实体、字段与关联完整性。

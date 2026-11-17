@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"unicode"
 
 	"archcanvas/internal/domain"
 	"archcanvas/internal/dto"
+	"archcanvas/pkg/llmjson"
+	"archcanvas/pkg/naming"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -103,7 +104,7 @@ func (a *AgentService) EnrichSemantics(
 	if a.ProjectService != nil && req.ProjectID != "" {
 		existingConceptual, _ = a.ProjectService.GetConceptualDesign(runCtx, req.ProjectID)
 	}
-	conceptualDesign := mergeConceptualDesign(existingConceptual, rawConceptualDesign)
+	conceptualDesign := domain.MergeConceptualDesign(existingConceptual, rawConceptualDesign)
 
 	if a.ProjectService != nil && req.ProjectID != "" {
 		savedRes, err := a.ProjectService.SaveERDesign(runCtx, req.ProjectID, designCopy)
@@ -129,102 +130,26 @@ func (a *AgentService) inferSemanticsWithLLM(
 	req dto.EnrichSemanticsReq,
 	design domain.ERDesign,
 ) (*inferredSemanticsPayload, error) {
-	if a.ModelManager == nil {
-		return nil, fmt.Errorf("model manager not configured")
-	}
-
-	chatModel, err := a.ModelManager.GetModel(ctx, req.ModelProvider, req.ModelName)
-	if err != nil {
-		return nil, err
-	}
-
-	messages := buildEnrichSemanticsMessages(design)
-
-	const maxRetries = 2
-	currentMessages := messages
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		stream, err := chatModel.Stream(ctx, currentMessages)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			if attempt == maxRetries {
-				return nil, err
-			}
-			continue
-		}
-
-		var sb strings.Builder
-		var streamErr error
-		for {
-			select {
-			case <-ctx.Done():
-				stream.Close()
-				return nil, ctx.Err()
-			default:
-			}
-			chunk, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				stream.Close()
-				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-					return nil, ctx.Err()
+	payload, _, err := executeStructuredStream(ctx, a, structuredStreamConfig[inferredSemanticsPayload]{
+		ModelProvider:      req.ModelProvider,
+		ModelName:          req.ModelName,
+		InitialMessages:    buildEnrichSemanticsMessages(design),
+		MaxRetries:         2,
+		RetryOnStreamError: true,
+		ParseContent: func(raw string) (*inferredSemanticsPayload, error) {
+			return llmjson.Parse[inferredSemanticsPayload](raw, func(p *inferredSemanticsPayload) error {
+				if len(p.Entities) == 0 {
+					return errors.New("entities in inferred semantics payload cannot be empty")
 				}
-				streamErr = err
-				break
-			}
-			if chunk.Content != "" {
-				sb.WriteString(chunk.Content)
-			}
-		}
-		stream.Close()
-
-		if streamErr != nil {
-			if errors.Is(streamErr, context.Canceled) || ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			if attempt == maxRetries {
-				return nil, streamErr
-			}
-			continue
-		}
-
-		raw := sb.String()
-		candidates := extractJSONCandidates(raw)
-		for _, cand := range candidates {
-			var payload inferredSemanticsPayload
-			if err := json.Unmarshal([]byte(cand), &payload); err == nil && len(payload.Entities) > 0 {
-				return &payload, nil
-			}
-			cleaned := CleanJSONSyntax(cand)
-			if cleaned != cand {
-				var pClean inferredSemanticsPayload
-				if err := json.Unmarshal([]byte(cleaned), &pClean); err == nil && len(pClean.Entities) > 0 {
-					return &pClean, nil
-				}
-			}
-		}
-
-		if attempt < maxRetries {
-			assistantText := truncateRunes(raw, 3000)
-			if strings.TrimSpace(assistantText) == "" {
-				assistantText = "[empty response]"
-			}
-			feedbackPrompt := "【语义推导格式纠错】你上一轮输出未能通过系统 JSON 结构化解析，请必须返回包含 entities 与 relations 的纯标准 JSON，确保括号闭合，勿输出无关的解释性文字。"
-			currentMessages = append(currentMessages,
-				schema.AssistantMessage(assistantText, nil),
-				schema.UserMessage(feedbackPrompt),
-			)
-		}
-	}
-
-	return nil, fmt.Errorf("failed to parse inferred semantics JSON after retries")
+				return nil
+			})
+		},
+		BuildRetryPrompt: func(_ error) string {
+			return "【语义推导格式纠错】你上一轮输出未能通过系统 JSON 结构化解析，请必须返回包含 entities 与 relations 的纯标准 JSON，确保括号闭合，勿输出无关的解释性文字。"
+		},
+		FinalErrorMessage: "failed to parse inferred semantics JSON after retries",
+	})
+	return payload, err
 }
 
 func buildEnrichSemanticsMessages(design domain.ERDesign) []*schema.Message {
@@ -259,21 +184,17 @@ func buildEnrichSemanticsMessages(design domain.ERDesign) []*schema.Message {
 
 	if len(design.Relations) > 0 {
 		user.WriteString("\n【已有表间关联】：\n")
-		entityNameMap := make(map[string]string)
-		for _, e := range design.Entities {
-			entityNameMap[e.ID] = e.Name
-			entityNameMap[strings.ToLower(e.Name)] = e.Name
-		}
+		lookup := design.EntityLookup()
 		for _, r := range design.Relations {
-			src := entityNameMap[r.SourceEntityID]
-			if src == "" {
-				src = r.SourceEntityID
+			src := r.SourceEntityID
+			if ent, ok := design.FindEntity(src, lookup); ok {
+				src = ent.Name
 			}
-			tgt := entityNameMap[r.TargetEntityID]
-			if tgt == "" {
-				tgt = r.TargetEntityID
+			tgt := r.TargetEntityID
+			if ent, ok := design.FindEntity(tgt, lookup); ok {
+				tgt = ent.Name
 			}
-			user.WriteString(fmt.Sprintf("- %s -> %s (%s)\n", src, tgt, r.Cardinality))
+			user.WriteString(fmt.Sprintf("- %s -> %s (%s)\n", src, tgt, r.EffectiveCardinality()))
 		}
 	}
 
@@ -333,109 +254,32 @@ func sanitizeConceptName(name string) string {
 	return strings.TrimSpace(name)
 }
 
-var technicalAuditFields = map[string]bool{
-	"created_at": true, "create_time": true, "created_time": true, "create_at": true,
-	"gmt_create": true, "created_date": true, "created_by": true, "creator": true,
-	"updated_at": true, "update_time": true, "updated_time": true, "update_at": true,
-	"gmt_modified": true, "updated_date": true, "updated_by": true, "updater": true,
-	"deleted_at": true, "delete_time": true, "deleted_time": true, "delete_at": true,
-	"is_deleted": true, "deleted": true, "del_flag": true, "version": true,
-	"lock_version": true, "revision": true,
-}
-
-// detectPhysicalJunctionTable 严格要求 _id 外键后缀并精确匹配目标表名或单数名，杜绝将含 paid/valid/pid 的普通业务表误删。
-func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Entity) (bool, *domain.Entity, *domain.Entity) {
-	if entity.IsJunctionTable != nil && !*entity.IsJunctionTable {
-		return false, nil, nil
-	}
-
-	var matchedParents []domain.Entity
-	matchedFkIDs := make(map[string]bool)
-
-	for _, attr := range entity.Attributes {
-		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
-		if lowerName == "id" || !strings.HasSuffix(lowerName, "_id") {
-			continue
-		}
-		base := strings.TrimSuffix(lowerName, "_id")
-		if base == "" {
-			continue
-		}
-		for _, cand := range allEntities {
-			if cand.ID == entity.ID {
-				continue
-			}
-			cName := strings.ToLower(strings.TrimSpace(cand.Name))
-			cSingular := toSingularName(cName)
-			if cName == base || cSingular == base {
-				already := false
-				for _, p := range matchedParents {
-					if p.ID == cand.ID {
-						already = true
-						break
-					}
-				}
-				if !already {
-					matchedParents = append(matchedParents, cand)
-					matchedFkIDs[attr.ID] = true
-					break
-				}
-			}
-		}
-	}
-
-	if len(matchedParents) != 2 {
-		return false, nil, nil
-	}
-
-	if entity.IsJunctionTable != nil && *entity.IsJunctionTable {
-		return true, &matchedParents[0], &matchedParents[1]
-	}
-
-	tableLower := strings.ToLower(strings.TrimSpace(entity.Name))
-	singA := toSingularName(matchedParents[0].Name)
-	singB := toSingularName(matchedParents[1].Name)
-	nameMatches := (strings.Contains(tableLower, strings.ToLower(matchedParents[0].Name)) || strings.Contains(tableLower, singA)) &&
-		(strings.Contains(tableLower, strings.ToLower(matchedParents[1].Name)) || strings.Contains(tableLower, singB))
-	if !nameMatches || len(entity.Attributes) > 6 {
-		return false, nil, nil
-	}
-
-	bizAttrCount := 0
-	for _, attr := range entity.Attributes {
-		if matchedFkIDs[attr.ID] {
-			continue
-		}
-		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
-		if lowerName == "id" || attr.IsPrimaryKey || technicalAuditFields[lowerName] {
-			continue
-		}
-		bizAttrCount++
-	}
-
-	if bizAttrCount > 0 {
-		return false, nil, nil
-	}
-	return true, &matchedParents[0], &matchedParents[1]
-}
-
 func buildConceptualDesignFromEnriched(
 	design domain.ERDesign,
 	payload *inferredSemanticsPayload,
 ) domain.ConceptualDesign {
 	concepts := make([]domain.BusinessConcept, 0, len(design.Entities))
-	entityNameMap := make(map[string]string)
-	junctionEntityIDs := make(map[string]bool)
-	relations := make([]domain.ConceptRelation, 0)
-
-	for _, e := range design.Entities {
-		entityNameMap[e.ID] = e.Name
-		entityNameMap[strings.ToLower(e.Name)] = e.Name
+	junctionMatches := domain.DetectJunctionTables(&design)
+	junctionByID := make(map[string]domain.JunctionTableMatch, len(junctionMatches))
+	junctionByName := make(map[string]domain.JunctionTableMatch, len(junctionMatches))
+	for _, m := range junctionMatches {
+		if m.Entity.ID != "" {
+			junctionByID[m.Entity.ID] = m
+		}
+		if m.Entity.Name != "" {
+			junctionByName[strings.ToLower(strings.TrimSpace(m.Entity.Name))] = m
+		}
 	}
 
+	relations := make([]domain.ConceptRelation, 0)
+	lookup := design.EntityLookup()
+
 	for _, e := range design.Entities {
-		if isJunc, leftEnt, rightEnt := detectPhysicalJunctionTable(e, design.Entities); isJunc && leftEnt != nil && rightEnt != nil {
-			junctionEntityIDs[e.ID] = true
+		m, isJunc := junctionByID[e.ID]
+		if !isJunc && e.Name != "" {
+			m, isJunc = junctionByName[strings.ToLower(strings.TrimSpace(e.Name))]
+		}
+		if isJunc {
 			relName := e.Comment
 			if relName == "" {
 				relName = "关联"
@@ -443,9 +287,9 @@ func buildConceptualDesignFromEnriched(
 			relations = append(relations, domain.ConceptRelation{
 				ID:            "junction_" + e.ID,
 				Name:          relName,
-				SourceConcept: leftEnt.Name,
-				TargetConcept: rightEnt.Name,
-				Cardinality:   "many_to_many",
+				SourceConcept: m.LeftTarget.Name,
+				TargetConcept: m.RightTarget.Name,
+				Cardinality:   domain.CardManyToMany,
 			})
 			continue
 		}
@@ -457,8 +301,7 @@ func buildConceptualDesignFromEnriched(
 
 		attrs := make([]domain.ConceptAttribute, 0, len(e.Attributes))
 		for _, a := range e.Attributes {
-			lowerAttr := strings.ToLower(strings.TrimSpace(a.Name))
-			if technicalAuditFields[lowerAttr] {
+			if domain.IsTechnicalAuditColumn(a.Name) {
 				continue
 			}
 			attrDisplay := a.Comment
@@ -479,7 +322,7 @@ func buildConceptualDesignFromEnriched(
 			ID:          e.ID,
 			Name:        e.Name,
 			DisplayName: displayName,
-			Position:    clonePosition(e.Position),
+			Position:    domain.ClonePosition(e.Position),
 			Attributes:  attrs,
 		})
 	}
@@ -493,16 +336,26 @@ func buildConceptualDesignFromEnriched(
 	}
 
 	for _, r := range design.Relations {
-		if junctionEntityIDs[r.SourceEntityID] || junctionEntityIDs[r.TargetEntityID] {
+		if _, isSrcJ := junctionByID[r.SourceEntityID]; isSrcJ {
 			continue
 		}
-		src := entityNameMap[r.SourceEntityID]
-		if src == "" {
-			src = r.SourceEntityID
+		if _, isTgtJ := junctionByID[r.TargetEntityID]; isTgtJ {
+			continue
 		}
-		tgt := entityNameMap[r.TargetEntityID]
-		if tgt == "" {
-			tgt = r.TargetEntityID
+		if _, isSrcJ := junctionByName[strings.ToLower(strings.TrimSpace(r.SourceEntityID))]; isSrcJ {
+			continue
+		}
+		if _, isTgtJ := junctionByName[strings.ToLower(strings.TrimSpace(r.TargetEntityID))]; isTgtJ {
+			continue
+		}
+
+		src := r.SourceEntityID
+		if ent, ok := design.FindEntity(src, lookup); ok {
+			src = ent.Name
+		}
+		tgt := r.TargetEntityID
+		if ent, ok := design.FindEntity(tgt, lookup); ok {
+			tgt = ent.Name
 		}
 
 		verb := "关联"
@@ -511,10 +364,7 @@ func buildConceptualDesignFromEnriched(
 			verb = v
 		}
 
-		card := domain.ConceptCardinality(r.Cardinality)
-		if card == "" {
-			card = "one_to_many"
-		}
+		card := domain.ConceptCardinality(r.EffectiveCardinality())
 
 		relations = append(relations, domain.ConceptRelation{
 			ID:            r.ID,
@@ -532,26 +382,25 @@ func buildConceptualDesignFromEnriched(
 	}
 }
 
-// mapDBTypeToCategory 优先判定 TINYINT(1) / BOOL，消除原先被 INT 子串提前拦截导致的不可达死代码。
 func mapDBTypeToCategory(dbType string) domain.AttributeCategory {
 	u := strings.ToUpper(strings.TrimSpace(dbType))
 	if strings.Contains(u, "BOOL") || strings.Contains(u, "TINYINT(1)") {
-		return "boolean"
+		return domain.AttrBoolean
 	}
 	if (strings.Contains(u, "INT") && !strings.Contains(u, "POINT") && !strings.Contains(u, "INTERVAL")) ||
-		strings.Contains(u, "DECIMAL") || strings.Contains(u, "NUMERIC") || strings.Contains(u, "FLOAT") || strings.Contains(u, "DOUBLE") || strings.Contains(u, "REAL") {
-		return "number"
+		strings.Contains(u, "SERIAL") || strings.Contains(u, "DECIMAL") || strings.Contains(u, "NUMERIC") ||
+		strings.Contains(u, "FLOAT") || strings.Contains(u, "DOUBLE") || strings.Contains(u, "REAL") {
+		return domain.AttrNumber
 	}
 	if strings.Contains(u, "TIME") || strings.Contains(u, "DATE") {
-		return "datetime"
+		return domain.AttrDateTime
 	}
 	if strings.Contains(u, "BLOB") || strings.Contains(u, "BINARY") || strings.Contains(u, "BYTEA") {
-		return "media"
+		return domain.AttrMedia
 	}
-	return "string"
+	return domain.AttrString
 }
 
-// capitalize 按 Unicode Rune 安全首字符大写，避免单字节切片破坏中文或 UTF-8 字符。
 func capitalize(s string) string {
 	runes := []rune(s)
 	if len(runes) == 0 {
@@ -606,7 +455,7 @@ func inferSemanticsRuleBased(design domain.ERDesign) *inferredSemanticsPayload {
 		if comment == "" {
 			if c, ok := dict[clean]; ok {
 				comment = c
-			} else if c, ok := dict[toSingularName(clean)]; ok {
+			} else if c, ok := dict[naming.Singularize(clean)]; ok {
 				comment = c
 			} else {
 				comment = capitalize(clean)

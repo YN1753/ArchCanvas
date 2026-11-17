@@ -1,6 +1,10 @@
 import type { StateCreator } from 'zustand'
 
 import {
+  legacyConceptSyntheticId,
+  normalizeConceptualDesign,
+} from '../../domain/conceptNormalize'
+import {
   emptyConceptualDesign,
   localID,
   type BusinessConcept,
@@ -10,40 +14,18 @@ import {
   type ConceptualDesign,
 } from '../../types/dsl'
 import type { ConceptualSlice, Store } from '../types'
-import {
-  saveChenPositions,
-  uniqueConceptAttrName,
-  uniqueConceptName,
-} from '../utils'
+import { saveChenPositions, uniqueConceptAttrName, uniqueConceptName } from '../utils'
 
-function conceptSyntheticId(name: string): string {
-  return `concept_${name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-}
-
-function matchesConceptById(c: BusinessConcept, targetId: string): boolean {
+function matchesConcept(concept: BusinessConcept, idOrName: string): boolean {
   return (
-    c.id === targetId ||
-    c.name.toLowerCase() === targetId.toLowerCase() ||
-    conceptSyntheticId(c.name) === targetId
+    concept.id === idOrName ||
+    concept.name.toLowerCase() === idOrName.toLowerCase() ||
+    legacyConceptSyntheticId(concept.name) === idOrName
   )
 }
 
-function matchesConceptRelationById(r: ConceptRelation, targetId: string): boolean {
-  if (r.id) {
-    if (r.id === targetId || `rel-${r.id}` === targetId) {
-      return true
-    }
-  }
-  const srcCid = conceptSyntheticId(r.source_concept)
-  const tgtCid = conceptSyntheticId(r.target_concept)
-  const fallbackCid = `rel_${srcCid}_${tgtCid}`
-  const fallbackRaw = `rel_${r.source_concept}_${r.target_concept}`
-  return (
-    targetId === fallbackCid ||
-    targetId === `rel-${fallbackCid}` ||
-    targetId === fallbackRaw ||
-    targetId === `rel-${fallbackRaw}`
-  )
+function matchesConceptRelation(rel: ConceptRelation, targetId: string): boolean {
+  return Boolean(rel.id && (rel.id === targetId || `rel-${rel.id}` === targetId))
 }
 
 export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice> = (set, get) => ({
@@ -52,7 +34,8 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
 
   updateChenPositions(moves) {
     if (moves.length === 0) return
-    const { project, chenPositions, conceptualDesign } = get()
+    const { project, chenPositions } = get()
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
     const nextPositions = { ...chenPositions }
     const moveMap = new Map(moves.map((m) => [m.id, m.position]))
     for (const move of moves) {
@@ -60,9 +43,8 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     }
 
     let conceptualChanged = false
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) => {
-      const cid = c.id || conceptSyntheticId(c.name)
-      const pos = moveMap.get(cid) ?? (c.id ? moveMap.get(c.id) : undefined)
+    const nextConcepts = conceptualDesign.concepts.map((c) => {
+      const pos = (c.id ? moveMap.get(c.id) : undefined) ?? moveMap.get(legacyConceptSyntheticId(c.name))
       if (pos) {
         conceptualChanged = true
         return { ...c, position: pos }
@@ -70,9 +52,9 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       return c
     })
 
-    const nextRelations = (conceptualDesign.relations || []).map((r) => {
-      const diaId = `rel-${r.id}`
-      const pos = (r.id ? moveMap.get(r.id) : undefined) ?? moveMap.get(diaId)
+    const nextRelations = conceptualDesign.relations.map((r) => {
+      const rid = r.id!
+      const pos = moveMap.get(rid) ?? moveMap.get(`rel-${rid}`)
       if (pos) {
         conceptualChanged = true
         return { ...r, position: pos }
@@ -116,18 +98,12 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     get().mutateChenPositions({}, nextConceptual)
   },
 
-  async saveConceptualDesign(design: ConceptualDesign) {
-    const { project } = get()
-    if (!project) return
-    get().mutateConceptual(design)
-  },
-
   addConcept(customPosition) {
     const { conceptualDesign } = get()
     const concepts = conceptualDesign.concepts || []
     const name = uniqueConceptName(concepts, 'NewConcept')
     const newConcept: BusinessConcept = {
-      id: localID('ent'),
+      id: localID(),
       name,
       display_name: '新概念',
       description: '',
@@ -139,7 +115,7 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
         : undefined,
       attributes: [
         {
-          id: localID('attr'),
+          id: localID(),
           name: 'id',
           display_name: '标识号',
           category: 'string',
@@ -150,38 +126,37 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       ],
     }
 
-    const nextConceptual: ConceptualDesign = {
-      ...conceptualDesign,
-      concepts: [...concepts, newConcept],
-    }
-
-    get().mutateConceptual(nextConceptual, undefined, {
-      selection: { kind: 'entity', id: newConcept.id! },
-      inspectorOpen: true,
-    })
+    get().mutateConceptual(
+      {
+        ...conceptualDesign,
+        concepts: [...concepts, newConcept],
+      },
+      undefined,
+      {
+        selection: { kind: 'entity', id: newConcept.id! },
+        inspectorOpen: true,
+      },
+    )
   },
 
   updateConcept(id, patch) {
-    const { conceptualDesign } = get()
-    const target = (conceptualDesign.concepts || []).find((c) => matchesConceptById(c, id))
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const target = conceptualDesign.concepts.find((c) => matchesConcept(c, id))
     if (!target) return
 
-    const ensuredId = target.id || localID('ent')
+    const ensuredId = target.id!
     const oldNameLower = target.name.toLowerCase()
-    const oldCid = conceptSyntheticId(target.name)
 
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) =>
-      c === target ? { ...c, id: ensuredId, ...patch } : c,
+    const nextConcepts = conceptualDesign.concepts.map((c) =>
+      c === target ? { ...c, ...patch } : c,
     )
 
-    // 级联同步关联端点名称：即便用户先全选清空再输入新名称，也用稳定 concept ID 桥接不断连
-    let nextRelations = conceptualDesign.relations || []
+    let nextRelations = conceptualDesign.relations
     if (patch.name !== undefined && patch.name !== target.name) {
       const nextEndpointRef = patch.name.trim() !== '' ? patch.name : ensuredId
-      const matchesEndpoint = (endpoint: string) => {
-        const lower = endpoint.toLowerCase()
-        return lower === oldNameLower || endpoint === ensuredId || endpoint === oldCid
-      }
+      const matchesEndpoint = (endpoint: string) =>
+        endpoint.toLowerCase() === oldNameLower || endpoint === ensuredId
+
       nextRelations = nextRelations.map((r) => {
         const srcHit = matchesEndpoint(r.source_concept)
         const tgtHit = matchesEndpoint(r.target_concept)
@@ -205,24 +180,22 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   deleteConcept(id) {
-    const { conceptualDesign, selection, chenPositions, project } = get()
-    const target = (conceptualDesign.concepts || []).find((c) => matchesConceptById(c, id))
-    const targetId = target?.id || id
-    const targetNameLower = (target?.name || '').toLowerCase()
-    const targetSynthetic = target ? conceptSyntheticId(target.name) : ''
+    const { selection, chenPositions, project } = get()
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const target = conceptualDesign.concepts.find((c) => matchesConcept(c, id))
+    const targetId = target?.id ?? id
+    const targetNameLower = (target?.name ?? '').toLowerCase()
+    const legacyKey = target ? legacyConceptSyntheticId(target.name) : ''
 
-    const nextConcepts = (conceptualDesign.concepts || []).filter(
-      (c) => c !== target && !matchesConceptById(c, id),
-    )
+    const nextConcepts = conceptualDesign.concepts.filter((c) => c !== target)
     const removedRelIds = new Set<string>()
-    const nextRelations = (conceptualDesign.relations || []).filter((r) => {
-      const srcLower = r.source_concept.toLowerCase()
-      const tgtLower = r.target_concept.toLowerCase()
+    const nextRelations = conceptualDesign.relations.filter((r) => {
       const hit =
         r.source_concept === targetId ||
         r.target_concept === targetId ||
-        (targetSynthetic !== '' && (r.source_concept === targetSynthetic || r.target_concept === targetSynthetic)) ||
-        (targetNameLower !== '' && (srcLower === targetNameLower || tgtLower === targetNameLower))
+        (targetNameLower !== '' &&
+          (r.source_concept.toLowerCase() === targetNameLower ||
+            r.target_concept.toLowerCase() === targetNameLower))
       if (hit && r.id) {
         removedRelIds.add(r.id)
       }
@@ -232,8 +205,8 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     const nextChenPositions = { ...chenPositions }
     delete nextChenPositions[targetId]
     delete nextChenPositions[id]
-    if (targetSynthetic) {
-      delete nextChenPositions[targetSynthetic]
+    if (legacyKey) {
+      delete nextChenPositions[legacyKey]
     }
     for (const relId of removedRelIds) {
       delete nextChenPositions[relId]
@@ -243,7 +216,7 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       if (
         key.startsWith(`attr-${targetId}-`) ||
         key.startsWith(`attr-${id}-`) ||
-        (targetSynthetic && key.startsWith(`attr-${targetSynthetic}-`))
+        (legacyKey && key.startsWith(`attr-${legacyKey}-`))
       ) {
         delete nextChenPositions[key]
       }
@@ -254,7 +227,7 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
 
     const clearSelection =
       (selection?.kind === 'entity' &&
-        (selection.id === id || selection.id === targetId || selection.id === targetSynthetic)) ||
+        (selection.id === id || selection.id === targetId || selection.id === legacyKey)) ||
       (selection?.kind === 'relation' && removedRelIds.has(selection.id))
 
     get().mutateConceptual(
@@ -267,31 +240,31 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       {
         chenPositions: nextChenPositions,
         selection: clearSelection ? null : selection,
-        toast: { kind: 'info', text: `已删除业务概念「${target?.display_name || target?.name || id}」` },
+        toast: {
+          kind: 'info',
+          text: `已删除业务概念「${target?.display_name || target?.name || id}」`,
+        },
       },
     )
   },
 
   addConceptAttribute(conceptID) {
-    const { conceptualDesign } = get()
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) => {
-      if (matchesConceptById(c, conceptID)) {
-        const attrName = uniqueConceptAttrName(c, 'attr')
-        const newAttr: ConceptAttribute = {
-          id: localID('attr'),
-          name: attrName,
-          display_name: '新属性',
-          category: 'string',
-          is_business_key: false,
-          required: false,
-          description: '',
-        }
-        return {
-          ...c,
-          attributes: [...(c.attributes || []), newAttr],
-        }
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const nextConcepts = conceptualDesign.concepts.map((c) => {
+      if (!matchesConcept(c, conceptID)) return c
+      const newAttr: ConceptAttribute = {
+        id: localID(),
+        name: uniqueConceptAttrName(c, 'attr'),
+        display_name: '新属性',
+        category: 'string',
+        is_business_key: false,
+        required: false,
+        description: '',
       }
-      return c
+      return {
+        ...c,
+        attributes: [...c.attributes, newAttr],
+      }
     })
     get().mutateConceptual({
       ...conceptualDesign,
@@ -300,15 +273,15 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   updateConceptAttribute(conceptID, attributeID, patch) {
-    const { conceptualDesign } = get()
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) => {
-      if (matchesConceptById(c, conceptID)) {
-        const nextAttrs = (c.attributes || []).map((a) =>
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const nextConcepts = conceptualDesign.concepts.map((c) => {
+      if (!matchesConcept(c, conceptID)) return c
+      return {
+        ...c,
+        attributes: c.attributes.map((a) =>
           a.id === attributeID || a.name === attributeID ? { ...a, ...patch } : a,
-        )
-        return { ...c, attributes: nextAttrs }
+        ),
       }
-      return c
     })
     get().mutateConceptual(
       {
@@ -320,15 +293,13 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   deleteConceptAttribute(conceptID, attributeID) {
-    const { conceptualDesign } = get()
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) => {
-      if (matchesConceptById(c, conceptID)) {
-        const nextAttrs = (c.attributes || []).filter(
-          (a) => a.id !== attributeID && a.name !== attributeID,
-        )
-        return { ...c, attributes: nextAttrs }
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const nextConcepts = conceptualDesign.concepts.map((c) => {
+      if (!matchesConcept(c, conceptID)) return c
+      return {
+        ...c,
+        attributes: c.attributes.filter((a) => a.id !== attributeID && a.name !== attributeID),
       }
-      return c
     })
     get().mutateConceptual({
       ...conceptualDesign,
@@ -337,20 +308,18 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   moveConceptAttribute(conceptID, attributeID, direction) {
-    const { conceptualDesign } = get()
-    const nextConcepts = (conceptualDesign.concepts || []).map((c) => {
-      if (matchesConceptById(c, conceptID)) {
-        const attrs = [...(c.attributes || [])]
-        const idx = attrs.findIndex((a) => a.id === attributeID || a.name === attributeID)
-        if (idx < 0) return c
-        const targetIdx = idx + direction
-        if (targetIdx < 0 || targetIdx >= attrs.length) return c
-        const temp = attrs[idx]
-        attrs[idx] = attrs[targetIdx]
-        attrs[targetIdx] = temp
-        return { ...c, attributes: attrs }
-      }
-      return c
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const nextConcepts = conceptualDesign.concepts.map((c) => {
+      if (!matchesConcept(c, conceptID)) return c
+      const attrs = [...c.attributes]
+      const idx = attrs.findIndex((a) => a.id === attributeID || a.name === attributeID)
+      if (idx < 0) return c
+      const targetIdx = idx + direction
+      if (targetIdx < 0 || targetIdx >= attrs.length) return c
+      const temp = attrs[idx]
+      attrs[idx] = attrs[targetIdx]
+      attrs[targetIdx] = temp
+      return { ...c, attributes: attrs }
     })
     get().mutateConceptual({
       ...conceptualDesign,
@@ -359,28 +328,21 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   addConceptRelation(sourceID, targetID, cardinality: ConceptCardinality = 'one_to_many') {
-    const { conceptualDesign } = get()
-    const findConcept = (id: string) =>
-      (conceptualDesign.concepts || []).find((c) => matchesConceptById(c, id))
-    const srcConcept = findConcept(sourceID)
-    const tgtConcept = findConcept(targetID)
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
+    const srcConcept = conceptualDesign.concepts.find((c) => matchesConcept(c, sourceID))
+    const tgtConcept = conceptualDesign.concepts.find((c) => matchesConcept(c, targetID))
     if (!srcConcept || !tgtConcept) return
 
     const isSelf = srcConcept === tgtConcept
+    const srcLower = srcConcept.name.toLowerCase()
+    const tgtLower = tgtConcept.name.toLowerCase()
 
-    const existing = (conceptualDesign.relations || []).some((r) => {
-      if (isSelf) {
-        return (
-          r.source_concept.toLowerCase() === srcConcept.name.toLowerCase() &&
-          r.target_concept.toLowerCase() === srcConcept.name.toLowerCase()
-        )
-      }
-      return (
-        (r.source_concept.toLowerCase() === srcConcept.name.toLowerCase() &&
-          r.target_concept.toLowerCase() === tgtConcept.name.toLowerCase()) ||
-        (r.source_concept.toLowerCase() === tgtConcept.name.toLowerCase() &&
-          r.target_concept.toLowerCase() === srcConcept.name.toLowerCase())
-      )
+    const existing = conceptualDesign.relations.some((r) => {
+      const rSrc = r.source_concept.toLowerCase()
+      const rTgt = r.target_concept.toLowerCase()
+      return isSelf
+        ? rSrc === srcLower && rTgt === srcLower
+        : (rSrc === srcLower && rTgt === tgtLower) || (rSrc === tgtLower && rTgt === srcLower)
     })
     if (existing) {
       set({
@@ -395,7 +357,7 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
     }
 
     const newRel: ConceptRelation = {
-      id: localID('rel'),
+      id: localID(),
       name: isSelf ? '层级包含' : '关联',
       source_concept: srcConcept.name,
       target_concept: tgtConcept.name,
@@ -403,26 +365,28 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
       description: isSelf ? '自引用层级结构' : '',
     }
 
-    const nextConceptual: ConceptualDesign = {
-      ...conceptualDesign,
-      relations: [...(conceptualDesign.relations || []), newRel],
-    }
-    get().mutateConceptual(nextConceptual, undefined, {
-      selection: { kind: 'relation', id: newRel.id! },
-      inspectorOpen: true,
-    })
+    get().mutateConceptual(
+      {
+        ...conceptualDesign,
+        relations: [...conceptualDesign.relations, newRel],
+      },
+      undefined,
+      {
+        selection: { kind: 'relation', id: newRel.id! },
+        inspectorOpen: true,
+      },
+    )
   },
 
   updateConceptRelation(relationID, patch) {
-    const { conceptualDesign } = get()
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
     let resolvedKey = relationID
-    const nextRelations = (conceptualDesign.relations || []).map((r) => {
-      if (!matchesConceptRelationById(r, relationID)) {
+    const nextRelations = conceptualDesign.relations.map((r) => {
+      if (!matchesConceptRelation(r, relationID)) {
         return r
       }
-      const ensuredId = r.id || localID('rel')
-      resolvedKey = ensuredId
-      return { ...r, id: ensuredId, ...patch }
+      resolvedKey = r.id!
+      return { ...r, ...patch }
     })
     get().mutateConceptual(
       {
@@ -434,10 +398,11 @@ export const createConceptualSlice: StateCreator<Store, [], [], ConceptualSlice>
   },
 
   deleteConceptRelation(relationID) {
-    const { conceptualDesign, selection, chenPositions, project } = get()
+    const { selection, chenPositions, project } = get()
+    const conceptualDesign = normalizeConceptualDesign(get().conceptualDesign)
     const removedIds = new Set<string>()
-    const nextRelations = (conceptualDesign.relations || []).filter((r) => {
-      const hit = matchesConceptRelationById(r, relationID)
+    const nextRelations = conceptualDesign.relations.filter((r) => {
+      const hit = matchesConceptRelation(r, relationID)
       if (hit) {
         if (r.id) removedIds.add(r.id)
         removedIds.add(relationID)

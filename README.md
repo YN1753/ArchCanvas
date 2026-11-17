@@ -206,68 +206,56 @@ archcanvas/
 │   │   ├── config.example.yaml  # 服务与大模型配置模板
 │   │   └── .env.example         # 环境变量与访问令牌模板
 │   ├── internal/
-│   │   ├── agent/               # 大模型驱动 (Eino SDK)、并发探测与 SSRF 安全守卫
+│   │   ├── agent/               # 大模型实例缓存 (manager.go) 与端点模型探测器 (prober.go)
 │   │   ├── config/              # 配置加载、0600 原子写盘与 YAML/.env 同步
 │   │   ├── database/            # SQLite IMMEDIATE 事务连接池与自动迁移
-│   │   ├── domain/              # 纯领域实体 (ERDesign, BusinessConcept, SchemaReview)
+│   │   ├── dialect/             # 统一数据库方言注册表 (MySQL / PostgreSQL / SQLite 策略)
+│   │   ├── domain/              # 领域模型、统一拓扑核 (er_topology) 与概念增量合并
 │   │   ├── dto/                 # 强类型请求/响应 DTO 定义
 │   │   ├── eval/                # 35 场景自动化质量门禁与 E2E 编译迁移评测
-│   │   ├── generator/           # Go 工程脚手架生成引擎 (13 类模板、AST 格式化、流式打包)
+│   │   ├── generator/           # 表驱动脚手架引擎 (types / sanitize / type_mapper / association)
 │   │   ├── handler/             # Gin HTTP 控制器 (参数绑定、SSE 响应、ZIP 流式下发)
-│   │   ├── middleware/          # CORS、Bearer 鉴权、请求体限流与 slog TraceID 追踪
+│   │   ├── middleware/          # CORS、Bearer 鉴权、沙盒配额守卫与 slog TraceID 追踪
 │   │   ├── model/               # GORM 物理数据模型映射
-│   │   ├── repository/          # 数据仓储实现 (事务级联删除、两阶段 ID 重映射、字段保序)
+│   │   ├── repository/          # 仓储实现 (纯内存 er_diff_planner + 短事务原子执行)
 │   │   ├── router/              # 语义化 API 路由注册 (/api/v1)
-│   │   ├── service/             # 核心服务 (ProjectService, AgentService 三层架构编排)
+│   │   ├── service/             # 泛型流式编排 (agent_stream)、表驱动审查 (schema_rules) 与 seeds/*.json
 │   │   ├── static/              # //go:embed 静态 SPA 托管与目录防遍历
-│   │   └── validator/           # 领域输入与 SQL 标识符统一校验器
+│   │   └── validator/           # 领域输入统一校验器
 │   ├── pkg/
 │   │   ├── id/                  # RFC 9562 UUIDv7 有序唯一标识生成与校验
-│   │   └── response/            # 统一 API 响应格式封装
+│   │   ├── llmjson/             # 泛型大模型结构化 JSON 提取与语法自愈解析器
+│   │   ├── naming/              # 跨栈统一英语单复数与 Snake/Pascal/Camel 命名转换核
+│   │   ├── reqctx/              # 零框架耦合请求上下文存取器 (TraceID / VisitorID / Showcase)
+│   │   ├── response/            # 统一 API 响应格式封装
+│   │   └── safenet/             # 防 SSRF / 云元数据内网探测安全 HTTP 客户端
 │   └── go.mod                   # Go 依赖清单
 │
 └── web/                         # 前端 React SPA 工程
     ├── src/
     │   ├── api/client.ts        # 统一 HTTP / SSE 接口客户端
-    │   ├── components/          # 核心 UI 组件
-    │   │   ├── chen/            # 概念视图（陈氏 ER）组件库
-    │   │   │   ├── ChenEntityNode.tsx    # 矩形实体节点（中文业务概念 + 英文表名）
-    │   │   │   ├── ChenRelationNode.tsx  # 菱形联系节点（业务动词 + 1:1/1:N/M:N 基数）
-    │   │   │   ├── ChenAttributeNode.tsx # 椭圆属性节点（纯净名词 + 经典下划线主键）
-    │   │   │   └── ChenEdge.tsx          # 带有 1/N/M 徽标与虚线属性连接的智能连线
-    │   │   ├── AiSidebar.tsx    # 左侧 AI 架构师侧栏与三阶段工作台 (⌘L 快捷收展)
-    │   │   ├── Canvas.tsx       # 全尺寸架构画板与双视图切换控制
-    │   │   ├── ClarificationDeck.tsx # 需求歧义渐进式澄清卡片组
-    │   │   ├── Combobox.tsx     # 支持键盘导航与即时过滤的复合输入框
-    │   │   ├── DataDialog.tsx   # 导入导出弹窗 (SQL DDL 逆向 / JSON / Mermaid / PNG / SVG)
-    │   │   ├── Inspector.tsx    # 右侧属性检查器与三方言 DDL 即时预览
-    │   │   ├── ModelSelector.tsx# 暖纸感模型即时探测下拉选择器
-    │   │   ├── ProjectMenu.tsx  # 项目管理菜单 (新建/切换/重命名/删除)
-    │   │   ├── ScaffoldDialog.tsx # 暖纸新野兽派代码树与代码预览工作台
-    │   │   ├── SchemaReviewDrawer.tsx # Layer 3 架构师深度体检报告抽屉
-    │   │   ├── Select.tsx       # 支持完整无障碍键盘导航的定制下拉组件
-    │   │   ├── TableNode.tsx    # 物理数据库表卡片节点
-    │   │   ├── Toast.tsx        # 全局状态通知横幅 (ARIA Live Region)
-    │   │   ├── RelationEdge.tsx # 物理字段级关联连线
-    │   │   └── Toolbar.tsx      # 顶部控制栏 (双视图切换、撤销重做、体检、脚手架导出)
-    │   ├── export/              # SQL DDL 逆向解析/导出、Mermaid 转换与图片导出
-    │   ├── flow/                # React Flow 适配器与排版算法
-    │   │   ├── adapter.ts       # 物理关系图数据模型投影转换
-    │   │   ├── chenAdapter.ts   # 2D 拓扑感知聚类排版引擎、动态锚点与自引用分流
+    │   ├── components/          # 高内聚模块化 UI 组件库
+    │   │   ├── ai/              # AI 架构师侧栏、消息流、物理推导卡片与指令坞
+    │   │   ├── canvas/          # 画布工作区、DSL 源码阅读器、悬浮工具盘与空状态引导
+    │   │   ├── chen/            # 标准陈氏 ER 图元组件与统一声明式锚点 (ChenNodeHandles)
+    │   │   ├── data-dialog/     # 光栅化矢量图片导出与插件化文本导入/导出工作台
+    │   │   ├── inspector/       # 按目标正交拆分的物理表/索引/关系/概念检查器组
+    │   │   ├── scaffold/        # 脚手架配置表单、纯词法代码分词器 (零 innerHTML) 与代码预览
+    │   │   ├── ui/              # 原生 <dialog> 无障碍弹窗 (ModalDialog) 与方言分段控件 (DialectSegment)
+    │   │   └── ...              # Toolbar / ProjectMenu / ModelSelector / SchemaReviewDrawer 等
+    │   ├── dialects/            # 前端统一数据库方言策略注册表 (MySQL / PostgreSQL / SQLite)
+    │   ├── domain/              # 前端共享领域核 (inflect / foreignKey / junction / conceptNormalize)
+    │   ├── exchange/            # 插件化 Schema 导入/导出注册表 (SQL / Mermaid / JSON)
+    │   ├── flow/                # 画布投影与排版引擎
+    │   │   ├── chen/            # 统一中间表示 ChenGraphIR、2D 拓扑聚类、碰撞求解与几何引擎
+    │   │   ├── views/           # 多视图画布适配器注册表 (CanvasViewAdapter: Chen / Relational)
+    │   │   ├── adapter.ts       # 物理关系图节点与精确字段锚点投影
     │   │   └── layout.ts        # 物理表分层拓扑自排版
-    │   ├── store/               # Zustand 全局领域状态管理与历史引擎
-    │   │   ├── erStore.ts       # Store 主装配入口与防抖落库调度
-    │   │   ├── patch.ts         # RFC 6902 JSON Patch 差异对比与双向应用引擎
-    │   │   ├── types.ts         # 领域状态与切片接口声明
-    │   │   └── slices/          # 模块化领域切片
-    │   │       ├── aiChatSlice.ts      # AI 对话与 SSE 流式状态
-    │   │       ├── conceptualSlice.ts  # 概念设计与陈氏图业务模型
-    │   │       ├── erDesignSlice.ts    # 物理数据表与关联模型
-    │   │       ├── historySlice.ts     # 增量差异 Undo/Redo 历史栈
-    │   │       ├── projectSlice.ts     # 项目切换与元信息管理
-    │   │       └── uiSlice.ts          # 画布视口与交互状态
-    │   ├── types/dsl.ts         # 前端 ER DSL 类型定义 (后端 Domain 镜像)
-    │   └── utils/chinese.ts     # 业务概念词典与中文推导引擎
+    │   ├── hooks/               # 通用交互 Hooks (useDismissibleLayer / useListboxNavigation / useCopyFeedback)
+    │   ├── sql/                 # 单遍状态机 SQL 词法游标 (lexer) 与 DDL 双向解析/导出器
+    │   ├── store/               # Zustand 模块化 Slices 与多域泛化 RFC 6902 Patch 历史引擎
+    │   ├── types/dsl.ts         # 前端 ER DSL 类型定义与对齐后端的 Go 类型推导
+    │   └── utils/               # 中文业务词典、文件下载与 IME 键盘守卫工具
     ├── package.json             # 前端依赖配置
     └── vite.config.ts           # Vite 构建配置
 ```

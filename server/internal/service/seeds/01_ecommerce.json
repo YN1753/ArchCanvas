@@ -1,0 +1,251 @@
+{
+  "id": "01960000-0000-7000-8000-000000000001",
+  "order": 1,
+  "name": "电商交易履约系统",
+  "description": "官方精选样板 · 涵盖买家、多级类目自环树、商品标签 M:N 菱形折叠、交易主单、价格快照关联实体与幂等支付流水",
+  "conceptual": {
+    "summary": "面向高并发在线零售场景的核心交易与履约域模型，完整覆盖多级商品类目树、SPU/SKU 价格库存、营销多对多标签、订单快照留痕及幂等支付流水。",
+    "concepts": [
+      {
+        "id": "concept_user",
+        "name": "User",
+        "display_name": "买家用户",
+        "description": "商城注册会员与收货主体",
+        "attributes": [
+          { "id": "cu_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "cu_2", "name": "nickname", "display_name": "昵称", "category": "string", "required": true },
+          { "id": "cu_3", "name": "phone", "display_name": "手机号", "category": "string", "required": true, "is_unique": true },
+          { "id": "cu_4", "name": "member_level", "display_name": "会员等级", "category": "enum", "required": true }
+        ]
+      },
+      {
+        "id": "concept_category",
+        "name": "Category",
+        "display_name": "商品类目",
+        "description": "支持无限级树形折叠的商品目录分类",
+        "attributes": [
+          { "id": "cc_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "cc_2", "name": "name", "display_name": "类目名称", "category": "string", "required": true },
+          { "id": "cc_3", "name": "sort_weight", "display_name": "排序权重", "category": "number", "required": true }
+        ]
+      },
+      {
+        "id": "concept_product",
+        "name": "Product",
+        "display_name": "商城商品",
+        "description": "在售可交易标准商品单元",
+        "attributes": [
+          { "id": "cp_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "cp_2", "name": "sku_code", "display_name": "商品编码", "category": "string", "required": true, "is_unique": true },
+          { "id": "cp_3", "name": "title", "display_name": "商品标题", "category": "string", "required": true },
+          { "id": "cp_4", "name": "sale_price", "display_name": "销售单价", "category": "number", "required": true },
+          { "id": "cp_5", "name": "stock_qty", "display_name": "可用库存", "category": "number", "required": true }
+        ]
+      },
+      {
+        "id": "concept_tag",
+        "name": "Tag",
+        "display_name": "营销标签",
+        "description": "活动会场与检索导购标签",
+        "attributes": [
+          { "id": "ct_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "ct_2", "name": "tag_name", "display_name": "标签名", "category": "string", "required": true, "is_unique": true }
+        ]
+      },
+      {
+        "id": "concept_order",
+        "name": "Order",
+        "display_name": "交易订单",
+        "description": "买家下单履约主单据",
+        "attributes": [
+          { "id": "co_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "co_2", "name": "order_no", "display_name": "订单号", "category": "string", "required": true, "is_unique": true },
+          { "id": "co_3", "name": "payable_amount", "display_name": "实付金额", "category": "number", "required": true },
+          { "id": "co_4", "name": "order_status", "display_name": "履约状态", "category": "enum", "required": true }
+        ]
+      },
+      {
+        "id": "concept_order_item",
+        "name": "OrderItem",
+        "display_name": "订单明细",
+        "description": "承载下单瞬时价格与购买数量的关联业务实体",
+        "attributes": [
+          { "id": "coi_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "coi_2", "name": "unit_price", "display_name": "成交单价", "category": "number", "required": true },
+          { "id": "coi_3", "name": "quantity", "display_name": "购买数量", "category": "number", "required": true }
+        ]
+      },
+      {
+        "id": "concept_payment",
+        "name": "Payment",
+        "display_name": "支付流水",
+        "description": "三方收银台交易凭证与回调幂等记录",
+        "attributes": [
+          { "id": "cpay_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "cpay_2", "name": "out_trade_no", "display_name": "支付单号", "category": "string", "required": true, "is_unique": true },
+          { "id": "cpay_3", "name": "channel", "display_name": "支付渠道", "category": "enum", "required": true },
+          { "id": "cpay_4", "name": "paid_at", "display_name": "支付时间", "category": "datetime" }
+        ]
+      }
+    ],
+    "relations": [
+      { "id": "crel_cat_self", "name": "父子类目", "source_concept": "Category", "target_concept": "Category", "cardinality": "one_to_many" },
+      { "id": "crel_cat_prod", "name": "归属类目", "source_concept": "Category", "target_concept": "Product", "cardinality": "one_to_many" },
+      { "id": "crel_prod_tag", "name": "打标签", "source_concept": "Product", "target_concept": "Tag", "cardinality": "many_to_many" },
+      { "id": "crel_user_ord", "name": "发起下单", "source_concept": "User", "target_concept": "Order", "cardinality": "one_to_many" },
+      { "id": "crel_ord_item", "name": "包含明细", "source_concept": "Order", "target_concept": "OrderItem", "cardinality": "one_to_many" },
+      { "id": "crel_prod_item", "name": "选购商品", "source_concept": "Product", "target_concept": "OrderItem", "cardinality": "one_to_many" },
+      { "id": "crel_ord_pay", "name": "支付结算", "source_concept": "Order", "target_concept": "Payment", "cardinality": "one_to_one" }
+    ]
+  },
+  "physical": {
+    "entities": [
+      {
+        "id": "01960001-0000-7000-8000-000000000101",
+        "name": "users",
+        "comment": "买家用户",
+        "position": { "x": 80, "y": 60 },
+        "attributes": [
+          { "id": "01960001-0001-7000-8000-000000000001", "name": "id", "comment": "用户主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "用户主键" },
+          { "id": "01960001-0001-7000-8000-000000000002", "name": "nickname", "comment": "用户昵称", "db_type": "VARCHAR(64)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "用户昵称" },
+          { "id": "01960001-0001-7000-8000-000000000003", "name": "phone", "comment": "绑定手机号", "db_type": "VARCHAR(20)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "绑定手机号" },
+          { "id": "01960001-0001-7000-8000-000000000004", "name": "member_level", "comment": "会员等级", "db_type": "VARCHAR(16)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "会员等级" },
+          { "id": "01960001-0001-7000-8000-000000000005", "name": "created_at", "comment": "注册时间", "db_type": "DATETIME", "code_type": "time.Time", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "注册时间" }
+        ],
+        "indexes": [
+          { "name": "uk_users_phone", "columns": ["phone"], "is_unique": true, "comment": "手机号唯一索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000102",
+        "name": "categories",
+        "comment": "商品类目",
+        "position": { "x": 80, "y": 380 },
+        "attributes": [
+          { "id": "01960001-0002-7000-8000-000000000001", "name": "id", "comment": "类目主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "类目主键" },
+          { "id": "01960001-0002-7000-8000-000000000002", "name": "parent_id", "comment": "父级类目ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": true, "is_unique": false, "default_value": null, "description": "父级类目ID" },
+          { "id": "01960001-0002-7000-8000-000000000003", "name": "name", "comment": "类目名称", "db_type": "VARCHAR(64)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "类目名称" },
+          { "id": "01960001-0002-7000-8000-000000000004", "name": "sort_weight", "comment": "排序权重", "db_type": "INT", "code_type": "int", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "排序权重" }
+        ],
+        "indexes": [
+          { "name": "idx_categories_parent_id", "columns": ["parent_id"], "comment": "子类目树查询索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000103",
+        "name": "products",
+        "comment": "商城商品",
+        "position": { "x": 440, "y": 380 },
+        "attributes": [
+          { "id": "01960001-0003-7000-8000-000000000001", "name": "id", "comment": "商品主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "商品主键" },
+          { "id": "01960001-0003-7000-8000-000000000002", "name": "category_id", "comment": "所属类目ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "所属类目ID" },
+          { "id": "01960001-0003-7000-8000-000000000003", "name": "sku_code", "comment": "商品编码", "db_type": "VARCHAR(64)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "商品编码" },
+          { "id": "01960001-0003-7000-8000-000000000004", "name": "title", "comment": "商品标题", "db_type": "VARCHAR(128)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "商品标题" },
+          { "id": "01960001-0003-7000-8000-000000000005", "name": "sale_price", "comment": "销售单价", "db_type": "DECIMAL(12,2)", "code_type": "float64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "销售单价" },
+          { "id": "01960001-0003-7000-8000-000000000006", "name": "stock_qty", "comment": "可用库存", "db_type": "INT", "code_type": "int", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "可用库存" }
+        ],
+        "indexes": [
+          { "name": "idx_products_category_id", "columns": ["category_id"], "comment": "类目商品列表索引" },
+          { "name": "uk_products_sku_code", "columns": ["sku_code"], "is_unique": true, "comment": "SKU编码唯一索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000106",
+        "name": "orders",
+        "comment": "交易订单",
+        "position": { "x": 440, "y": 60 },
+        "attributes": [
+          { "id": "01960001-0004-7000-8000-000000000001", "name": "id", "comment": "订单主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "订单主键" },
+          { "id": "01960001-0004-7000-8000-000000000002", "name": "order_no", "comment": "业务订单号", "db_type": "VARCHAR(64)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "业务订单号" },
+          { "id": "01960001-0004-7000-8000-000000000003", "name": "user_id", "comment": "下单买家ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "下单买家ID" },
+          { "id": "01960001-0004-7000-8000-000000000004", "name": "payable_amount", "comment": "应付总金额", "db_type": "DECIMAL(12,2)", "code_type": "float64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "应付总金额" },
+          { "id": "01960001-0004-7000-8000-000000000005", "name": "order_status", "comment": "订单履约状态", "db_type": "VARCHAR(24)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "订单履约状态" },
+          { "id": "01960001-0004-7000-8000-000000000006", "name": "created_at", "comment": "下单时间", "db_type": "DATETIME", "code_type": "time.Time", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "下单时间" }
+        ],
+        "indexes": [
+          { "name": "uk_orders_order_no", "columns": ["order_no"], "is_unique": true, "comment": "订单号唯一索引" },
+          { "name": "idx_orders_user_status", "columns": ["user_id", "order_status"], "comment": "买家订单状态联合检索索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000107",
+        "name": "order_items",
+        "comment": "订单明细",
+        "position": { "x": 820, "y": 210 },
+        "is_junction_table": false,
+        "attributes": [
+          { "id": "01960001-0005-7000-8000-000000000001", "name": "id", "comment": "明细主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "明细主键" },
+          { "id": "01960001-0005-7000-8000-000000000002", "name": "order_id", "comment": "所属订单ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "所属订单ID" },
+          { "id": "01960001-0005-7000-8000-000000000003", "name": "product_id", "comment": "关联商品ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "关联商品ID" },
+          { "id": "01960001-0005-7000-8000-000000000004", "name": "product_title", "comment": "商品名称快照", "db_type": "VARCHAR(128)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "商品名称快照" },
+          { "id": "01960001-0005-7000-8000-000000000005", "name": "unit_price", "comment": "成交单价快照", "db_type": "DECIMAL(12,2)", "code_type": "float64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "成交单价快照" },
+          { "id": "01960001-0005-7000-8000-000000000006", "name": "quantity", "comment": "购买数量", "db_type": "INT", "code_type": "int", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "购买数量" }
+        ],
+        "indexes": [
+          { "name": "idx_order_items_order_id", "columns": ["order_id"], "comment": "订单查明细索引" },
+          { "name": "idx_order_items_product_id", "columns": ["product_id"], "comment": "商品销量统计索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000108",
+        "name": "payments",
+        "comment": "支付流水",
+        "position": { "x": 820, "y": 20 },
+        "attributes": [
+          { "id": "01960001-0006-7000-8000-000000000001", "name": "id", "comment": "支付主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "支付主键" },
+          { "id": "01960001-0006-7000-8000-000000000002", "name": "order_id", "comment": "关联订单ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "关联订单ID" },
+          { "id": "01960001-0006-7000-8000-000000000003", "name": "out_trade_no", "comment": "外部支付单号", "db_type": "VARCHAR(64)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "外部支付单号" },
+          { "id": "01960001-0006-7000-8000-000000000004", "name": "channel", "comment": "支付渠道", "db_type": "VARCHAR(24)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "支付渠道" },
+          { "id": "01960001-0006-7000-8000-000000000005", "name": "paid_at", "comment": "支付完成时间", "db_type": "DATETIME", "code_type": "time.Time", "is_primary_key": false, "is_nullable": true, "is_unique": false, "default_value": null, "description": "支付完成时间" }
+        ],
+        "indexes": [
+          { "name": "uk_payments_order_id", "columns": ["order_id"], "is_unique": true, "comment": "单笔订单唯一有效支付" },
+          { "name": "uk_payments_out_trade_no", "columns": ["out_trade_no"], "is_unique": true, "comment": "外部支付单号幂等索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000105",
+        "name": "product_tags",
+        "comment": "打标签",
+        "position": { "x": 820, "y": 480 },
+        "is_junction_table": true,
+        "attributes": [
+          { "id": "01960001-0007-7000-8000-000000000001", "name": "id", "comment": "映射主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "映射主键" },
+          { "id": "01960001-0007-7000-8000-000000000002", "name": "product_id", "comment": "商品ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "商品ID" },
+          { "id": "01960001-0007-7000-8000-000000000003", "name": "tag_id", "comment": "标签ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": false, "is_nullable": false, "is_unique": false, "default_value": null, "description": "标签ID" }
+        ],
+        "indexes": [
+          { "name": "uk_product_tags_pair", "columns": ["product_id", "tag_id"], "is_unique": true, "comment": "商品标签联合唯一索引" }
+        ]
+      },
+      {
+        "id": "01960001-0000-7000-8000-000000000104",
+        "name": "tags",
+        "comment": "营销标签",
+        "position": { "x": 1160, "y": 480 },
+        "attributes": [
+          { "id": "01960001-0008-7000-8000-000000000001", "name": "id", "comment": "标签主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "is_nullable": false, "is_unique": false, "default_value": null, "description": "标签主键" },
+          { "id": "01960001-0008-7000-8000-000000000002", "name": "tag_name", "comment": "标签名称", "db_type": "VARCHAR(32)", "code_type": "string", "is_primary_key": false, "is_nullable": false, "is_unique": true, "default_value": null, "description": "标签名称" }
+        ]
+      }
+    ],
+    "relations": [
+      { "id": "01960001-0099-7000-8000-000000000001", "source_entity_id": "01960001-0000-7000-8000-000000000102", "target_entity_id": "01960001-0000-7000-8000-000000000102", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000002", "source_entity_id": "01960001-0000-7000-8000-000000000102", "target_entity_id": "01960001-0000-7000-8000-000000000103", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000003", "source_entity_id": "01960001-0000-7000-8000-000000000101", "target_entity_id": "01960001-0000-7000-8000-000000000106", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000004", "source_entity_id": "01960001-0000-7000-8000-000000000106", "target_entity_id": "01960001-0000-7000-8000-000000000107", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000005", "source_entity_id": "01960001-0000-7000-8000-000000000103", "target_entity_id": "01960001-0000-7000-8000-000000000107", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000006", "source_entity_id": "01960001-0000-7000-8000-000000000106", "target_entity_id": "01960001-0000-7000-8000-000000000108", "cardinality": "one_to_one", "relation_type_id": "one_to_one" },
+      { "id": "01960001-0099-7000-8000-000000000007", "source_entity_id": "01960001-0000-7000-8000-000000000103", "target_entity_id": "01960001-0000-7000-8000-000000000105", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960001-0099-7000-8000-000000000008", "source_entity_id": "01960001-0000-7000-8000-000000000104", "target_entity_id": "01960001-0000-7000-8000-000000000105", "cardinality": "one_to_many", "relation_type_id": "one_to_many" }
+    ]
+  },
+  "user_prompt": "设计一套标准在线电商交易履约系统，支持多级商品类目树、商品与营销标签多对多关联、买家下单（保留历史成交价快照）以及三方支付流水幂等对账。",
+  "assistant_message": {
+    "stage": "physical_derived",
+    "summary": "已完成电商交易履约系统的概念建模与物理表工程化推导：1) 类目采用 parent_id 自引用树；2) 商品与营销标签通过纯技术联结表 product_tags 实现多对多并在陈氏视图中自动升华为菱形联系；3) 订单明细 order_items 承载成交单价快照与数量，作为独立关联实体完整保留。",
+    "entities": [
+      "users", "categories", "products", "tags", "product_tags", "orders", "order_items", "payments"
+    ]
+  }
+}

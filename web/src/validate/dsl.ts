@@ -9,8 +9,6 @@ import type { ERDesign } from '../types/dsl'
  * 因此这里刻意保持与后端一致的规则与措辞，避免出现前端说没问题、后端拒绝的割裂体验。
  */
 
-export const ER_DESIGN_INVALID = 'er design is invalid'
-
 const cardinalitySchema = z.enum(['one_to_one', 'one_to_many', 'many_to_many'])
 
 const positionSchema = z.object({
@@ -194,7 +192,7 @@ export function parseDesignJSON(text: string): ERDesign {
   try {
     raw = JSON.parse(text)
   } catch (error) {
-    throw new Error(`JSON 解析失败：${String(error)}`)
+    throw new Error(`JSON 解析失败：${String(error)}`, { cause: error })
   }
 
   // 兼容 {"design": {...}} 与直接给设计本身两种形式

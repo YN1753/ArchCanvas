@@ -1,8 +1,32 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { defaultCodeType } from '../types/dsl'
 import { parseDesignJSON, validateDesign } from './dsl'
 
 describe('ER DSL Validation & JSON Import Coercion', () => {
+  it('defaultCodeType aligns signed and unsigned Go integer and binary types with backend model.go', () => {
+    assert.equal(defaultCodeType('TINYINT(1)'), 'bool')
+    assert.equal(defaultCodeType('BOOLEAN'), 'bool')
+    assert.equal(defaultCodeType('BIGINT'), 'int64')
+    assert.equal(defaultCodeType('BIGINT(20) UNSIGNED'), 'uint64')
+    assert.equal(defaultCodeType('BIGSERIAL'), 'int64')
+    assert.equal(defaultCodeType('TINYINT'), 'int8')
+    assert.equal(defaultCodeType('TINYINT UNSIGNED'), 'uint8')
+    assert.equal(defaultCodeType('SMALLINT'), 'int16')
+    assert.equal(defaultCodeType('SMALLINT UNSIGNED'), 'uint16')
+    assert.equal(defaultCodeType('INT'), 'int')
+    assert.equal(defaultCodeType('INT(11) UNSIGNED'), 'uint')
+    assert.equal(defaultCodeType('MEDIUMINT UNSIGNED'), 'uint')
+    assert.equal(defaultCodeType('SERIAL'), 'int')
+    assert.equal(defaultCodeType('DECIMAL(10,2)'), 'float64')
+    assert.equal(defaultCodeType('DOUBLE PRECISION'), 'float64')
+    assert.equal(defaultCodeType('TIMESTAMPTZ'), 'time.Time')
+    assert.equal(defaultCodeType('VARBINARY(64)'), '[]byte')
+    assert.equal(defaultCodeType('BINARY(16)'), '[]byte')
+    assert.equal(defaultCodeType('BYTEA'), '[]byte')
+    assert.equal(defaultCodeType('VARCHAR(128)'), 'string')
+  })
+
   it('parseDesignJSON coerces scalar default_value (number/boolean) to string and unwraps { design }', () => {
     const rawJson = JSON.stringify({
       design: {

@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
 import { useStore } from '../store/erStore'
 import Select from './Select'
 
@@ -8,7 +9,6 @@ interface PresetConfig {
   baseURL: string
   suggestedModels: string[]
   placeholderKey: string
-  isLocal?: boolean
 }
 
 const PRESETS: PresetConfig[] = [
@@ -32,7 +32,6 @@ const PRESETS: PresetConfig[] = [
     baseURL: 'http://localhost:11434/v1',
     suggestedModels: ['qwen2.5-coder', 'deepseek-r1', 'llama3.1'],
     placeholderKey: '本地服务无需 API Key',
-    isLocal: true,
   },
   {
     name: 'custom',
@@ -43,13 +42,7 @@ const PRESETS: PresetConfig[] = [
   },
 ]
 
-export default function ModelSelector({
-  compact: _compact = false,
-  className = '',
-}: {
-  compact?: boolean
-  className?: string
-}) {
+export default function ModelSelector({ className = '' }: { className?: string }) {
   const models = useStore((state) => state.models)
   const providers = useStore((state) => state.providers)
   const selectedModel = useStore((state) => state.selectedModel)
@@ -75,32 +68,15 @@ export default function ModelSelector({
   const [detectedModels, setDetectedModels] = useState<string[]>([])
   const [isManualInput, setIsManualInput] = useState(false)
 
-  // 点击外部或按 Escape 收起浮层
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        setOpen(false)
-        setView('list')
-        setStatusMsg(null)
-        setDetectedModels([])
-        setIsManualInput(false)
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setOpen(false)
-        setView('list')
-      }
-    }
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside)
-      document.addEventListener('keydown', handleKeyDown)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+  const dismissPopover = useCallback(() => {
+    setOpen(false)
+    setView('list')
+    setStatusMsg(null)
+    setDetectedModels([])
+    setIsManualInput(false)
+  }, [])
+
+  useDismissibleLayer(popoverRef, open, dismissPopover)
 
   // 打开配置视图时预填当前选中的 Provider
   const handleOpenConfig = (pName?: string) => {

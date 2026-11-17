@@ -1,4 +1,11 @@
-import { CARDINALITY_LABEL, type Attribute, type Cardinality, type ERDesign } from '../types/dsl'
+import { inferReferencedEntity } from '../domain/foreignKey'
+import {
+  CARDINALITY_LABEL,
+  type Attribute,
+  type Cardinality,
+  type Entity,
+  type ERDesign,
+} from '../types/dsl'
 
 /**
  * 导出 Mermaid erDiagram。
@@ -20,10 +27,6 @@ const CARDINALITY_SYMBOL: Record<Cardinality, string> = {
 
 const ASCII_ENTITY_IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/
 
-/**
- * Mermaid 实体名：纯 ASCII 合法标识符直接输出；
- * 含中文或特殊字符的表名使用双引号包裹，杜绝多张中文表退化为同名 `__` 冲突。
- */
 function formatEntityIdent(name: string, fallbackIndex: number): string {
   const trimmed = name.replace(/[\r\n]+/g, ' ').trim()
   if (!trimmed) {
@@ -36,19 +39,10 @@ function formatEntityIdent(name: string, fallbackIndex: number): string {
   return `"${escaped}"`
 }
 
-/**
- * Mermaid 字段数据类型：Mermaid erDiagram 的字段类型词法不允许逗号与空格。
- * - 将数值精度如 `DECIMAL(10, 2)` 规范化为 `DECIMAL(10-2)`（避免生成丑陋的 `10_2`）
- * - 将 `ENUM('a','b')` 收敛为基础类型名 `ENUM`
- * - 将 `BIGINT UNSIGNED` 合并为 `BIGINT_UNSIGNED`
- */
 function sanitizeType(rawType: string): string {
   const trimmed = rawType.trim()
   if (!trimmed) return 'VARCHAR'
-  const numericPrecision = trimmed.replace(
-    /\(\s*(\d+)\s*,\s*(\d+)\s*\)/g,
-    '($1-$2)',
-  )
+  const numericPrecision = trimmed.replace(/\(\s*(\d+)\s*,\s*(\d+)\s*\)/g, '($1-$2)')
   const withoutStringArgs = numericPrecision.replace(/\([^)]*['",][^)]*\)/g, '')
   const cleaned = withoutStringArgs
     .replace(/\s+/g, '_')
@@ -57,9 +51,6 @@ function sanitizeType(rawType: string): string {
   return cleaned.length > 0 ? cleaned : 'VARCHAR'
 }
 
-/**
- * Mermaid 字段名：ASCII 标识符原样保留；非 ASCII 字符转为稳健的 Unicode 十六进制后缀避免重名。
- */
 function sanitizeAttrName(name: string, index: number): string {
   const trimmed = name.trim()
   if (!trimmed) return `field_${index + 1}`
@@ -77,37 +68,10 @@ function quote(comment: string): string {
   return `"${singleLine.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
-/**
- * 外键推断：字段名形如 `<某实体名>_id`，且该实体确实存在于本设计中。
- */
-function inferForeignKey(fieldName: string, entityNames: Set<string>): boolean {
-  const lower = fieldName.trim().toLowerCase()
-  if (!lower.endsWith('_id')) {
-    return false
-  }
-  const base = lower.slice(0, -3)
-  if (base.length === 0) {
-    return false
-  }
-  if (entityNames.has(base)) {
-    return true
-  }
-  if (base.endsWith('s') && entityNames.has(base.slice(0, -1))) {
-    return true
-  }
-  if (entityNames.has(`${base}s`) || entityNames.has(`${base}es`)) {
-    return true
-  }
-  if (base.endsWith('y') && entityNames.has(`${base.slice(0, -1)}ies`)) {
-    return true
-  }
-  return false
-}
-
 function attributeLine(
   attribute: Attribute,
   index: number,
-  entityNames: Set<string>,
+  entities: readonly Entity[],
 ): string {
   const parts = [sanitizeType(attribute.db_type), sanitizeAttrName(attribute.name, index)]
 
@@ -115,7 +79,7 @@ function attributeLine(
   if (attribute.is_primary_key) {
     keys.push('PK')
   }
-  if (inferForeignKey(attribute.name, entityNames)) {
+  if (!attribute.is_primary_key && inferReferencedEntity(attribute.name, entities)) {
     keys.push('FK')
   }
   if (attribute.is_unique) {
@@ -133,9 +97,7 @@ function attributeLine(
 }
 
 export function toMermaid(design: ERDesign): string {
-  const entityNames = new Set(design.entities.map((entity) => entity.name.trim().toLowerCase()))
   const entityIdentByID = new Map<string, string>()
-
   const lines: string[] = ['erDiagram']
 
   if (design.entities.length === 0) {
@@ -151,7 +113,7 @@ export function toMermaid(design: ERDesign): string {
       lines.push('    %% 该实体暂无字段')
     }
     entity.attributes.forEach((attribute, attrIdx) => {
-      lines.push(attributeLine(attribute, attrIdx, entityNames))
+      lines.push(attributeLine(attribute, attrIdx, design.entities))
     })
     lines.push('  }')
   })

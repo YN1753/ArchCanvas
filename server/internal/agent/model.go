@@ -2,6 +2,7 @@ package agent
 
 import (
 	"archcanvas/internal/config"
+	"archcanvas/pkg/safenet"
 	"context"
 	"fmt"
 	"strings"
@@ -23,7 +24,7 @@ func NewChatModel(ctx context.Context, cfg config.ModelConfig, modelName string)
 			APIKey:     cfg.APIKey,
 			BaseURL:    cfg.BaseURL,
 			Model:      modelName,
-			HTTPClient: newSafeModelHTTPClient(),
+			HTTPClient: safenet.NewModelHTTPClient(),
 		}
 		if cfg.Temperature > 0 {
 			chatCfg.Temperature = &cfg.Temperature

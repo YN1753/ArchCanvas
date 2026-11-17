@@ -71,13 +71,11 @@ func TestModelManager_ConcurrentSafety(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			switch idx % 4 {
+			switch idx % 3 {
 			case 0:
-				_ = mgr.CurrentModelKey()
-			case 1:
-				_, _ = mgr.SwitchModel(ctx, "deepseek-r1", "mock2")
-			case 2:
 				_, _ = mgr.GetChatModel(ctx, "mock1", "gpt-4o")
+			case 1:
+				_, _ = mgr.GetChatModel(ctx, "mock2", "deepseek-r1")
 			default:
 				_, _ = mgr.GetAvailableModels(ctx, dto.GetModelsReq{})
 			}
@@ -146,8 +144,9 @@ func TestGetAvailableModels_SSRFAndKeyExfiltrationDefense(t *testing.T) {
 		"http://0.0.0.0:8080/v1",
 		"https://user:pass@example.com/v1",
 	}
+	probeMgr := NewModelManager(ctx, nil, "", t.TempDir())
 	for _, u := range badURLs {
-		if _, err := FetchModelsFromBaseURL(ctx, u, ""); err == nil {
+		if _, err := probeMgr.GetAvailableModels(ctx, dto.GetModelsReq{BaseURL: u}); err == nil {
 			t.Errorf("expected SSRF validation error for %q, got nil", u)
 		}
 	}

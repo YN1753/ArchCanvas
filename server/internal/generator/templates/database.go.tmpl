@@ -7,13 +7,7 @@ import (
 	"{{ .ModuleName }}/internal/config"
 	"{{ .ModuleName }}/internal/model"
 
-	{{- if eq .DBDriver "mysql" }}
-	"gorm.io/driver/mysql"
-	{{- else if eq .DBDriver "postgres" }}
-	"gorm.io/driver/postgres"
-	{{- else }}
-	"gorm.io/driver/sqlite"
-	{{- end }}
+	"{{ .GormDriverImport }}"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -23,16 +17,8 @@ func InitDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 
 	switch cfg.Driver {
-	{{- if eq .DBDriver "mysql" }}
-	case "mysql":
-		dialector = mysql.Open(cfg.DSN)
-	{{- else if eq .DBDriver "postgres" }}
-	case "postgres":
-		dialector = postgres.Open(cfg.DSN)
-	{{- else }}
-	case "sqlite":
-		dialector = sqlite.Open(cfg.DSN)
-	{{- end }}
+	case "{{ .DBDriver }}":
+		dialector = {{ .GormOpenExpr }}
 	default:
 		return nil, fmt.Errorf("unsupported db driver: %s", cfg.Driver)
 	}

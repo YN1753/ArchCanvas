@@ -11,6 +11,7 @@ import (
 	"archcanvas/internal/domain"
 	"archcanvas/internal/dto"
 	"archcanvas/internal/generator"
+	"archcanvas/internal/service"
 )
 
 // EvalCases 评测用例文件定义
@@ -65,73 +66,9 @@ func LoadCases(path string) (*EvalCases, error) {
 	return &cases, nil
 }
 
-// CheckERDesignRules 按照建模规则对生成的 ERDesign 进行自动断言打分
+// CheckERDesignRules 委托统一静态架构规则引擎对生成的 ERDesign 执行门禁断言。
 func CheckERDesignRules(design *domain.ERDesign) (bool, []string) {
-	if design == nil || len(design.Entities) == 0 {
-		return false, []string{"ER 设计为空或实体数量为 0"}
-	}
-
-	var issues []string
-	entityMap := make(map[string]domain.Entity, len(design.Entities)*2)
-	for _, ent := range design.Entities {
-		entityMap[ent.ID] = ent
-		entityMap[strings.ToLower(ent.Name)] = ent
-
-		if len(ent.Attributes) == 0 {
-			issues = append(issues, fmt.Sprintf("实体 %s 字段列表为空", ent.Name))
-			continue
-		}
-
-		// 规则 1: 必须有非空物理主键
-		hasPK := false
-		for _, attr := range ent.Attributes {
-			if attr.IsPrimaryKey {
-				hasPK = true
-				if attr.IsNullable {
-					issues = append(issues, fmt.Sprintf("实体 %s 主键列 %s 不允许为 Nullable", ent.Name, attr.Name))
-				}
-			}
-		}
-		if !hasPK {
-			issues = append(issues, fmt.Sprintf("实体 %s 缺失物理主键 (IsPrimaryKey==true)", ent.Name))
-		}
-	}
-
-	// 规则 2: 关联关系两端实体必须合法存在，且 1:N / 1:1 目标表需包含外键列
-	for _, rel := range design.Relations {
-		srcEnt, srcOk := entityMap[rel.SourceEntityID]
-		if !srcOk {
-			srcEnt, srcOk = entityMap[strings.ToLower(rel.SourceEntityID)]
-		}
-		tgtEnt, tgtOk := entityMap[rel.TargetEntityID]
-		if !tgtOk {
-			tgtEnt, tgtOk = entityMap[strings.ToLower(rel.TargetEntityID)]
-		}
-		if !srcOk || !tgtOk || srcEnt.ID == "" || tgtEnt.ID == "" {
-			issues = append(issues, fmt.Sprintf("关系 %s 的端点实体不存在 (%s -> %s)", rel.ID, rel.SourceEntityID, rel.TargetEntityID))
-			continue
-		}
-
-		card := rel.Cardinality
-		if card == "" {
-			card = rel.RelationTypeID
-		}
-		if card == "one_to_many" || card == "one_to_one" {
-			hasFK := false
-			for _, attr := range tgtEnt.Attributes {
-				lowerCol := strings.ToLower(attr.Name)
-				if strings.HasSuffix(lowerCol, "_id") && !attr.IsPrimaryKey {
-					hasFK = true
-					break
-				}
-			}
-			if !hasFK {
-				issues = append(issues, fmt.Sprintf("关系 %s (%s -> %s) 在目标表 %s 中缺少外键列 (*_id)", rel.ID, srcEnt.Name, tgtEnt.Name, tgtEnt.Name))
-			}
-		}
-	}
-
-	return len(issues) == 0, issues
+	return service.CheckSchemaGateRules(design)
 }
 
 // VerifyE2EBuild 将生成的工程写入临时目录并执行真实编译、静态检查与内存 SQLite AutoMigrate 冒烟测试

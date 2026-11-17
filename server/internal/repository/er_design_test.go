@@ -82,11 +82,11 @@ func TestSaveByProjectID_CrossProjectUUIDImportAndTwoPassRename(t *testing.T) {
 	erRepo := NewERDesignRepository(db)
 	ctx := context.Background()
 
-	pA, err := projRepo.Create(ctx, "Project A", "")
+	pA, err := projRepo.CreateWithVisitor(ctx, "Project A", "", "")
 	if err != nil {
 		t.Fatalf("create pA: %v", err)
 	}
-	pB, err := projRepo.Create(ctx, "Project B", "")
+	pB, err := projRepo.CreateWithVisitor(ctx, "Project B", "", "")
 	if err != nil {
 		t.Fatalf("create pB: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestSaveByProjectID_ConcurrentSQLiteWriters(t *testing.T) {
 	erRepo := NewERDesignRepository(db)
 	ctx := context.Background()
 
-	p, err := projRepo.Create(ctx, "Concurrent Test", "")
+	p, err := projRepo.CreateWithVisitor(ctx, "Concurrent Test", "", "")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

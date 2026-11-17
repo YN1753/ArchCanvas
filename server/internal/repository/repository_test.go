@@ -26,10 +26,10 @@ func TestProjectRepository_CRUDAndCascade(t *testing.T) {
 	repo := NewProjectRepository(db)
 	ctx := context.Background()
 
-	// 1. Create
-	p, err := repo.Create(ctx, "测试电商架构", "电商多租户系统设计")
+	// 1. CreateWithVisitor
+	p, err := repo.CreateWithVisitor(ctx, "测试电商架构", "电商多租户系统设计", "")
 	if err != nil {
-		t.Fatalf("Create project failed: %v", err)
+		t.Fatalf("CreateWithVisitor project failed: %v", err)
 	}
 	if p.ID == "" || p.Name != "测试电商架构" {
 		t.Fatalf("unexpected project created: %+v", p)
@@ -44,10 +44,11 @@ func TestProjectRepository_CRUDAndCascade(t *testing.T) {
 		t.Fatalf("fetched project mismatch: got %+v, want %+v", fetched, p)
 	}
 
-	// 3. Update
-	updated, err := repo.Update(ctx, p.ID, "测试电商架构v2", "重构描述")
+	// 3. UpdateOptionalDesc
+	newDesc := "重构描述"
+	updated, err := repo.UpdateOptionalDesc(ctx, p.ID, "测试电商架构v2", &newDesc)
 	if err != nil {
-		t.Fatalf("Update failed: %v", err)
+		t.Fatalf("UpdateOptionalDesc failed: %v", err)
 	}
 	if updated.Name != "测试电商架构v2" || updated.Description != "重构描述" {
 		t.Fatalf("updated mismatch: %+v", updated)
@@ -89,7 +90,7 @@ func TestERDesignRepository_SaveAndGet(t *testing.T) {
 	erRepo := NewERDesignRepository(db)
 	ctx := context.Background()
 
-	p, err := projectRepo.Create(ctx, "ER建模测试", "测试物理表存储")
+	p, err := projectRepo.CreateWithVisitor(ctx, "ER建模测试", "测试物理表存储", "")
 	if err != nil {
 		t.Fatalf("create project failed: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestMessageRepository_ConversationAndMessages(t *testing.T) {
 	msgRepo := NewMessageRepository(db)
 	ctx := context.Background()
 
-	p, err := projectRepo.Create(ctx, "消息测试项目", "")
+	p, err := projectRepo.CreateWithVisitor(ctx, "消息测试项目", "", "")
 	if err != nil {
 		t.Fatalf("create project failed: %v", err)
 	}
@@ -288,14 +289,15 @@ func TestRepositories_NilSafety(t *testing.T) {
 	if _, err := pRepo.GetByID(ctx, "id"); err == nil {
 		t.Errorf("expected error on nil ProjectRepository.GetByID")
 	}
-	if _, err := pRepo.Create(ctx, "a", "b"); err == nil {
-		t.Errorf("expected error on nil ProjectRepository.Create")
+	if _, err := pRepo.CreateWithVisitor(ctx, "a", "b", ""); err == nil {
+		t.Errorf("expected error on nil ProjectRepository.CreateWithVisitor")
 	}
 	if err := pRepo.Delete(ctx, "id"); err == nil {
 		t.Errorf("expected error on nil ProjectRepository.Delete")
 	}
-	if _, err := pRepo.Update(ctx, "id", "a", "b"); err == nil {
-		t.Errorf("expected error on nil ProjectRepository.Update")
+	desc := "b"
+	if _, err := pRepo.UpdateOptionalDesc(ctx, "id", "a", &desc); err == nil {
+		t.Errorf("expected error on nil ProjectRepository.UpdateOptionalDesc")
 	}
 	if err := pRepo.SaveConceptualDesign(ctx, "id", "{}"); err == nil {
 		t.Errorf("expected error on nil ProjectRepository.SaveConceptualDesign")

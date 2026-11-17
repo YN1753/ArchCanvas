@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	ProposeRequirementToolName  = "propose_requirement"
-	ProposeSchemaDesignToolName = "propose_schema_design"
-	SaveERDesignToolName        = "save_er_design"
+	ProposeRequirementToolName = "propose_requirement"
+	SaveERDesignToolName       = "save_er_design"
 )
 
 // ProposeRequirementArgs 阶段一：需求分析算子输出的结构体参数
@@ -33,9 +32,6 @@ type ProposeSchemaDesignArgs struct {
 	Entities  []domain.Entity   `json:"entities" jsonschema:"description=推导出的物理数据库表结构列表"`
 	Relations []domain.Relation `json:"relations" jsonschema:"description=物理表之间的关联关系"`
 }
-
-// ProposeERDesignArgs 保持向后兼容性
-type ProposeERDesignArgs = ProposeSchemaDesignArgs
 
 // NewProposeRequirementTool 创建提交业务概念需求分析的工具
 func NewProposeRequirementTool(ctx context.Context) (tool.InvokableTool, *schema.ToolInfo, error) {

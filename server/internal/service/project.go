@@ -4,20 +4,15 @@ import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/config"
 	"archcanvas/internal/domain"
-	"archcanvas/internal/dto"
-	"archcanvas/internal/middleware"
 	"archcanvas/internal/model"
 	"archcanvas/internal/repository"
 	"archcanvas/internal/validator"
+	"archcanvas/pkg/reqctx"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type ProjectDetail struct {
@@ -67,63 +62,13 @@ func NewProjectService(
 	}
 }
 
-func (s *ProjectService) SetShowcaseConfig(cfg config.ShowcaseConfig) {
-	cfg.NormalizeDefaults()
-	s.ShowcaseCfg = cfg
-}
-
-func (s *ProjectService) isShowcaseActive(ctx context.Context) bool {
-	return s.ShowcaseCfg.Enabled || middleware.IsShowcaseMode(ctx)
-}
-
-// EnsureReadableProject 校验当前上下文是否允许读取指定项目（演示沙盒模式下仅放行官方样板与当前访客自有项目）。
-func (s *ProjectService) EnsureReadableProject(ctx context.Context, projectID string) (*model.Project, error) {
-	cleanID, err := validator.ValidateRequiredText("id", projectID, 64)
-	if err != nil {
-		return nil, err
-	}
-	p, err := s.ProjectRepo.GetByID(ctx, cleanID)
-	if err != nil {
-		return nil, err
-	}
-	if s.isShowcaseActive(ctx) {
-		vid := middleware.GetVisitorID(ctx)
-		if !p.IsTemplate && (vid == "" || p.VisitorID != vid) {
-			return nil, gorm.ErrRecordNotFound
-		}
-	}
-	return p, nil
-}
-
-// EnsureWritableProject 校验当前上下文是否允许修改/删除指定项目（演示沙盒模式下严禁修改官方样板或他人项目）。
-func (s *ProjectService) EnsureWritableProject(ctx context.Context, projectID string) (*model.Project, error) {
-	cleanID, err := validator.ValidateRequiredText("project_id", projectID, 64)
-	if err != nil {
-		return nil, err
-	}
-	p, err := s.ProjectRepo.GetByID(ctx, cleanID)
-	if err != nil {
-		return nil, err
-	}
-	if p.IsTemplate {
-		return nil, validator.NewForbiddenError("官方演示样板工程受只读保护，请点击「克隆到我的沙盒」在专属副本中自由编辑")
-	}
-	if s.isShowcaseActive(ctx) {
-		vid := middleware.GetVisitorID(ctx)
-		if vid == "" || p.VisitorID != vid {
-			return nil, gorm.ErrRecordNotFound
-		}
-	}
-	return p, nil
-}
-
 func (s *ProjectService) ListProjects(ctx context.Context) ([]ProjectDetail, error) {
 	var (
 		projects []model.Project
 		err      error
 	)
 	if s.isShowcaseActive(ctx) {
-		projects, err = s.ProjectRepo.ListForShowcaseVisitor(ctx, middleware.GetVisitorID(ctx))
+		projects, err = s.ProjectRepo.ListForShowcaseVisitor(ctx, reqctx.VisitorIDFromContext(ctx))
 	} else {
 		projects, err = s.ProjectRepo.List(ctx)
 	}
@@ -156,7 +101,7 @@ func (s *ProjectService) CreateProject(ctx context.Context, name, description st
 
 	var visitorID string
 	if s.isShowcaseActive(ctx) {
-		visitorID = middleware.GetVisitorID(ctx)
+		visitorID = reqctx.VisitorIDFromContext(ctx)
 		maxLimit := s.ShowcaseCfg.MaxProjectsPerVisitor
 		if maxLimit <= 0 {
 			maxLimit = 10
@@ -183,44 +128,6 @@ func (s *ProjectService) CreateProject(ctx context.Context, name, description st
 		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
 	}, nil
-}
-
-// ForkProject 将可读项目（特别是官方演示样板）一键深拷贝克隆为当前访客可自由编辑的专属沙盒副本。
-func (s *ProjectService) ForkProject(ctx context.Context, sourceProjectID, customName string) (*ProjectDetail, error) {
-	srcProj, err := s.EnsureReadableProject(ctx, sourceProjectID)
-	if err != nil {
-		return nil, err
-	}
-
-	forkName := strings.TrimSpace(customName)
-	if forkName == "" {
-		forkName = srcProj.Name + " (沙盒副本)"
-	}
-
-	created, err := s.CreateProject(ctx, forkName, srcProj.Description)
-	if err != nil {
-		return nil, err
-	}
-
-	if strings.TrimSpace(srcProj.ConceptualDesign) != "" {
-		if err := s.ProjectRepo.SaveConceptualDesign(ctx, created.ID, srcProj.ConceptualDesign); err != nil {
-			return nil, err
-		}
-	}
-
-	if s.ERDesignRepo != nil {
-		srcDesign, err := s.ERDesignRepo.GetByProjectID(ctx, srcProj.ID)
-		if err != nil {
-			return nil, err
-		}
-		if srcDesign != nil && len(srcDesign.Entities) > 0 {
-			if _, err := s.ERDesignRepo.SaveByProjectID(ctx, created.ID, srcDesign.Entities, srcDesign.Relations); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return s.GetProject(ctx, created.ID)
 }
 
 func (s *ProjectService) DeleteProject(ctx context.Context, id string) error {
@@ -342,38 +249,25 @@ func (s *ProjectService) SaveERDesign(ctx context.Context, projectID string, des
 	}, nil
 }
 
-func (s *ProjectService) GetAvailableModels(ctx context.Context, req dto.GetModelsReq) (agent.AvailableModels, error) {
-	if s.ModelManager == nil {
-		return agent.AvailableModels{}, errors.New("model manager is not initialized")
+// EnsureProjectConversation 获取或初始化项目专属会话 ID，封装底层 MessageRepo 访问。
+func (s *ProjectService) EnsureProjectConversation(ctx context.Context, projectID string) (string, error) {
+	if s == nil || s.MessageRepo == nil || strings.TrimSpace(projectID) == "" {
+		return "", nil
 	}
-	if s.isShowcaseActive(ctx) {
-		if strings.TrimSpace(req.BaseURL) != "" || strings.TrimSpace(req.APIKey) != "" {
-			return agent.AvailableModels{}, validator.NewForbiddenError("公开演示沙盒模式下禁止传入自定义 base_url 或 api_key 进行探测")
-		}
-		res, err := s.ModelManager.GetAvailableModels(ctx, dto.GetModelsReq{Provider: req.Provider})
-		if err != nil {
-			return agent.AvailableModels{}, err
-		}
-		// 脱敏剥离服务端内部 BaseURL，仅暴露预置模型标识
-		for i := range res.Models {
-			res.Models[i].BaseURL = ""
-		}
-		for i := range res.Providers {
-			res.Providers[i].BaseURL = ""
-		}
-		return res, nil
+	conv, err := s.MessageRepo.GetOrCreateConversation(ctx, projectID)
+	if err != nil || conv == nil {
+		return "", err
 	}
-	return s.ModelManager.GetAvailableModels(ctx, req)
+	return conv.ID, nil
 }
 
-func (s *ProjectService) SaveModelConfig(ctx context.Context, req dto.SaveModelReq) (agent.AvailableModels, error) {
-	if s.isShowcaseActive(ctx) {
-		return agent.AvailableModels{}, validator.NewForbiddenError("公开演示沙盒模式下已锁定服务端模型配置，禁止修改默认模型与密钥")
+// AppendConversationMessage 追加一条对话消息记录，封装底层 MessageRepo 访问。
+func (s *ProjectService) AppendConversationMessage(ctx context.Context, convID, role, content string) error {
+	if s == nil || s.MessageRepo == nil || strings.TrimSpace(convID) == "" {
+		return nil
 	}
-	if s.ModelManager == nil {
-		return agent.AvailableModels{}, errors.New("model manager is not initialized")
-	}
-	return s.ModelManager.SaveAndSwitchModel(ctx, req)
+	_, err := s.MessageRepo.CreateMessage(ctx, convID, role, content)
+	return err
 }
 
 func (s *ProjectService) ListProjectMessages(ctx context.Context, projectID string) ([]model.Message, error) {
@@ -461,62 +355,6 @@ func (s *ProjectService) MergeAndSaveAIContext(
 		merged.Constraints = mergeUniqueStrings(merged.Constraints, constraints, 20)
 		return merged
 	})
-}
-
-// SweepExpiredShowcaseProjects 清扫超过存活时长（默认 24 小时）未更新的访客临时项目及其全量级联记录。
-func (s *ProjectService) SweepExpiredShowcaseProjects(ctx context.Context) (int, error) {
-	if s == nil || s.ProjectRepo == nil {
-		return 0, nil
-	}
-	ttlHours := s.ShowcaseCfg.VisitorTTLHours
-	if ttlHours <= 0 {
-		ttlHours = 24
-	}
-	cutoff := time.Now().Add(-time.Duration(ttlHours) * time.Hour)
-	ids, err := s.ProjectRepo.ListExpiredVisitorProjectIDs(ctx, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	deleted := 0
-	for _, id := range ids {
-		if err := s.ProjectRepo.Delete(ctx, id); err == nil {
-			deleted++
-		}
-	}
-	return deleted, nil
-}
-
-// StartShowcaseSweeper 启动后台定时清扫协程（首次启动即执行一次清理，随后每小时巡检一次，随 appCtx 优雅退出）。
-func (s *ProjectService) StartShowcaseSweeper(ctx context.Context, quotaMgr *middleware.ShowcaseQuotaManager) {
-	if s == nil || !s.ShowcaseCfg.Enabled {
-		return
-	}
-	runSweep := func() {
-		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if deleted, err := s.SweepExpiredShowcaseProjects(sweepCtx); err != nil {
-			slog.Warn("showcase_sweeper_error", "error", err)
-		} else if deleted > 0 {
-			slog.Info("showcase_sweeper_cleaned_expired_projects", "deleted_count", deleted)
-		}
-		if quotaMgr != nil {
-			_ = quotaMgr.CleanupExpiredQuotas(sweepCtx)
-		}
-	}
-
-	go func() {
-		runSweep()
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				runSweep()
-			}
-		}
-	}()
 }
 
 func mergeUniqueStrings(base, incoming []string, maxItems int) []string {

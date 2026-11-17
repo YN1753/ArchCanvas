@@ -1,0 +1,234 @@
+{
+  "id": "01960000-0000-7000-8000-000000000002",
+  "order": 2,
+  "name": "多租户 RBAC 权限架构",
+  "description": "官方精选样板 · 企业级 SaaS 租户隔离、树形组织部门、成员-角色-权限双 M:N 矩阵与安全审计日志",
+  "conceptual": {
+    "summary": "企业级 SaaS 多租户组织架构与 RBAC 细粒度访问控制模型，采用租户级逻辑隔离 + 树形组织部门 + 成员/角色/权限双多对多矩阵及全链路安全审计日志。",
+    "concepts": [
+      {
+        "id": "concept_tenant",
+        "name": "Tenant",
+        "display_name": "企业租户",
+        "description": "SaaS 独立签约企业空间与配额主体",
+        "attributes": [
+          { "id": "rt_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "rt_2", "name": "tenant_code", "display_name": "租户编码", "category": "string", "required": true, "is_unique": true },
+          { "id": "rt_3", "name": "company_name", "display_name": "企业名称", "category": "string", "required": true },
+          { "id": "rt_4", "name": "plan_tier", "display_name": "订阅套餐", "category": "enum", "required": true }
+        ]
+      },
+      {
+        "id": "concept_department",
+        "name": "Department",
+        "display_name": "组织部门",
+        "description": "企业内部多层级组织架构单元",
+        "attributes": [
+          { "id": "rd_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "rd_2", "name": "dept_name", "display_name": "部门名称", "category": "string", "required": true }
+        ]
+      },
+      {
+        "id": "concept_member",
+        "name": "Member",
+        "display_name": "企业成员",
+        "description": "归属租户与部门的员工账号主体",
+        "attributes": [
+          { "id": "rm_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "rm_2", "name": "email", "display_name": "企业邮箱", "category": "string", "required": true, "is_unique": true },
+          { "id": "rm_3", "name": "display_name", "display_name": "姓名", "category": "string", "required": true },
+          { "id": "rm_4", "name": "status", "display_name": "在职状态", "category": "enum", "required": true }
+        ]
+      },
+      {
+        "id": "concept_role",
+        "name": "Role",
+        "display_name": "业务角色",
+        "description": "租户内可配置岗位职责角色",
+        "attributes": [
+          { "id": "rr_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "rr_2", "name": "role_key", "display_name": "角色标识", "category": "string", "required": true },
+          { "id": "rr_3", "name": "role_name", "display_name": "角色名称", "category": "string", "required": true }
+        ]
+      },
+      {
+        "id": "concept_permission",
+        "name": "Permission",
+        "display_name": "资源权限",
+        "description": "菜单路由与 API 操作细粒度权限点",
+        "attributes": [
+          { "id": "rp_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "rp_2", "name": "perm_code", "display_name": "权限编码", "category": "string", "required": true, "is_unique": true },
+          { "id": "rp_3", "name": "resource_type", "display_name": "资源类型", "category": "enum", "required": true }
+        ]
+      },
+      {
+        "id": "concept_audit_log",
+        "name": "AuditLog",
+        "display_name": "审计日志",
+        "description": "高敏权限变更与关键管理动作不可篡改留痕",
+        "attributes": [
+          { "id": "ral_1", "name": "id", "display_name": "编号", "category": "number", "is_business_key": true, "required": true, "is_unique": true },
+          { "id": "ral_2", "name": "action", "display_name": "操作动作", "category": "string", "required": true },
+          { "id": "ral_3", "name": "client_ip", "display_name": "来源IP", "category": "string", "required": true }
+        ]
+      }
+    ],
+    "relations": [
+      { "id": "rrel_ten_dept", "name": "下辖部门", "source_concept": "Tenant", "target_concept": "Department", "cardinality": "one_to_many" },
+      { "id": "rrel_dept_self", "name": "上下级部门", "source_concept": "Department", "target_concept": "Department", "cardinality": "one_to_many" },
+      { "id": "rrel_ten_mem", "name": "所属租户", "source_concept": "Tenant", "target_concept": "Member", "cardinality": "one_to_many" },
+      { "id": "rrel_dept_mem", "name": "所属部门", "source_concept": "Department", "target_concept": "Member", "cardinality": "one_to_many" },
+      { "id": "rrel_mem_role", "name": "授予角色", "source_concept": "Member", "target_concept": "Role", "cardinality": "many_to_many" },
+      { "id": "rrel_role_perm", "name": "分配权限", "source_concept": "Role", "target_concept": "Permission", "cardinality": "many_to_many" },
+      { "id": "rrel_mem_log", "name": "触发审计", "source_concept": "Member", "target_concept": "AuditLog", "cardinality": "one_to_many" }
+    ]
+  },
+  "physical": {
+    "entities": [
+      {
+        "id": "01960002-0000-7000-8000-000000000201",
+        "name": "tenants",
+        "comment": "企业租户",
+        "position": { "x": 80, "y": 60 },
+        "attributes": [
+          { "id": "01960002-0001-7000-8000-000000000001", "name": "id", "comment": "租户主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "租户主键" },
+          { "id": "01960002-0001-7000-8000-000000000002", "name": "tenant_code", "comment": "租户唯一编码", "db_type": "VARCHAR(32)", "code_type": "string", "is_unique": true, "description": "租户唯一编码" },
+          { "id": "01960002-0001-7000-8000-000000000003", "name": "company_name", "comment": "企业全称", "db_type": "VARCHAR(128)", "code_type": "string", "description": "企业全称" },
+          { "id": "01960002-0001-7000-8000-000000000004", "name": "plan_tier", "comment": "订阅版本", "db_type": "VARCHAR(24)", "code_type": "string", "description": "订阅版本" }
+        ],
+        "indexes": [
+          { "name": "uk_tenants_code", "columns": ["tenant_code"], "is_unique": true, "comment": "租户编码唯一索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000202",
+        "name": "departments",
+        "comment": "组织部门",
+        "position": { "x": 80, "y": 380 },
+        "attributes": [
+          { "id": "01960002-0002-7000-8000-000000000001", "name": "id", "comment": "部门主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "部门主键" },
+          { "id": "01960002-0002-7000-8000-000000000002", "name": "tenant_id", "comment": "所属租户ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "所属租户ID" },
+          { "id": "01960002-0002-7000-8000-000000000003", "name": "parent_id", "comment": "上级部门ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_nullable": true, "description": "上级部门ID" },
+          { "id": "01960002-0002-7000-8000-000000000004", "name": "dept_name", "comment": "部门名称", "db_type": "VARCHAR(64)", "code_type": "string", "description": "部门名称" }
+        ],
+        "indexes": [
+          { "name": "idx_departments_tenant_parent", "columns": ["tenant_id", "parent_id"], "comment": "租户组织树索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000203",
+        "name": "members",
+        "comment": "企业成员",
+        "position": { "x": 450, "y": 180 },
+        "attributes": [
+          { "id": "01960002-0003-7000-8000-000000000001", "name": "id", "comment": "成员主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "成员主键" },
+          { "id": "01960002-0003-7000-8000-000000000002", "name": "tenant_id", "comment": "所属租户ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "所属租户ID" },
+          { "id": "01960002-0003-7000-8000-000000000003", "name": "department_id", "comment": "所属部门ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "所属部门ID" },
+          { "id": "01960002-0003-7000-8000-000000000004", "name": "email", "comment": "登录邮箱", "db_type": "VARCHAR(128)", "code_type": "string", "is_unique": true, "description": "登录邮箱" },
+          { "id": "01960002-0003-7000-8000-000000000005", "name": "display_name", "comment": "成员姓名", "db_type": "VARCHAR(64)", "code_type": "string", "description": "成员姓名" },
+          { "id": "01960002-0003-7000-8000-000000000006", "name": "status", "comment": "账号状态", "db_type": "VARCHAR(16)", "code_type": "string", "description": "账号状态" }
+        ],
+        "indexes": [
+          { "name": "uk_members_tenant_email", "columns": ["tenant_id", "email"], "is_unique": true, "comment": "租户内邮箱唯一索引" },
+          { "name": "idx_members_dept_id", "columns": ["department_id"], "comment": "部门成员列表索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000206",
+        "name": "member_roles",
+        "comment": "授予角色",
+        "position": { "x": 820, "y": 80 },
+        "is_junction_table": true,
+        "attributes": [
+          { "id": "01960002-0004-7000-8000-000000000001", "name": "id", "comment": "主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "主键" },
+          { "id": "01960002-0004-7000-8000-000000000002", "name": "member_id", "comment": "成员ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "成员ID" },
+          { "id": "01960002-0004-7000-8000-000000000003", "name": "role_id", "comment": "角色ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "角色ID" }
+        ],
+        "indexes": [
+          { "name": "uk_member_roles_pair", "columns": ["member_id", "role_id"], "is_unique": true, "comment": "成员角色联合唯一索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000204",
+        "name": "roles",
+        "comment": "业务角色",
+        "position": { "x": 1160, "y": 80 },
+        "attributes": [
+          { "id": "01960002-0005-7000-8000-000000000001", "name": "id", "comment": "角色主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "角色主键" },
+          { "id": "01960002-0005-7000-8000-000000000002", "name": "tenant_id", "comment": "所属租户ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "所属租户ID" },
+          { "id": "01960002-0005-7000-8000-000000000003", "name": "role_key", "comment": "角色编码", "db_type": "VARCHAR(64)", "code_type": "string", "description": "角色编码" },
+          { "id": "01960002-0005-7000-8000-000000000004", "name": "role_name", "comment": "角色名称", "db_type": "VARCHAR(64)", "code_type": "string", "description": "角色名称" }
+        ],
+        "indexes": [
+          { "name": "uk_roles_tenant_key", "columns": ["tenant_id", "role_key"], "is_unique": true, "comment": "租户内角色编码唯一索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000207",
+        "name": "role_permissions",
+        "comment": "分配权限",
+        "position": { "x": 1160, "y": 340 },
+        "is_junction_table": true,
+        "attributes": [
+          { "id": "01960002-0006-7000-8000-000000000001", "name": "id", "comment": "主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "主键" },
+          { "id": "01960002-0006-7000-8000-000000000002", "name": "role_id", "comment": "角色ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "角色ID" },
+          { "id": "01960002-0006-7000-8000-000000000003", "name": "permission_id", "comment": "权限ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "权限ID" }
+        ],
+        "indexes": [
+          { "name": "uk_role_permissions_pair", "columns": ["role_id", "permission_id"], "is_unique": true, "comment": "角色权限联合唯一索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000205",
+        "name": "permissions",
+        "comment": "资源权限",
+        "position": { "x": 1160, "y": 560 },
+        "attributes": [
+          { "id": "01960002-0007-7000-8000-000000000001", "name": "id", "comment": "权限主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "权限主键" },
+          { "id": "01960002-0007-7000-8000-000000000002", "name": "perm_code", "comment": "权限标识符", "db_type": "VARCHAR(96)", "code_type": "string", "is_unique": true, "description": "权限标识符" },
+          { "id": "01960002-0007-7000-8000-000000000003", "name": "resource_type", "comment": "资源类型", "db_type": "VARCHAR(24)", "code_type": "string", "description": "资源类型" }
+        ],
+        "indexes": [
+          { "name": "uk_permissions_code", "columns": ["perm_code"], "is_unique": true, "comment": "权限标识符唯一索引" }
+        ]
+      },
+      {
+        "id": "01960002-0000-7000-8000-000000000208",
+        "name": "audit_logs",
+        "comment": "审计日志",
+        "position": { "x": 820, "y": 400 },
+        "attributes": [
+          { "id": "01960002-0008-7000-8000-000000000001", "name": "id", "comment": "日志主键", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "is_primary_key": true, "description": "日志主键" },
+          { "id": "01960002-0008-7000-8000-000000000002", "name": "tenant_id", "comment": "租户ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "租户ID" },
+          { "id": "01960002-0008-7000-8000-000000000003", "name": "member_id", "comment": "操作人ID", "db_type": "BIGINT UNSIGNED", "code_type": "uint64", "description": "操作人ID" },
+          { "id": "01960002-0008-7000-8000-000000000004", "name": "action", "comment": "操作事件编码", "db_type": "VARCHAR(64)", "code_type": "string", "description": "操作事件编码" },
+          { "id": "01960002-0008-7000-8000-000000000005", "name": "client_ip", "comment": "操作来源IP", "db_type": "VARCHAR(45)", "code_type": "string", "description": "操作来源IP" },
+          { "id": "01960002-0008-7000-8000-000000000006", "name": "created_at", "comment": "发生时间", "db_type": "DATETIME", "code_type": "time.Time", "description": "发生时间" }
+        ],
+        "indexes": [
+          { "name": "idx_audit_logs_tenant_time", "columns": ["tenant_id", "created_at"], "comment": "租户审计时间线查询索引" }
+        ]
+      }
+    ],
+    "relations": [
+      { "id": "01960002-0099-7000-8000-000000000001", "source_entity_id": "01960002-0000-7000-8000-000000000201", "target_entity_id": "01960002-0000-7000-8000-000000000202", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000002", "source_entity_id": "01960002-0000-7000-8000-000000000202", "target_entity_id": "01960002-0000-7000-8000-000000000202", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000003", "source_entity_id": "01960002-0000-7000-8000-000000000201", "target_entity_id": "01960002-0000-7000-8000-000000000203", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000004", "source_entity_id": "01960002-0000-7000-8000-000000000202", "target_entity_id": "01960002-0000-7000-8000-000000000203", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000005", "source_entity_id": "01960002-0000-7000-8000-000000000203", "target_entity_id": "01960002-0000-7000-8000-000000000206", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000006", "source_entity_id": "01960002-0000-7000-8000-000000000204", "target_entity_id": "01960002-0000-7000-8000-000000000206", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000007", "source_entity_id": "01960002-0000-7000-8000-000000000204", "target_entity_id": "01960002-0000-7000-8000-000000000207", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000008", "source_entity_id": "01960002-0000-7000-8000-000000000205", "target_entity_id": "01960002-0000-7000-8000-000000000207", "cardinality": "one_to_many", "relation_type_id": "one_to_many" },
+      { "id": "01960002-0099-7000-8000-000000000009", "source_entity_id": "01960002-0000-7000-8000-000000000203", "target_entity_id": "01960002-0000-7000-8000-000000000208", "cardinality": "one_to_many", "relation_type_id": "one_to_many" }
+    ]
+  },
+  "user_prompt": "搭建一套 SaaS 多租户 RBAC 权限系统，包含企业租户、树形层级部门、企业成员、角色、细粒度资源权限以及安全操作审计日志。",
+  "assistant_message": {
+    "stage": "physical_derived",
+    "summary": "已构建多租户企业级 RBAC 权限架构模型：1) 以 tenants 租户为中心配合联合唯一索引实现逻辑隔离；2) departments 支持无限层级树；3) member_roles 与 role_permissions 两张纯中间表在陈氏概念视图中自动升华为「授予角色」与「分配权限」双 M:N 菱形节点。",
+    "entities": [
+      "tenants", "departments", "members", "roles", "permissions", "member_roles", "role_permissions", "audit_logs"
+    ]
+  }
+}
