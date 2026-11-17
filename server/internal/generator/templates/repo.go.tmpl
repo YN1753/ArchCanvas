@@ -5,6 +5,7 @@ import (
 
 	"{{ .ModuleName }}/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type {{ .Entity.StructName }}Repository interface {
@@ -29,7 +30,9 @@ func (r *{{ .Entity.VarName }}Repository) Create(ctx context.Context, item *mode
 
 func (r *{{ .Entity.VarName }}Repository) GetByID(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) (*model.{{ .Entity.StructName }}, error) {
 	var item model.{{ .Entity.StructName }}
-	err := r.db.WithContext(ctx).First(&item, "{{ .Entity.PrimaryKey.Name }} = ?", id).Error
+	err := r.db.WithContext(ctx).
+		Where(clause.Eq{Column: clause.Column{Name: {{ printf "%q" .Entity.PrimaryKey.Name }}}, Value: id}).
+		First(&item).Error
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +56,22 @@ func (r *{{ .Entity.VarName }}Repository) List(ctx context.Context, offset, limi
 }
 
 func (r *{{ .Entity.VarName }}Repository) Update(ctx context.Context, item *model.{{ .Entity.StructName }}) error {
-	return r.db.WithContext(ctx).Omit("created_at").Save(item).Error
+	res := r.db.WithContext(ctx).
+		Model(&model.{{ .Entity.StructName }}{}).
+		Where(clause.Eq{Column: clause.Column{Name: {{ printf "%q" .Entity.PrimaryKey.Name }}}, Value: item.{{ .Entity.PrimaryKey.FieldName }}}).
+		Omit("created_at").
+		Updates(item)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *{{ .Entity.VarName }}Repository) Delete(ctx context.Context, id {{ .Entity.PrimaryKey.GoType }}) error {
-	return r.db.WithContext(ctx).Delete(&model.{{ .Entity.StructName }}{}, "{{ .Entity.PrimaryKey.Name }} = ?", id).Error
+	return r.db.WithContext(ctx).
+		Where(clause.Eq{Column: clause.Column{Name: {{ printf "%q" .Entity.PrimaryKey.Name }}}, Value: id}).
+		Delete(&model.{{ .Entity.StructName }}{}).Error
 }

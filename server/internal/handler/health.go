@@ -27,9 +27,13 @@ func (h *HealthHandler) Check(c *gin.Context) {
 	httpStatus := http.StatusOK
 	overallStatus := "ok"
 
-	if h.db != nil {
+	if h.db == nil {
+		dbStatus = "disconnected"
+		httpStatus = http.StatusServiceUnavailable
+		overallStatus = "degraded"
+	} else {
 		sqlDB, err := h.db.DB()
-		if err != nil || sqlDB.Ping() != nil {
+		if err != nil || sqlDB.PingContext(c.Request.Context()) != nil {
 			dbStatus = "disconnected"
 			httpStatus = http.StatusServiceUnavailable
 			overallStatus = "degraded"

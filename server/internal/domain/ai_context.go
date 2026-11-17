@@ -1,15 +1,6 @@
 package domain
 
-import "time"
-
-type AIContext struct {
-	ID        string           `json:"id"`
-	ProjectID string           `json:"project_id"`
-	Content   AIContextContent `json:"content"`
-	Version   string           `json:"version"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
-}
+// AIContextContent 项目持久化 AI 演进上下文载荷。
 type AIContextContent struct {
 	Goal        string   `json:"goal"`
 	TechStack   []string `json:"tech_stack"`

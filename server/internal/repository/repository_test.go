@@ -117,12 +117,12 @@ func TestERDesignRepository_SaveAndGet(t *testing.T) {
 					IsPrimaryKey: true,
 				},
 				{
-					ID:           "attr_2",
-					Name:         "username",
-					Comment:      "账号",
-					DBType:       "VARCHAR(64)",
-					CodeType:     "string",
-					IsUnique:     true,
+					ID:       "attr_2",
+					Name:     "username",
+					Comment:  "账号",
+					DBType:   "VARCHAR(64)",
+					CodeType: "string",
+					IsUnique: true,
 				},
 			},
 			Indexes: []domain.IndexDefinition{

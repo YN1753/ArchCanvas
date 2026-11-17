@@ -1,4 +1,4 @@
-package request
+package dto
 
 // GenerateRequest 代码生成请求入参
 type GenerateRequest struct {

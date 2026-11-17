@@ -21,6 +21,8 @@ export interface HistoryEntry {
   redo?: Patch[]
   conceptualUndo?: Patch[]
   conceptualRedo?: Patch[]
+  chenPositionsUndo?: Record<string, { x: number; y: number }>
+  chenPositionsRedo?: Record<string, { x: number; y: number }>
   debounceKey?: string
 }
 
@@ -262,48 +264,57 @@ export function invertPatch(patches: Patch[]): Patch[] {
   return result
 }
 
-function applySinglePatch(root: any, patch: Patch): void {
+type PatchContainer = Record<string, unknown> | unknown[]
+
+function isPatchContainer(val: unknown): val is PatchContainer {
+  return typeof val === 'object' && val !== null
+}
+
+function applySinglePatch(root: PatchContainer, patch: Patch): void {
   const segments = parsePointer(patch.path)
   if (segments.length === 0) return
 
-  let curr = root
+  let curr: PatchContainer = root
   for (let i = 0; i < segments.length - 1; i++) {
     const seg = segments[i]
-    if (curr[seg] === undefined || curr[seg] === null) {
-      const nextSeg = segments[i + 1]
-      const isNextIndex = /^\d+$/.test(nextSeg)
-      curr[seg] = isNextIndex ? [] : {}
+    const nextSeg = segments[i + 1]
+    const isNextIndex = /^\d+$/.test(nextSeg)
+
+    if (Array.isArray(curr)) {
+      const idx = Number(seg)
+      if (!isPatchContainer(curr[idx])) {
+        curr[idx] = isNextIndex ? [] : {}
+      }
+      curr = curr[idx] as PatchContainer
+    } else {
+      if (!isPatchContainer(curr[seg])) {
+        curr[seg] = isNextIndex ? [] : {}
+      }
+      curr = curr[seg] as PatchContainer
     }
-    curr = curr[seg]
   }
 
   const lastSeg = segments[segments.length - 1]
-  const isArr = Array.isArray(curr)
-
-  if (patch.op === 'add') {
-    if (isArr) {
+  if (Array.isArray(curr)) {
+    if (patch.op === 'add') {
       if (lastSeg === '-') {
         curr.push(structuredClone(patch.value))
       } else {
         const idx = Number(lastSeg)
         curr.splice(idx, 0, structuredClone(patch.value))
       }
-    } else {
-      curr[lastSeg] = structuredClone(patch.value)
-    }
-  } else if (patch.op === 'remove') {
-    if (isArr) {
+    } else if (patch.op === 'remove') {
       const idx = Number(lastSeg)
       curr.splice(idx, 1)
-    } else {
-      delete curr[lastSeg]
-    }
-  } else if (patch.op === 'replace') {
-    if (isArr) {
+    } else if (patch.op === 'replace') {
       const idx = Number(lastSeg)
       curr[idx] = structuredClone(patch.value)
-    } else {
+    }
+  } else {
+    if (patch.op === 'add' || patch.op === 'replace') {
       curr[lastSeg] = structuredClone(patch.value)
+    } else if (patch.op === 'remove') {
+      delete curr[lastSeg]
     }
   }
 }
@@ -313,15 +324,15 @@ function applySinglePatch(root: any, patch: Patch): void {
  */
 export function applyPatch<T>(base: T, patches: Patch[]): T {
   if (!patches || patches.length === 0) return base
-  let root: any = structuredClone(base)
+  let root: unknown = structuredClone(base)
   for (const patch of patches) {
     if (patch.path === '') {
       if (patch.op === 'replace') {
         root = structuredClone(patch.value)
       }
-    } else {
+    } else if (isPatchContainer(root)) {
       applySinglePatch(root, patch)
     }
   }
-  return root
+  return root as T
 }

@@ -13,7 +13,7 @@ import type { Attribute, Entity, ERDesign, Relation } from '../types/dsl'
 export const NODE_WIDTH = 272
 export const NODE_HEADER_HEIGHT = 38
 export const NODE_ROW_HEIGHT = 28
-export const NODE_FOOTER_PADDING = 8
+export const NODE_FOOTER_PADDING = 44
 
 export interface TableNodeData extends Record<string, unknown> {
   entity: Entity
@@ -43,6 +43,12 @@ export function nodeHeight(entity: Entity): number {
   return NODE_HEADER_HEIGHT + Math.max(entity.attributes?.length ?? 0, 1) * NODE_ROW_HEIGHT + NODE_FOOTER_PADDING
 }
 
+export function isForeignKeyColumnName(rawName: string): boolean {
+  const lower = rawName.toLowerCase()
+  if (lower === 'id') return false
+  return lower.endsWith('_id') || /[a-z0-9]Id$/.test(rawName)
+}
+
 /** 查找宿端匹配源端的外键属性 */
 function findTargetForeignKeyAttribute(
   sourceEntity: Entity,
@@ -68,11 +74,10 @@ function findTargetForeignKeyAttribute(
     return exactCandidates[0]
   }
 
-  // 2. 角色语义外键（如 seller_id, buyer_id, reviewer_id, participant_a_id 等）
+  // 2. 角色语义外键（如 seller_id, buyer_id, reviewer_id, parentId 等），避免误匹配 paid/valid/uuid
   const fkCandidates = targetAttrs.filter((attr) => {
     if (attr.is_primary_key || usedAttrIds.has(attr.id)) return false
-    const name = attr.name.toLowerCase()
-    return name.endsWith('_id') || name.endsWith('id')
+    return isForeignKeyColumnName(attr.name)
   })
   if (fkCandidates.length > 0) {
     return fkCandidates[0]
@@ -95,13 +100,16 @@ export function toFlowNodes(
     const tgt = entityMap.get(rel.target_entity_id)
     if (src && tgt) {
       const prefix = src.name.toLowerCase()
+      const singular = prefix.endsWith('s') ? prefix.slice(0, -1) : prefix
       for (const attr of tgt.attributes ?? []) {
         const attrLower = attr.name.toLowerCase()
         if (
           !attr.is_primary_key &&
           (attrLower === `${prefix}_id` ||
+            attrLower === `${singular}_id` ||
             attrLower === `${prefix}id` ||
-            (attrLower.endsWith('_id') && attrLower !== 'id'))
+            attrLower === `${singular}id` ||
+            isForeignKeyColumnName(attr.name))
         ) {
           if (!fkNamesByEntity.has(tgt.id)) fkNamesByEntity.set(tgt.id, new Set())
           fkNamesByEntity.get(tgt.id)!.add(attr.name)
@@ -113,11 +121,7 @@ export function toFlowNodes(
   return design.entities.map((entity) => {
     const fkSet = fkNamesByEntity.get(entity.id) ?? new Set<string>()
     for (const attr of entity.attributes ?? []) {
-      if (
-        !attr.is_primary_key &&
-        attr.name.toLowerCase().endsWith('_id') &&
-        attr.name.toLowerCase() !== 'id'
-      ) {
+      if (!attr.is_primary_key && isForeignKeyColumnName(attr.name)) {
         fkSet.add(attr.name)
       }
     }
@@ -178,7 +182,13 @@ export function toFlowEdges(
         targetAttr = srcEnt?.attributes?.find((a) => {
           if (a.is_primary_key || usedSet.has(a.id)) return false
           const n = a.name.toLowerCase()
-          return n.startsWith('parent_') || n.includes('parent') || n.includes('pid') || n.endsWith('_id') || n.endsWith('id')
+          return (
+            n.startsWith('parent_') ||
+            n === 'parent_id' ||
+            n === 'pid' ||
+            n.endsWith('_pid') ||
+            isForeignKeyColumnName(a.name)
+          )
         })
       } else {
         targetAttr = srcEnt && tgtEnt ? findTargetForeignKeyAttribute(srcEnt, tgtEnt, usedSet) : undefined
@@ -212,22 +222,4 @@ export function toFlowEdges(
         },
       }
     })
-}
-
-/** 把画布上的位置变化写回 DSL。位置属于展示信息，不参与结构校验。 */
-export function applyNodePositions(design: ERDesign, positions: Map<string, { x: number; y: number }>): ERDesign {
-  let changed = false
-  const entities = design.entities.map((entity) => {
-    const position = positions.get(entity.id)
-    if (!position) {
-      return entity
-    }
-    if (entity.position && entity.position.x === position.x && entity.position.y === position.y) {
-      return entity
-    }
-    changed = true
-    return { ...entity, position }
-  })
-
-  return changed ? { ...design, entities } : design
 }

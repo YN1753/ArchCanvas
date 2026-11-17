@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"archcanvas/internal/domain"
 	"archcanvas/pkg/id"
@@ -14,7 +15,12 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// ReviewPhysicalSchema Layer 3: 架构师质量与性能审查核心算子
+type llmReviewSupplemental struct {
+	Summary string               `json:"summary"`
+	Issues  []domain.SchemaIssue `json:"issues"`
+}
+
+// ReviewPhysicalSchema Layer 3: 架构师质量与性能审查核心算子（融合确定性静态规则与可选 LLM 深度结构化洞察）
 func (a *AgentService) ReviewPhysicalSchema(
 	ctx context.Context,
 	input ReviewSchemaInput,
@@ -31,16 +37,17 @@ func (a *AgentService) ReviewPhysicalSchema(
 	input.Dialect = dialect
 
 	// 1. 执行确定性静态架构规则体检
-	staticReport := performStaticSchemaReview(input.CurrentERDesign, dialect)
+	report := performStaticSchemaReview(input.CurrentERDesign, dialect)
 
-	// 2. 若大模型可用，唤起架构师批判审查（LLM Critic）以产出专业洞见与流式思考
+	// 2. 若大模型可用，唤起架构师批判审查并吸收其补充的结构化隐患项与总结评语
 	if a.ModelManager != nil {
 		chatModel, err := a.ModelManager.GetModel(ctx, input.ModelProvider, input.ModelName)
 		if err == nil {
-			messages := a.buildReviewSchemaMessages(input, staticReport)
+			messages := a.buildReviewSchemaMessages(input, report)
 			stream, err := chatModel.Stream(ctx, messages)
 			if err == nil {
 				defer stream.Close()
+				var llmRaw strings.Builder
 
 				for {
 					select {
@@ -59,17 +66,21 @@ func (a *AgentService) ReviewPhysicalSchema(
 						break
 					}
 
-					if chunk.Content != "" && onThinking != nil {
-						onThinking(chunk.Content)
+					if chunk.Content != "" {
+						llmRaw.WriteString(chunk.Content)
+						if onThinking != nil {
+							onThinking(chunk.Content)
+						}
 					}
 				}
 
-				return &staticReport, nil
+				mergeLLMReviewIntoReport(&report, llmRaw.String())
+				return &report, nil
 			}
 		}
 	}
 
-	// 3. 降级模式：流式输出静态体检推演摘要
+	// 3. 离线/降级模式：流式输出静态体检推演摘要
 	if onThinking != nil {
 		summaryThinking := fmt.Sprintf("已扫描 %d 张物理数据表与 %d 组表间关系，正在执行全方位架构审查：\n"+
 			"- 主键完整性与唯一约束检验...\n"+
@@ -78,33 +89,77 @@ func (a *AgentService) ReviewPhysicalSchema(
 			"- 命名规范与业务注释完备性核验...\n\n"+
 			"体检执行完毕：总得分 %d/100，发现 %d 项需关注的隐患与优化建议。",
 			len(input.CurrentERDesign.Entities), len(input.CurrentERDesign.Relations),
-			staticReport.Score, len(staticReport.Issues),
+			report.Score, len(report.Issues),
 		)
 		onThinking(summaryThinking)
 	}
 
-	return &staticReport, nil
+	return &report, nil
 }
 
-// buildReviewSchemaMessages 组装 Layer 3 架构审查 Prompt
+func mergeLLMReviewIntoReport(report *domain.SchemaReviewReport, raw string) {
+	if report == nil || strings.TrimSpace(raw) == "" {
+		return
+	}
+	candidates := extractJSONCandidates(raw)
+	for _, cand := range candidates {
+		cleaned := CleanJSONSyntax(cand)
+		var sup llmReviewSupplemental
+		if err := json.Unmarshal([]byte(cleaned), &sup); err == nil && (sup.Summary != "" || len(sup.Issues) > 0) {
+			existingTitles := make(map[string]bool, len(report.Issues))
+			for _, iss := range report.Issues {
+				existingTitles[strings.ToLower(iss.EntityName+":"+iss.Title)] = true
+			}
+			added := 0
+			for _, iss := range sup.Issues {
+				if strings.TrimSpace(iss.Title) == "" {
+					continue
+				}
+				key := strings.ToLower(iss.EntityName + ":" + iss.Title)
+				if existingTitles[key] {
+					continue
+				}
+				existingTitles[key] = true
+				if iss.ID == "" {
+					iss.ID = id.NewUUIDv7()
+				}
+				if iss.Severity != domain.SeverityCritical && iss.Severity != domain.SeverityWarning && iss.Severity != domain.SeverityInfo {
+					iss.Severity = domain.SeverityInfo
+				}
+				if iss.Category == "" {
+					iss.Category = domain.CategoryPerformance
+				}
+				report.Issues = append(report.Issues, iss)
+				report.TotalCount++
+				added++
+			}
+			if added > 0 {
+				report.Score = computeReviewScore(report.Issues)
+				report.PassedCount = max(report.TotalCount-len(report.Issues), 0)
+			}
+			if strings.TrimSpace(sup.Summary) != "" {
+				report.Summary = strings.TrimSpace(sup.Summary)
+			}
+			return
+		}
+	}
+}
+
 func (a *AgentService) buildReviewSchemaMessages(input ReviewSchemaInput, report domain.SchemaReviewReport) []*schema.Message {
 	var prompt strings.Builder
 	prompt.WriteString("你是一位资深的首席数据库架构师与 DBA（Principal Database Architect）。\n")
 	prompt.WriteString("你的职责是对当前物理数据模型进行严谨、专业的质量体检（Architecture Audit），指出潜在的性能瓶颈、死锁风险或范式缺陷。\n\n")
-
 	prompt.WriteString(fmt.Sprintf("【目标数据库】：%s\n", strings.ToUpper(input.Dialect)))
-	prompt.WriteString(fmt.Sprintf("【静态检测得分】：%d / 100（检测出 %d 个具体缺陷项）\n\n", report.Score, len(report.Issues)))
-
+	prompt.WriteString(fmt.Sprintf("【静态检测基准得分】：%d / 100（静态规则已检出 %d 个缺陷项）\n\n", report.Score, len(report.Issues)))
 	prompt.WriteString("【审查要求】：\n")
-	prompt.WriteString("1. 请用严谨、客观、工程化的语言逐表分析当前物理设计的优缺点；\n")
-	prompt.WriteString("2. 重点点评外键索引覆盖情况、数据类型精细度（如金额字段是否使用精度安全的类型）以及单表大字段对 Buffer Pool 命中率的影响；\n")
-	prompt.WriteString("3. 提出切实可行的调优行动建议；\n")
-	prompt.WriteString("4. 请直接输出你的架构师思考推导与深度评述过程。\n\n")
+	prompt.WriteString("1. 先用严谨客观的工程语言逐表输出你的深度架构点评（将实时流式展示给用户）；\n")
+	prompt.WriteString("2. 若你还发现了静态规则未覆盖的深层隐患，可在末尾附带一个 ```json 代码块，格式为 {\"summary\": \"一句话总评\", \"issues\": [{\"category\": \"performance|index|normalization|naming|type_safety\", \"severity\": \"warning|info\", \"title\": \"...\", \"description\": \"...\", \"entity_name\": \"...\", \"column_name\": \"...\", \"suggestion\": \"...\"}]}；若无额外隐患，issues 传空数组 []。\n")
 
-	erJSON, _ := json.Marshal(input.CurrentERDesign)
 	issuesJSON, _ := json.Marshal(report.Issues)
-
-	userContent := fmt.Sprintf("【当前物理表与索引结构】：\n%s\n\n【静态规则检测到的问题清单】：\n%s\n", string(erJSON), string(issuesJSON))
+	userContent := fmt.Sprintf("【当前物理表与索引结构】：\n%s\n\n【静态规则已检测到的问题清单】：\n%s\n",
+		compactERForPrompt(input.CurrentERDesign),
+		string(issuesJSON),
+	)
 
 	return []*schema.Message{
 		schema.SystemMessage(prompt.String()),
@@ -112,20 +167,51 @@ func (a *AgentService) buildReviewSchemaMessages(input ReviewSchemaInput, report
 	}
 }
 
-// performStaticSchemaReview 针对物理表与索引结构执行静态深度体检
+func hasUpperASCII(s string) bool {
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' || unicode.IsUpper(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func computeReviewScore(issues []domain.SchemaIssue) int {
+	deduction := 0
+	for _, issue := range issues {
+		switch issue.Severity {
+		case domain.SeverityCritical:
+			deduction += 20
+		case domain.SeverityWarning:
+			deduction += 8
+		case domain.SeverityInfo:
+			deduction += 2
+		}
+	}
+	score := 100 - deduction
+	if score < 0 {
+		return 0
+	}
+	return score
+}
+
+// performStaticSchemaReview 针对物理表与索引结构执行静态深度体检（按实际执行的检查项精确统计 TotalCount，确保 PassedCount 永不失真）。
 func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.SchemaReviewReport {
+	_ = dialect
 	issues := make([]domain.SchemaIssue, 0)
 	totalChecks := 0
 
-	entityIDMap := make(map[string]bool, len(design.Entities))
+	entityKeyMap := make(map[string]bool, len(design.Entities)*2)
 	for _, e := range design.Entities {
-		entityIDMap[e.ID] = true
+		entityKeyMap[e.ID] = true
+		if e.Name != "" {
+			entityKeyMap[strings.ToLower(strings.TrimSpace(e.Name))] = true
+		}
 	}
 
 	for _, entity := range design.Entities {
-		totalChecks += 5
-
-		// 1. 主键完整性审查
+		// 1. 主键完整性审查 (1 项)
+		totalChecks++
 		hasPK := false
 		for _, attr := range entity.Attributes {
 			if attr.IsPrimaryKey {
@@ -145,10 +231,11 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 			})
 		}
 
-		// 2. 外键索引盲区审查（检查 xxx_id 列是否被索引的最左前缀覆盖）
+		// 2. 外键索引盲区审查（每个外键候选列计 1 项检查）
 		for _, attr := range entity.Attributes {
 			isForeignKeyCandidate := strings.HasSuffix(strings.ToLower(attr.Name), "_id") && !attr.IsPrimaryKey
 			if isForeignKeyCandidate {
+				totalChecks++
 				hasIndex := false
 				for _, idx := range entity.Indexes {
 					if len(idx.Columns) > 0 && strings.EqualFold(idx.Columns[0], attr.Name) {
@@ -171,8 +258,9 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 			}
 		}
 
-		// 3. 命名规范与蛇形命名审查
-		if strings.ContainsAny(entity.Name, " -") || strings.ToUpper(entity.Name) == entity.Name && len(entity.Name) > 3 {
+		// 3. 命名规范与蛇形命名审查 (1 项：覆盖空格、连字符、全大写及驼峰表名)
+		totalChecks++
+		if strings.ContainsAny(entity.Name, " -") || hasUpperASCII(entity.Name) {
 			issues = append(issues, domain.SchemaIssue{
 				ID:          id.NewUUIDv7(),
 				Category:    domain.CategoryNaming,
@@ -180,11 +268,12 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 				Title:       fmt.Sprintf("数据表命名 %q 不符合小写蛇形规范", entity.Name),
 				Description: fmt.Sprintf("表名 %q 建议统一采用小写蛇形命名（snake_case），避免跨操作系统（如 Linux 与 Windows）大小写敏感差异引发的部署问题。", entity.Name),
 				EntityName:  entity.Name,
-				Suggestion:  fmt.Sprintf("建议将表名重命名为小写规范名：%s", strings.ToLower(strings.ReplaceAll(entity.Name, " ", "_"))),
+				Suggestion:  fmt.Sprintf("建议将表名重命名为小写规范名：%s", toSnakeCaseIdentifier(entity.Name)),
 			})
 		}
 
-		// 4. 业务中文注释完备性审查
+		// 4. 业务中文注释完备性审查 (1 项)
+		totalChecks++
 		if strings.TrimSpace(entity.Comment) == "" {
 			issues = append(issues, domain.SchemaIssue{
 				ID:          id.NewUUIDv7(),
@@ -197,7 +286,7 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 			})
 		}
 
-		// 5. 存储与行溢出性能隐患审查
+		// 5. 存储行溢出与金额字段精度隐患审查
 		textColCount := 0
 		for _, attr := range entity.Attributes {
 			t := strings.ToUpper(attr.DBType)
@@ -205,9 +294,9 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 				textColCount++
 			}
 
-			// 检查金额字段浮点数精度风险
 			lowerName := strings.ToLower(attr.Name)
 			if strings.Contains(lowerName, "price") || strings.Contains(lowerName, "amount") || strings.Contains(lowerName, "fee") || strings.Contains(lowerName, "cost") {
+				totalChecks++
 				if strings.Contains(t, "FLOAT") || strings.Contains(t, "DOUBLE") {
 					issues = append(issues, domain.SchemaIssue{
 						ID:          id.NewUUIDv7(),
@@ -222,6 +311,8 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 				}
 			}
 		}
+
+		totalChecks++
 		if textColCount >= 3 {
 			issues = append(issues, domain.SchemaIssue{
 				ID:          id.NewUUIDv7(),
@@ -235,10 +326,14 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 		}
 	}
 
-	// 6. 关系完整性审查：检查悬空关系
+	// 6. 关系完整性审查：检查悬空关系（同时支持 ID 与表名引用）
 	for _, rel := range design.Relations {
 		totalChecks++
-		if !entityIDMap[rel.SourceEntityID] || !entityIDMap[rel.TargetEntityID] {
+		srcKey := strings.TrimSpace(rel.SourceEntityID)
+		tgtKey := strings.TrimSpace(rel.TargetEntityID)
+		srcOK := entityKeyMap[srcKey] || entityKeyMap[strings.ToLower(srcKey)]
+		tgtOK := entityKeyMap[tgtKey] || entityKeyMap[strings.ToLower(tgtKey)]
+		if !srcOK || !tgtOK {
 			issues = append(issues, domain.SchemaIssue{
 				ID:          id.NewUUIDv7(),
 				Category:    domain.CategoryNormalization,
@@ -250,22 +345,7 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 		}
 	}
 
-	// 计算健康度评分：满分 100，Critical 扣 20，Warning 扣 8，Info 扣 2
-	deduction := 0
-	for _, issue := range issues {
-		switch issue.Severity {
-		case domain.SeverityCritical:
-			deduction += 20
-		case domain.SeverityWarning:
-			deduction += 8
-		case domain.SeverityInfo:
-			deduction += 2
-		}
-	}
-	score := 100 - deduction
-	if score < 0 {
-		score = 0
-	}
+	score := computeReviewScore(issues)
 
 	summary := "物理数据模型架构非常规范，未发现重大结构缺陷与性能风险！"
 	if score < 60 {
@@ -274,10 +354,7 @@ func performStaticSchemaReview(design *domain.ERDesign, dialect string) domain.S
 		summary = "物理模型基本合格，但存在若干性能隐患（如外键缺失索引覆盖或金额类型精度问题），建议优化。"
 	}
 
-	passedCount := totalChecks - len(issues)
-	if passedCount < 0 {
-		passedCount = 0
-	}
+	passedCount := max(totalChecks-len(issues), 0)
 
 	return domain.SchemaReviewReport{
 		Score:       score,

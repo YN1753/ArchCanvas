@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getNodesBounds, useReactFlow } from '@xyflow/react'
-import { toBlob, toPng, toSvg } from 'html-to-image'
 
 import { toMermaid } from '../export/mermaid'
 import { designToSQL, parseSQLToDesign, SAMPLE_SQL } from '../export/sql'
@@ -11,7 +10,7 @@ import { parseDesignJSON, validateDesign } from '../validate/dsl'
 export type Tab = DataDialogTab
 
 const buttonClass =
-  'rounded-lg border-[1.5px] border-[#1f1f1f] bg-white px-3.5 py-1.5 text-xs font-bold text-[#1f1f1f] transition hover:bg-stone-100 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px]'
+  'rounded-lg border-[1.5px] border-[#1f1f1f] bg-white px-3.5 py-1.5 text-xs font-bold text-[#1f1f1f] transition hover:bg-stone-100 shadow-[2px_2px_0px_#1f1f1f] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer'
 
 function download(filename: string, content: string) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -19,8 +18,12 @@ function download(filename: string, content: string) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
+  document.body.appendChild(anchor)
   anchor.click()
-  URL.revokeObjectURL(url)
+  anchor.remove()
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 1000)
 }
 
 function downloadDataUrl(filename: string, dataUrl: string) {
@@ -62,12 +65,24 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [exportImageError, setExportImageError] = useState<string | null>(null)
 
-  const jsonText = useMemo(() => JSON.stringify(design, null, 2), [design])
-  const sqlText = useMemo(() => designToSQL(design, exportDialect), [design, exportDialect])
-  const mermaidText = useMemo(() => toMermaid(design), [design])
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
-  const activeText =
-    tab === 'export-sql' ? sqlText : tab === 'export-mermaid' ? mermaidText : jsonText
+  // 仅按当前激活 Tab 惰性计算对应格式文本，避免切入弹窗时同帧串行计算全部导出引擎
+  const activeText = useMemo(() => {
+    if (tab === 'export-sql') return designToSQL(design, exportDialect)
+    if (tab === 'export-mermaid') return toMermaid(design)
+    if (tab === 'export-json') return JSON.stringify(design, null, 2)
+    return ''
+  }, [tab, design, exportDialect])
 
   const activeFilename = `${project?.name ?? 'archcanvas'}${
     tab === 'export-sql' ? `_${exportDialect}.sql` : tab === 'export-mermaid' ? '.mmd' : '.json'
@@ -147,13 +162,14 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
     return { viewportEl, options }
   }
 
-  // 刷新高清预览图
+  // 刷新高清预览图（按需动态加载 html-to-image）
   const refreshPreview = async () => {
     const config = getRenderConfig()
     if (!config) return
     setPreviewLoading(true)
     setExportImageError(null)
     try {
+      const { toPng } = await import('html-to-image')
       const url = await toPng(config.viewportEl, {
         ...config.options,
         pixelRatio: 1,
@@ -177,6 +193,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
       setPreviewLoading(true)
       setExportImageError(null)
       try {
+        const { toPng } = await import('html-to-image')
         const url = await toPng(config.viewportEl, {
           ...config.options,
           pixelRatio: 1,
@@ -207,6 +224,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
     setExportingImage(true)
     setExportImageError(null)
     try {
+      const { toPng, toSvg } = await import('html-to-image')
       const { viewportEl, options } = config
       const dataUrl =
         imageFormat === 'png'
@@ -231,6 +249,7 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
     setCopyingImage(true)
     setExportImageError(null)
     try {
+      const { toBlob } = await import('html-to-image')
       const { viewportEl, options } = config
       const blob = await toBlob(viewportEl, {
         ...options,
@@ -317,16 +336,21 @@ export default function DataDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="数据模型导入与导出"
         className="flex h-[min(720px,94vh)] w-[min(960px,96vw)] flex-col rounded-2xl bg-white shadow-[6px_6px_0px_#1f1f1f] overflow-hidden border-[1.5px] border-[#1f1f1f] animate-in fade-in zoom-in-95 duration-150"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Header Tabs */}
-        <div className="flex items-center justify-between border-b-[1.5px] border-[#1f1f1f] bg-[#faf7f0] px-5">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between border-b-[1.5px] border-[#1f1f1f] bg-[#faf7f0] px-5 overflow-x-auto no-scrollbar">
+          <div role="tablist" aria-label="导入导出模式" className="flex items-center gap-4 shrink-0">
             {tabs.map((item) => (
               <button
                 key={item.key}
                 type="button"
+                role="tab"
+                aria-selected={tab === item.key}
                 onClick={() => {
                   setTab(item.key)
                   setImportError(null)

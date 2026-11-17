@@ -18,5 +18,5 @@ type {{ .Entity.StructName }} struct {
 }
 
 func ({{ .Entity.StructName }}) TableName() string {
-	return "{{ .Entity.TableName }}"
+	return {{ .Entity.TableNameLiteral }}
 }

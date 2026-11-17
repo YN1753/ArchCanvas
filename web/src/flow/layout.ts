@@ -1,6 +1,6 @@
 import dagre from 'dagre'
 
-import type { ERDesign } from '../types/dsl'
+import type { Cardinality, ERDesign } from '../types/dsl'
 import { nodeHeight, nodeWidth } from './adapter'
 
 /**
@@ -67,11 +67,12 @@ export function ensureLayout(design: ERDesign): ERDesign {
   if (design.entities.length === 0) {
     return design
   }
+  const validEntityIds = new Set(design.entities.map((e) => e.id))
   const cleanRelations = (design.relations ?? [])
-    .filter((r) => r.source_entity_id !== r.target_entity_id)
+    .filter((r) => validEntityIds.has(r.source_entity_id) && validEntityIds.has(r.target_entity_id))
     .map((r) => ({
       ...r,
-      cardinality: (r.cardinality || (r as any).relation_type_id || 'one_to_many') as any,
+      cardinality: (r.cardinality || (r.relation_type_id as Cardinality | undefined) || 'one_to_many') as Cardinality,
     }))
   const cleanedDesign = { ...design, relations: cleanRelations }
 

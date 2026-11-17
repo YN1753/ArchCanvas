@@ -7,12 +7,14 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
+	"path"
 	"strings"
 	"text/template"
 
 	"archcanvas/internal/domain"
+	"archcanvas/internal/dto"
 	"archcanvas/internal/service"
-	"archcanvas/request"
+	"archcanvas/internal/validator"
 )
 
 //go:embed templates/*
@@ -35,21 +37,43 @@ func NewGeneratorService(projectService *service.ProjectService) (*GeneratorServ
 	}, nil
 }
 
+// cleanSafeZipPath 严格校验生成文件路径，彻底阻断 Zip Slip 目录穿越漏洞。
+func cleanSafeZipPath(rawPath string) (string, error) {
+	normalized := strings.ReplaceAll(strings.TrimSpace(rawPath), "\\", "/")
+	if normalized == "" || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
+		return "", fmt.Errorf("unsafe archive file path: %q", rawPath)
+	}
+	for _, seg := range strings.Split(normalized, "/") {
+		if seg == ".." || seg == "." || seg == "" {
+			return "", fmt.Errorf("path traversal segment detected in %q", rawPath)
+		}
+	}
+	cleaned := path.Clean(normalized)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return "", fmt.Errorf("unsafe cleaned archive path: %q", cleaned)
+	}
+	return cleaned, nil
+}
+
 // GenerateFileTree 生成工程文件列表 (供前端弹窗代码树与预览展示)
-func (s *GeneratorService) GenerateFileTree(ctx context.Context, req request.GenerateRequest) ([]GeneratedFile, error) {
+func (s *GeneratorService) GenerateFileTree(ctx context.Context, req dto.GenerateRequest) ([]GeneratedFile, error) {
 	design, err := s.projectService.GetERDesign(ctx, req.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("获取项目 ER 设计失败: %w", err)
 	}
-	if design == nil {
-		return nil, fmt.Errorf("该项目暂无 ER 数据模型，请先在画布中添加实体表")
+	if design == nil || len(design.Entities) == 0 {
+		return nil, validator.NewValidationError("该项目暂无物理数据表，请先在画布中添加至少一张实体表后再生成代码")
 	}
 
 	return s.GenerateFileTreeFromDesign(design, req)
 }
 
 // GenerateFileTreeFromDesign 根据 ER 模型与生成请求生成完整工程文件树
-func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, req request.GenerateRequest) ([]GeneratedFile, error) {
+func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, req dto.GenerateRequest) ([]GeneratedFile, error) {
+	if design == nil || len(design.Entities) == 0 {
+		return nil, validator.NewValidationError("当前 ER 设计中没有任何物理数据表，无法生成空工程")
+	}
+
 	projectCtx := BuildProjectContext(req, design)
 	var files []GeneratedFile
 
@@ -100,11 +124,13 @@ func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, r
 
 	// 7. 各实体表对应模型、仓储、业务、控制器
 	for _, ent := range projectCtx.Entities {
-		hasTime := false
-		for _, attr := range ent.Attributes {
-			if strings.Contains(attr.GoType, "time.Time") {
-				hasTime = true
-				break
+		hasTime := strings.Contains(ent.PrimaryKey.GoType, "time.Time")
+		if !hasTime {
+			for _, attr := range ent.Attributes {
+				if strings.Contains(attr.GoType, "time.Time") {
+					hasTime = true
+					break
+				}
 			}
 		}
 
@@ -118,33 +144,29 @@ func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, r
 			HasTime:    hasTime,
 		}
 
-		// Model
 		mCode, err := s.renderGo("model.go.tmpl", entCtx)
 		if err != nil {
 			return nil, fmt.Errorf("render model %s failed: %w", ent.StructName, err)
 		}
-		files = append(files, makeFile(fmt.Sprintf("internal/model/%s.go", ent.TableName), mCode))
+		files = append(files, makeFile(fmt.Sprintf("internal/model/%s.go", ent.FileStem), mCode))
 
-		// Repo
 		rCode, err := s.renderGo("repo.go.tmpl", entCtx)
 		if err != nil {
 			return nil, fmt.Errorf("render repo %s failed: %w", ent.StructName, err)
 		}
-		files = append(files, makeFile(fmt.Sprintf("internal/repository/%s_repo.go", ent.TableName), rCode))
+		files = append(files, makeFile(fmt.Sprintf("internal/repository/%s_repo.go", ent.FileStem), rCode))
 
-		// Service
 		sCode, err := s.renderGo("service.go.tmpl", entCtx)
 		if err != nil {
 			return nil, fmt.Errorf("render service %s failed: %w", ent.StructName, err)
 		}
-		files = append(files, makeFile(fmt.Sprintf("internal/service/%s_service.go", ent.TableName), sCode))
+		files = append(files, makeFile(fmt.Sprintf("internal/service/%s_service.go", ent.FileStem), sCode))
 
-		// Handler
 		hCode, err := s.renderGo("handler.go.tmpl", entCtx)
 		if err != nil {
 			return nil, fmt.Errorf("render handler %s failed: %w", ent.StructName, err)
 		}
-		files = append(files, makeFile(fmt.Sprintf("internal/handler/%s_handler.go", ent.TableName), hCode))
+		files = append(files, makeFile(fmt.Sprintf("internal/handler/%s_handler.go", ent.FileStem), hCode))
 	}
 
 	// 8. internal/router/router.go
@@ -195,11 +217,19 @@ func (s *GeneratorService) GenerateFileTreeFromDesign(design *domain.ERDesign, r
 		files = append(files, makeFile("Makefile", makefile))
 	}
 
+	for i := range files {
+		safePath, err := cleanSafeZipPath(files[i].Path)
+		if err != nil {
+			return nil, err
+		}
+		files[i].Path = safePath
+	}
+
 	return files, nil
 }
 
-// GenerateZip 在内存中流式打包为 zip 二进制流
-func (s *GeneratorService) GenerateZip(ctx context.Context, req request.GenerateRequest) (*bytes.Buffer, error) {
+// GenerateZip 在内存中流式打包为 zip 二进制流（全路径防穿越保护）
+func (s *GeneratorService) GenerateZip(ctx context.Context, req dto.GenerateRequest) (*bytes.Buffer, error) {
 	files, err := s.GenerateFileTree(ctx, req)
 	if err != nil {
 		return nil, err
@@ -209,12 +239,16 @@ func (s *GeneratorService) GenerateZip(ctx context.Context, req request.Generate
 	zw := zip.NewWriter(buf)
 
 	for _, file := range files {
-		w, err := zw.Create(file.Path)
+		safePath, err := cleanSafeZipPath(file.Path)
 		if err != nil {
-			return nil, fmt.Errorf("zip create file %s failed: %w", file.Path, err)
+			return nil, err
+		}
+		w, err := zw.Create(safePath)
+		if err != nil {
+			return nil, fmt.Errorf("zip create file %s failed: %w", safePath, err)
 		}
 		if _, err := w.Write([]byte(file.Content)); err != nil {
-			return nil, fmt.Errorf("zip write file %s failed: %w", file.Path, err)
+			return nil, fmt.Errorf("zip write file %s failed: %w", safePath, err)
 		}
 	}
 
@@ -225,7 +259,7 @@ func (s *GeneratorService) GenerateZip(ctx context.Context, req request.Generate
 	return buf, nil
 }
 
-func (s *GeneratorService) render(name string, data interface{}) (string, error) {
+func (s *GeneratorService) render(name string, data any) (string, error) {
 	var buf bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&buf, name, data); err != nil {
 		return "", fmt.Errorf("template %s execute failed: %w", name, err)
@@ -233,24 +267,22 @@ func (s *GeneratorService) render(name string, data interface{}) (string, error)
 	return buf.String(), nil
 }
 
-func (s *GeneratorService) renderGo(name string, data interface{}) (string, error) {
+func (s *GeneratorService) renderGo(name string, data any) (string, error) {
 	raw, err := s.render(name, data)
 	if err != nil {
 		return "", err
 	}
 
-	// 统一走 go/format 强力保底进行 AST 格式化与排版校验
 	formatted, err := format.Source([]byte(raw))
 	if err != nil {
-		// 如果格式化失败，附带源码信息便于排查
-		return "", fmt.Errorf("go/format error on %s: %w\nSource:\n%s", name, err, raw)
+		return "", fmt.Errorf("go/format error on %s: %w", name, err)
 	}
 	return string(formatted), nil
 }
 
-func makeFile(path, content string) GeneratedFile {
+func makeFile(filePath, content string) GeneratedFile {
 	return GeneratedFile{
-		Path:    path,
+		Path:    filePath,
 		Content: content,
 		Size:    len(content),
 	}

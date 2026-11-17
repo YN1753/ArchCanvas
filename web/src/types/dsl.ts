@@ -56,8 +56,8 @@ export interface Attribute {
   is_primary_key: boolean
   is_nullable: boolean
   is_unique: boolean
-  /** 任意 JSON 值：数字、布尔、字符串。后端以 json.RawMessage 承载。 */
-  default_value?: unknown
+  /** 默认值表达式文本，与后端 `*string` 领域契约严格对齐。 */
+  default_value?: string | null
   description: string
 }
 
@@ -90,52 +90,99 @@ export function emptyDesign(): ERDesign {
   return { entities: [], relations: [] }
 }
 
-/** 后端类型映射表的子集，用于字段类型变更时同步 Go 类型。 */
+/** 后端类型映射表的子集，用于字段类型变更时同步 Go 标准库类型。 */
 export function defaultCodeType(dbType: string): string {
-  const normalized = dbType.trim().toUpperCase().split('(')[0].trim()
+  const upperFull = dbType.trim().toUpperCase()
+  if (upperFull === 'TINYINT(1)') {
+    return 'bool'
+  }
+  const normalized = upperFull.split('(')[0].replace(/\s+UNSIGNED\b/g, '').trim()
   switch (normalized) {
     case 'BIGINT':
+    case 'BIGSERIAL':
       return 'uint64'
     case 'INT':
     case 'INTEGER':
+    case 'MEDIUMINT':
     case 'SMALLINT':
     case 'TINYINT':
+    case 'SERIAL':
       return 'int'
     case 'VARCHAR':
     case 'CHAR':
     case 'TEXT':
+    case 'MEDIUMTEXT':
     case 'LONGTEXT':
+    case 'JSON':
+    case 'JSONB':
+    case 'UUID':
       return 'string'
     case 'BOOLEAN':
     case 'BOOL':
       return 'bool'
     case 'DATETIME':
     case 'TIMESTAMP':
+    case 'TIMESTAMPTZ':
     case 'DATE':
     case 'TIME':
       return 'time.Time'
     case 'DECIMAL':
     case 'NUMERIC':
-      return 'decimal.Decimal'
+    case 'FLOAT':
+    case 'DOUBLE':
+    case 'DOUBLE PRECISION':
+    case 'REAL':
+      return 'float64'
     case 'BLOB':
+    case 'LONGBLOB':
+    case 'BYTEA':
       return '[]byte'
     default:
       return 'string'
   }
 }
 
+let lastUuidV7Ms = 0
+let uuidV7Seq = 0
+
 /**
- * 生成前端本地 ID。
+ * 生成符合 RFC 9562 标准的单调有序 UUIDv7。
  *
- * 这里生成的 ID 只用于「尚未保存到后端的新对象」占位。
- * 保存时后端会按 ID 对齐，凡是带本地占位 ID 的对象都会被替换成后端 ID，
- * 因此占位 ID 与后端 ID 使用同一套前缀 + 不同长度，便于在界面上区分。
+ * 前后端统一使用合法 UUIDv7：后端 `SaveByProjectID` 对归属本项目的合法 UUID 直接保留原值，
+ * 从而彻底消除 700ms 自动保存后因换发 ID 或重排引起的 Undo/Redo JSON Pointer 错位与选中态丢失。
  */
-export function localID(prefix: 'ent' | 'attr' | 'rel'): string {
-  const bytes = new Uint8Array(6)
-  crypto.getRandomValues(bytes)
+export function localID(_prefix?: 'ent' | 'attr' | 'rel'): string {
+  const rand = new Uint8Array(16)
+  crypto.getRandomValues(rand)
+
+  let now = Date.now()
+  if (now === lastUuidV7Ms) {
+    uuidV7Seq = (uuidV7Seq + 1) & 0x0fff
+    if (uuidV7Seq === 0) {
+      now = lastUuidV7Ms + 1
+      lastUuidV7Ms = now
+    }
+  } else {
+    lastUuidV7Ms = now
+    uuidV7Seq = ((rand[6] << 8) | rand[7]) & 0x03ff
+  }
+
+  const bytes = new Uint8Array(16)
+  bytes[0] = Math.floor(now / 0x10000000000) & 0xff
+  bytes[1] = Math.floor(now / 0x100000000) & 0xff
+  bytes[2] = Math.floor(now / 0x1000000) & 0xff
+  bytes[3] = Math.floor(now / 0x10000) & 0xff
+  bytes[4] = Math.floor(now / 0x100) & 0xff
+  bytes[5] = now & 0xff
+  bytes[6] = 0x70 | ((uuidV7Seq >> 8) & 0x0f)
+  bytes[7] = uuidV7Seq & 0xff
+  bytes[8] = (rand[8] & 0x3f) | 0x80
+  for (let i = 9; i < 16; i++) {
+    bytes[i] = rand[i]
+  }
+
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-  return `${prefix}_local_${hex}`
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 export function isLocalID(id: string): boolean {
@@ -219,4 +266,3 @@ export interface SchemaReviewReport {
 }
 
 export type DatabaseDialect = 'mysql' | 'postgres' | 'sqlite'
-

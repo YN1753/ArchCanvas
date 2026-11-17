@@ -23,82 +23,166 @@ function escapeSqlString(str: string, dialect: DatabaseDialect): string {
 export function quoteIdent(ident: string, dialect: DatabaseDialect): string {
   const clean = cleanIdentifier(ident)
   if (dialect === 'mysql') {
-    return `\`${clean}\``
+    return `\`${clean.replace(/`/g, '``')}\``
   }
-  return `"${clean}"`
+  return `"${clean.replace(/"/g, '""')}"`
 }
 
 /**
- * 适配不同方言的数据类型
+ * 严格按词边界识别整型 SQL 类型（排除 TINYINT(1) 布尔语义，且绝不误匹配 POINT / INTERVAL）
  */
-function normalizeTypeForDialect(typeStr: string, dialect: DatabaseDialect, isPk: boolean): string {
+function isIntegerSQLType(upperType: string): boolean {
+  const trimmed = upperType.trim()
+  if (trimmed === 'TINYINT(1)') {
+    return false
+  }
+  const base = trimmed.split('(')[0].replace(/\s+UNSIGNED\b/g, '').trim()
+  return /^(?:TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|INT2|INT4|INT8|SERIAL|BIGSERIAL|SMALLSERIAL)$/.test(
+    base,
+  )
+}
+
+/**
+ * 格式化 DEFAULT 子句字面量
+ */
+function formatDefaultClause(rawDefault: string | null | undefined, dialect: DatabaseDialect): string {
+  if (rawDefault === undefined || rawDefault === null) return ''
+  const trimmed = String(rawDefault).trim()
+  if (!trimmed) return ''
+
+  const upper = trimmed.toUpperCase()
+  // 原生关键字/函数表达式直接透传
+  if (
+    upper === 'NULL' ||
+    upper === 'CURRENT_TIMESTAMP' ||
+    upper === 'CURRENT_DATE' ||
+    upper === 'CURRENT_TIME' ||
+    upper === 'NOW()' ||
+    upper === 'TRUE' ||
+    upper === 'FALSE' ||
+    /^-?\d+(?:\.\d+)?$/.test(trimmed)
+  ) {
+    if ((upper === 'TRUE' || upper === 'FALSE') && dialect === 'sqlite') {
+      return upper === 'TRUE' ? ' DEFAULT 1' : ' DEFAULT 0'
+    }
+    return ` DEFAULT ${trimmed}`
+  }
+
+  // 若本身已被单引号包裹，剥离后按目标方言统一转义重包裹
+  const unquoted =
+    trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")
+      ? trimmed.slice(1, -1)
+      : trimmed
+  return ` DEFAULT '${escapeSqlString(unquoted, dialect)}'`
+}
+
+/**
+ * 适配不同方言的数据类型（单列自增主键仅在 `isAutoIncPk === true` 时升级为 SERIAL/AUTOINCREMENT 友好类型）
+ */
+function normalizeTypeForDialect(
+  typeStr: string,
+  dialect: DatabaseDialect,
+  isAutoIncPk: boolean,
+): string {
   const upper = (typeStr || '').trim().toUpperCase()
   if (!upper) {
     if (dialect === 'sqlite') return 'TEXT'
     return 'VARCHAR(255)'
   }
 
+  const withoutUnsigned = upper.replace(/\s+UNSIGNED\b/g, '').trim()
+  const base = withoutUnsigned.split('(')[0].trim()
+
   if (dialect === 'postgres') {
-    if (isPk && (upper.includes('INT') || upper === 'SERIAL' || upper === 'BIGSERIAL')) {
-      return upper.includes('BIG') ? 'BIGSERIAL' : 'SERIAL'
+    if (isAutoIncPk && (isIntegerSQLType(upper) || base === 'SERIAL' || base === 'BIGSERIAL')) {
+      return base.includes('BIG') ? 'BIGSERIAL' : 'SERIAL'
     }
-    if (upper === 'DATETIME') return 'TIMESTAMPTZ'
-    if (upper === 'TINYINT' || upper === 'TINYINT(1)' || upper === 'TINYINT UNSIGNED') return 'SMALLINT'
-    if (upper === 'BLOB') return 'BYTEA'
-    if (upper.includes('INT UNSIGNED')) return upper.replace(' UNSIGNED', '')
-    return upper
+    if (base === 'BIGSERIAL' && !isAutoIncPk) return 'BIGINT'
+    if (base === 'SERIAL' && !isAutoIncPk) return 'INTEGER'
+    if (upper === 'TINYINT(1)' || base === 'BOOL' || base === 'BOOLEAN') return 'BOOLEAN'
+    if (base === 'TINYINT') return 'SMALLINT'
+    if (base === 'MEDIUMINT' || base === 'INT') return 'INTEGER'
+    if (base === 'BIGINT') return 'BIGINT'
+    if (base === 'DATETIME') return 'TIMESTAMPTZ'
+    if (base === 'DOUBLE') return 'DOUBLE PRECISION'
+    if (base === 'LONGTEXT' || base === 'MEDIUMTEXT') return 'TEXT'
+    if (base === 'BLOB' || base === 'LONGBLOB') return 'BYTEA'
+    return withoutUnsigned
   }
 
   if (dialect === 'sqlite') {
-    if (isPk && upper.includes('INT')) return 'INTEGER'
-    if (upper.includes('VARCHAR') || upper === 'TEXT') return 'TEXT'
-    if (upper.includes('INT')) return 'INTEGER'
+    if (isAutoIncPk && isIntegerSQLType(upper)) return 'INTEGER'
+    if (upper === 'TINYINT(1)' || base === 'BOOL' || base === 'BOOLEAN') return 'INTEGER'
+    if (isIntegerSQLType(upper)) return 'INTEGER'
+    if (base === 'VARCHAR' || base === 'CHAR' || base === 'TEXT' || base === 'MEDIUMTEXT' || base === 'LONGTEXT') {
+      return 'TEXT'
+    }
     if (
-      upper.includes('DECIMAL') ||
-      upper.includes('NUMERIC') ||
-      upper === 'REAL' ||
-      upper === 'FLOAT' ||
-      upper === 'DOUBLE'
+      base === 'DECIMAL' ||
+      base === 'NUMERIC' ||
+      base === 'REAL' ||
+      base === 'FLOAT' ||
+      base === 'DOUBLE' ||
+      withoutUnsigned === 'DOUBLE PRECISION'
     ) {
       return 'REAL'
     }
-    if (upper === 'BLOB' || upper === 'BYTEA') return 'BLOB'
-    return upper
+    if (base === 'BLOB' || base === 'LONGBLOB' || base === 'BYTEA') return 'BLOB'
+    return withoutUnsigned
   }
 
   // MySQL
+  if (base === 'BIGSERIAL') return 'BIGINT'
+  if (base === 'SERIAL') return 'INT'
+  if (base === 'TIMESTAMPTZ') return 'DATETIME'
+  if (base === 'BYTEA') return 'BLOB'
+  if (withoutUnsigned === 'DOUBLE PRECISION') return 'DOUBLE'
   return upper
 }
 
 /**
- * 将单个实体表转化为标准 SQL DDL 脚本 (含 CREATE TABLE、表与字段 COMMENT、CREATE INDEX 索引定义)
+ * 将单个实体表转化为标准 SQL DDL 脚本 (含 CREATE TABLE、表与字段 COMMENT、复合主键、DEFAULT 与 CREATE INDEX)
  */
 export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'): string {
+  const tableComment = (entity.comment || '').trim()
+  const qTable = quoteIdent(entity.name, dialect)
+
+  if (!entity.attributes || entity.attributes.length === 0) {
+    return `-- 实体 ${entity.name} 暂无字段定义，已跳过 CREATE TABLE ${qTable}`
+  }
+
   const lines: string[] = []
   const sqliteColItems: Array<{ def: string; comment?: string }> = []
   const primaryKeys: string[] = []
-  const tableComment = (entity.comment || '').trim()
-  const qTable = quoteIdent(entity.name, dialect)
+  const pkCount = entity.attributes.filter((a) => a.is_primary_key).length
+  const isCompositePk = pkCount > 1
 
   // 1. 列定义清单
   for (const attr of entity.attributes) {
     const qCol = quoteIdent(attr.name, dialect)
     const comment = (attr.comment || attr.description || '').trim()
-    const colType = normalizeTypeForDialect(attr.db_type, dialect, attr.is_primary_key)
+    const isSingleAutoPk = attr.is_primary_key && !isCompositePk
+    const colType = normalizeTypeForDialect(attr.db_type, dialect, isSingleAutoPk)
+    const defaultClause = attr.is_primary_key ? '' : formatDefaultClause(attr.default_value, dialect)
+
+    if (attr.is_primary_key) {
+      primaryKeys.push(qCol)
+    }
 
     if (dialect === 'mysql') {
       let line = `  ${qCol} ${colType}`
       if (attr.is_primary_key) {
         line += ' NOT NULL'
-        if (colType.toUpperCase().includes('INT')) {
+        if (!isCompositePk && isIntegerSQLType(colType)) {
           line += ' AUTO_INCREMENT'
         }
-        primaryKeys.push(qCol)
       } else if (!attr.is_nullable) {
         line += ' NOT NULL'
       } else {
         line += ' NULL'
       }
+
+      line += defaultClause
 
       if (attr.is_unique && !attr.is_primary_key) {
         line += ' UNIQUE'
@@ -111,10 +195,12 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
     } else if (dialect === 'postgres') {
       let line = `  ${qCol} ${colType}`
       if (attr.is_primary_key) {
-        line += ' PRIMARY KEY'
+        line += isCompositePk ? ' NOT NULL' : ' PRIMARY KEY'
       } else if (!attr.is_nullable) {
         line += ' NOT NULL'
       }
+
+      line += defaultClause
 
       if (attr.is_unique && !attr.is_primary_key) {
         line += ' UNIQUE'
@@ -124,7 +210,9 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
       // SQLite
       let line = `  ${qCol} ${colType}`
       if (attr.is_primary_key) {
-        if (colType.toUpperCase().includes('INT')) {
+        if (isCompositePk) {
+          line += ' NOT NULL'
+        } else if (isIntegerSQLType(colType)) {
           line += ' PRIMARY KEY AUTOINCREMENT'
         } else {
           line += ' PRIMARY KEY'
@@ -133,27 +221,35 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
         line += ' NOT NULL'
       }
 
+      line += defaultClause
+
       if (attr.is_unique && !attr.is_primary_key) {
         line += ' UNIQUE'
       }
 
       sqliteColItems.push({
         def: line,
-        comment: comment ? comment.replace(/\n/g, ' ') : undefined,
+        comment: comment ? comment.replace(/[\r\n]+/g, ' ') : undefined,
       })
     }
   }
 
-  // 2. MySQL 表级复合主键
+  // 2. 表级主键声明（MySQL 始终输出表级 PRIMARY KEY；PostgreSQL / SQLite 在复合主键时输出表级 PRIMARY KEY）
   if (dialect === 'mysql' && primaryKeys.length > 0) {
     lines.push(`  PRIMARY KEY (${primaryKeys.join(', ')})`)
+  } else if (dialect === 'postgres' && isCompositePk) {
+    lines.push(`  PRIMARY KEY (${primaryKeys.join(', ')})`)
+  } else if (dialect === 'sqlite' && isCompositePk) {
+    sqliteColItems.push({
+      def: `  PRIMARY KEY (${primaryKeys.join(', ')})`,
+    })
   }
 
   // 3. 构建 CREATE TABLE 语句
   const sqlChunks: string[] = []
 
   if (dialect === 'sqlite' && tableComment) {
-    sqlChunks.push(`-- 表说明: ${tableComment.replace(/\n/g, ' ')}`)
+    sqlChunks.push(`-- 表说明: ${tableComment.replace(/[\r\n]+/g, ' ')}`)
   }
 
   let createTableStmt = ''
@@ -229,6 +325,71 @@ export function entityToSQL(entity: Entity, dialect: DatabaseDialect = 'mysql'):
 }
 
 /**
+ * 按父子关联拓扑顺序排列实体表（被依赖的父表优先建表，遇到环时保持用户原声明顺序）
+ */
+function sortEntitiesTopologically(entities: Entity[], relations: Relation[]): Entity[] {
+  if (entities.length <= 1 || relations.length === 0) {
+    return entities
+  }
+  const byId = new Map(entities.map((e) => [e.id, e]))
+  const inDegree = new Map<string, number>()
+  const childrenMap = new Map<string, string[]>()
+  for (const e of entities) {
+    inDegree.set(e.id, 0)
+    childrenMap.set(e.id, [])
+  }
+
+  const seenEdges = new Set<string>()
+  for (const rel of relations) {
+    if (
+      rel.source_entity_id === rel.target_entity_id ||
+      !byId.has(rel.source_entity_id) ||
+      !byId.has(rel.target_entity_id)
+    ) {
+      continue
+    }
+    const edgeKey = `${rel.source_entity_id}->${rel.target_entity_id}`
+    if (seenEdges.has(edgeKey)) continue
+    seenEdges.add(edgeKey)
+    childrenMap.get(rel.source_entity_id)!.push(rel.target_entity_id)
+    inDegree.set(rel.target_entity_id, (inDegree.get(rel.target_entity_id) ?? 0) + 1)
+  }
+
+  const queue: string[] = []
+  for (const e of entities) {
+    if ((inDegree.get(e.id) ?? 0) === 0) {
+      queue.push(e.id)
+    }
+  }
+
+  const ordered: Entity[] = []
+  const emitted = new Set<string>()
+
+  while (queue.length > 0) {
+    const id = queue.shift()!
+    if (emitted.has(id)) continue
+    emitted.add(id)
+    ordered.push(byId.get(id)!)
+
+    for (const childId of childrenMap.get(id) ?? []) {
+      const nextDeg = (inDegree.get(childId) ?? 1) - 1
+      inDegree.set(childId, nextDeg)
+      if (nextDeg === 0) {
+        queue.push(childId)
+      }
+    }
+  }
+
+  // 若存在循环外键引用，按原顺序追加剩余实体
+  for (const e of entities) {
+    if (!emitted.has(e.id)) {
+      ordered.push(e)
+    }
+  }
+  return ordered
+}
+
+/**
  * 将整个 ER 设计转换为完整 SQL 脚本
  */
 export function designToSQL(design: ERDesign, dialect: DatabaseDialect = 'mysql'): string {
@@ -252,14 +413,14 @@ export function designToSQL(design: ERDesign, dialect: DatabaseDialect = 'mysql'
     '-- =============================================\n',
   ]
 
-  for (const entity of design.entities) {
+  const sortedEntities = sortEntitiesTopologically(design.entities, design.relations ?? [])
+  for (const entity of sortedEntities) {
     chunks.push(entityToSQL(entity, dialect))
     chunks.push('')
   }
 
   return chunks.join('\n').trim()
 }
-
 
 /**
  * 清理标识符包裹符（反引号、双引号、中括号）与库名前缀
@@ -272,6 +433,41 @@ export function cleanIdentifier(name: string): string {
   else if (s.startsWith('[') && s.endsWith(']')) s = s.slice(1, -1)
   const parts = s.split('.')
   return parts[parts.length - 1].replace(/[`"\[\]]/g, '').trim()
+}
+
+/**
+ * 解码引号包裹的 SQL 注释文本（兼容 '' / \' / "" / \" 转义）
+ */
+function unescapeSqlCommentLiteral(singleQuoted?: string, doubleQuoted?: string): string {
+  const raw = singleQuoted ?? doubleQuoted ?? ''
+  return raw
+    .replace(/''/g, "'")
+    .replace(/\\'/g, "'")
+    .replace(/""/g, '"')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .trim()
+}
+
+const MYSQL_COMMENT_CLAUSE_RE =
+  /\bCOMMENT\s*=?\s*(?:'((?:''|\\.|[^'\\])*)'|"((?:""|\\.|[^"\\])*)")/i
+
+/**
+ * 提取字段定义中的 DEFAULT 子句值
+ */
+function extractDefaultValue(restSql: string): string | undefined {
+  const match = restSql.match(
+    /\bDEFAULT\s+(?:'((?:''|\\.|[^'\\])*)'|"((?:""|\\.|[^"\\])*)"|([A-Za-z_][A-Za-z0-9_]*(?:\(\))?|-?\d+(?:\.\d+)?))/i,
+  )
+  if (!match) return undefined
+  if (match[1] !== undefined || match[2] !== undefined) {
+    return unescapeSqlCommentLiteral(match[1], match[2])
+  }
+  const token = match[3]?.trim()
+  if (!token || token.toUpperCase() === 'NULL') {
+    return undefined
+  }
+  return token
 }
 
 /**
@@ -788,7 +984,7 @@ export interface SQLImportResult {
  */
 export function parseSQLToDesign(sqlText: string): SQLImportResult {
   const warnings: string[] = []
-  const createTableRegex = /CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.]+)\s*\(/gi
+  const createTableRegex = /CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.\u4e00-\u9fa5]+)\s*\(/gi
 
   const rawTables: Array<{ name: string; body: string; comment?: string }> = []
   let match: RegExpExecArray | null
@@ -902,16 +1098,51 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     if (endIndex === -1) continue
 
     const body = sqlText.slice(startIndex, endIndex)
-    const restAfterParen = sqlText.slice(
-      endIndex + 1,
-      sqlText.indexOf(';', endIndex + 1) !== -1 ? sqlText.indexOf(';', endIndex + 1) : endIndex + 200,
-    )
-    const commentMatch = restAfterParen.match(/\bCOMMENT\s*=\s*['"]([^'"]*)['"]/i)
+    // 查找语句结尾分号时同样跳过引号内部的分号
+    let stmtEnd = endIndex + 1
+    let suffixSingle = false
+    let suffixDouble = false
+    while (stmtEnd < sqlText.length && stmtEnd < endIndex + 500) {
+      const ch = sqlText[stmtEnd]
+      const nx = sqlText[stmtEnd + 1]
+      if (suffixSingle) {
+        if (ch === '\\') {
+          stmtEnd += 2
+          continue
+        }
+        if (ch === "'") {
+          if (nx === "'") {
+            stmtEnd += 2
+            continue
+          }
+          suffixSingle = false
+        }
+      } else if (suffixDouble) {
+        if (ch === '\\') {
+          stmtEnd += 2
+          continue
+        }
+        if (ch === '"') {
+          if (nx === '"') {
+            stmtEnd += 2
+            continue
+          }
+          suffixDouble = false
+        }
+      } else {
+        if (ch === "'") suffixSingle = true
+        else if (ch === '"') suffixDouble = true
+        else if (ch === ';') break
+      }
+      stmtEnd++
+    }
+    const restAfterParen = sqlText.slice(endIndex + 1, stmtEnd)
+    const commentMatch = restAfterParen.match(MYSQL_COMMENT_CLAUSE_RE)
     if (commentMatch) {
-      tblComment = commentMatch[1].trim()
+      tblComment = unescapeSqlCommentLiteral(commentMatch[1], commentMatch[2])
     }
 
-    rawTables.push({ name: tableName, body, comment: tblComment })
+    rawTables.push({ name: tableName, body, comment: tblComment || undefined })
     createTableRegex.lastIndex = endIndex + 1
   }
 
@@ -932,14 +1163,14 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     const entity: Entity = {
       id: localID('ent'),
       name: rawTable.name,
-      comment: (rawTable as any).comment || undefined,
+      comment: rawTable.comment,
       attributes: [],
       indexes: [],
     }
 
     const items = splitTableItems(rawTable.body)
     const tablePrimaryKeys = new Set<string>()
-    const tableUniqueKeys = new Set<string>()
+    const tableSingleUniqueKeys = new Set<string>()
 
     for (const rawItem of items) {
       const itemTrimmed = rawItem.trim()
@@ -952,7 +1183,7 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
       // PRIMARY KEY (col1, col2)
       const pkMatch = item.match(/^(?:CONSTRAINT\s+[`"\[\]\w]+\s+)?PRIMARY\s+KEY\s*\(([^)]+)\)/i)
       if (pkMatch) {
-        const cols = pkMatch[1].split(',').map(cleanIdentifier)
+        const cols = pkMatch[1].split(',').map(cleanIdentifier).filter(Boolean)
         cols.forEach((c) => tablePrimaryKeys.add(c.toLowerCase()))
         continue
       }
@@ -976,35 +1207,46 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
 
       // UNIQUE KEY / INDEX (col1, col2)
       const ukMatch = item.match(
-        /^(?:CONSTRAINT\s+[`"\[\]\w]+\s+)?UNIQUE\s*(?:KEY|INDEX)?\s*([`"\[\]\w]+)?\s*\(([^)]+)\)(?:\s+COMMENT\s+['"]([^'"]*)['"])?/i,
+        /^(?:CONSTRAINT\s+[`"\[\]\w]+\s+)?UNIQUE\s*(?:KEY|INDEX)?\s*([`"\[\]\w]+)?\s*\(([^)]+)\)(.*)$/is,
       )
       if (ukMatch) {
-        const cols = ukMatch[2].split(',').map(cleanIdentifier)
-        cols.forEach((c) => tableUniqueKeys.add(c.toLowerCase()))
+        const cols = ukMatch[2].split(',').map(cleanIdentifier).filter(Boolean)
+        // 仅当单列唯一索引时才回填列级 is_unique，防止复合唯一索引把每列单独污染为 1:1 唯一键
+        if (cols.length === 1) {
+          tableSingleUniqueKeys.add(cols[0].toLowerCase())
+        }
+        const ukCommentMatch = ukMatch[3]?.match(MYSQL_COMMENT_CLAUSE_RE)
+        const ukComment = ukCommentMatch
+          ? unescapeSqlCommentLiteral(ukCommentMatch[1], ukCommentMatch[2])
+          : inlineComment
         const idxName = cleanIdentifier(ukMatch[1] || `uk_${entity.name}_${cols.join('_')}`)
         entity.indexes = entity.indexes || []
         entity.indexes.push({
           name: idxName,
           columns: cols,
           is_unique: true,
-          comment: ukMatch[3]?.trim() || inlineComment,
+          comment: ukComment,
         })
         continue
       }
 
       // KEY `idx_name` (`col1`, `col2`) 或 INDEX `idx_name` (`col1`)
       const keyMatch = item.match(
-        /^(?:KEY|INDEX)\s+([`"\[\]\w]+)?\s*\(([^)]+)\)(?:\s+COMMENT\s+['"]([^'"]*)['"])?/i,
+        /^(?:KEY|INDEX)\s+([`"\[\]\w]+)?\s*\(([^)]+)\)(.*)$/is,
       )
       if (keyMatch) {
-        const cols = keyMatch[2].split(',').map(cleanIdentifier)
+        const cols = keyMatch[2].split(',').map(cleanIdentifier).filter(Boolean)
+        const keyCommentMatch = keyMatch[3]?.match(MYSQL_COMMENT_CLAUSE_RE)
+        const keyComment = keyCommentMatch
+          ? unescapeSqlCommentLiteral(keyCommentMatch[1], keyCommentMatch[2])
+          : inlineComment
         const idxName = cleanIdentifier(keyMatch[1] || `idx_${entity.name}_${cols.join('_')}`)
         entity.indexes = entity.indexes || []
         entity.indexes.push({
           name: idxName,
           columns: cols,
           is_unique: false,
-          comment: keyMatch[3]?.trim() || inlineComment,
+          comment: keyComment,
         })
         continue
       }
@@ -1015,15 +1257,17 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
       }
 
       // 解析字段定义: colName type [constraints...]
-      const colMatch = item.match(/^([`"\[\]\w]+)\s+(.+)$/s)
+      const colMatch = item.match(/^([`"\[\]\w\u4e00-\u9fa5]+)\s+(.+)$/s)
       if (!colMatch) continue
 
       const colName = cleanIdentifier(colMatch[1])
       const rest = colMatch[2].trim()
 
-      // 提取数据类型
-      const typeMatch = rest.match(/^([a-zA-Z]+(?:\s*\([^)]*\))?(?:\s+(?:UNSIGNED|ZEROFILL|PRECISION|VARYING))?)/i)
-      const dbType = typeMatch ? typeMatch[1].trim().toUpperCase() : 'VARCHAR(255)'
+      // 提取数据类型（兼容 DOUBLE PRECISION、CHARACTER VARYING、TIMESTAMP WITH TIME ZONE 等多词类型）
+      const typeMatch = rest.match(
+        /^([a-zA-Z]+(?:\s+(?:PRECISION|VARYING|WITHOUT\s+TIME\s+ZONE|WITH\s+TIME\s+ZONE))?(?:\s*\([^)]*\))?(?:\s+(?:UNSIGNED|ZEROFILL))?)/i,
+      )
+      const dbType = typeMatch ? typeMatch[1].replace(/\s+/g, ' ').trim().toUpperCase() : 'VARCHAR(255)'
 
       // 判定内联约束
       const isPk =
@@ -1034,12 +1278,13 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
       const isUnique = /\bUNIQUE\b/i.test(rest)
       const isNotNull = /\bNOT\s+NULL\b/i.test(rest)
       const isNullable = isPk ? false : isNotNull ? false : true
+      const defaultValue = extractDefaultValue(rest)
 
-      // 提取 COMMENT '...' 或 COMMENT "..."，若无则使用提取出的行内注释
+      // 提取引号转义感知的 COMMENT '...' 或 COMMENT "..."，若无则使用提取出的行内注释
       let description = ''
-      const commentMatch = rest.match(/\bCOMMENT\s*['"]([^'"]*)['"]/i)
+      const commentMatch = rest.match(MYSQL_COMMENT_CLAUSE_RE)
       if (commentMatch) {
-        description = commentMatch[1].trim()
+        description = unescapeSqlCommentLiteral(commentMatch[1], commentMatch[2])
       } else if (inlineComment) {
         description = inlineComment.trim()
       }
@@ -1066,18 +1311,19 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
         is_primary_key: isPk,
         is_nullable: isNullable,
         is_unique: isUnique,
+        ...(defaultValue !== undefined ? { default_value: defaultValue } : {}),
         description,
       })
     }
 
-    // 应用表级复合主键及唯一键
+    // 应用表级复合主键及单列唯一键
     for (const attr of entity.attributes) {
       const lowerCol = attr.name.toLowerCase()
       if (tablePrimaryKeys.has(lowerCol)) {
         attr.is_primary_key = true
         attr.is_nullable = false
       }
-      if (tableUniqueKeys.has(lowerCol)) {
+      if (tableSingleUniqueKeys.has(lowerCol)) {
         attr.is_unique = true
       }
     }
@@ -1090,17 +1336,24 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
 
   // 额外解析独立建索引语句：CREATE [UNIQUE] INDEX ... ON table (cols)
   const standaloneIndexRegex =
-    /CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.]+)\s+ON\s+([`"\[\]\w.]+)\s*\(([^)]+)\)(?:\s+COMMENT\s+['"]([^'"]*)['"])?/gi
+    /CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.]+)\s+ON\s+([`"\[\]\w.]+)\s*\(([^)]+)\)(?:\s+COMMENT\s+(?:'((?:''|\\.|[^'\\])*)'|"((?:""|\\.|[^"\\])*)"))?/gi
   let idxMatch: RegExpExecArray | null
   while ((idxMatch = standaloneIndexRegex.exec(clean)) !== null) {
     const isUnique = Boolean(idxMatch[1])
     const idxName = cleanIdentifier(idxMatch[2])
     const targetTable = cleanIdentifier(idxMatch[3]).toLowerCase()
-    const cols = idxMatch[4].split(',').map(cleanIdentifier)
-    const idxComment = idxMatch[5]?.trim()
+    const cols = idxMatch[4].split(',').map(cleanIdentifier).filter(Boolean)
+    const idxComment =
+      idxMatch[5] !== undefined || idxMatch[6] !== undefined
+        ? unescapeSqlCommentLiteral(idxMatch[5], idxMatch[6])
+        : undefined
 
     const ent = entityMap.get(targetTable)
     if (ent) {
+      if (isUnique && cols.length === 1) {
+        const targetAttr = ent.attributes.find((a) => a.name.toLowerCase() === cols[0].toLowerCase())
+        if (targetAttr) targetAttr.is_unique = true
+      }
       ent.indexes = ent.indexes || []
       if (!ent.indexes.some((i) => i.name.toLowerCase() === idxName.toLowerCase())) {
         ent.indexes.push({
@@ -1114,28 +1367,25 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
   }
 
   // 额外解析 PostgreSQL 风格的 COMMENT ON TABLE / COLUMN / INDEX
-  function extractQuotedComment(singleQuoteMatch?: string, doubleQuoteMatch?: string): string {
-    const raw = singleQuoteMatch ?? doubleQuoteMatch ?? ''
-    return raw.replace(/''/g, "'").replace(/\\'/g, "'").replace(/""/g, '"').replace(/\\"/g, '"').trim()
-  }
-
-  const commentTableRegex = /COMMENT\s+ON\s+TABLE\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
+  const commentTableRegex =
+    /COMMENT\s+ON\s+TABLE\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
   let tcMatch: RegExpExecArray | null
   while ((tcMatch = commentTableRegex.exec(clean)) !== null) {
     const tbl = cleanIdentifier(tcMatch[1]).toLowerCase()
-    const comm = extractQuotedComment(tcMatch[2], tcMatch[3])
+    const comm = unescapeSqlCommentLiteral(tcMatch[2], tcMatch[3])
     const ent = entityMap.get(tbl)
     if (ent && !ent.comment) {
       ent.comment = comm
     }
   }
 
-  const commentColRegex = /COMMENT\s+ON\s+COLUMN\s+([`"\[\]\w.]+)\.([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
+  const commentColRegex =
+    /COMMENT\s+ON\s+COLUMN\s+([`"\[\]\w.]+)\.([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
   let ccMatch: RegExpExecArray | null
   while ((ccMatch = commentColRegex.exec(clean)) !== null) {
     const tbl = cleanIdentifier(ccMatch[1]).toLowerCase()
     const col = cleanIdentifier(ccMatch[2]).toLowerCase()
-    const comm = extractQuotedComment(ccMatch[3], ccMatch[4])
+    const comm = unescapeSqlCommentLiteral(ccMatch[3], ccMatch[4])
     const ent = entityMap.get(tbl)
     if (ent) {
       const attr = ent.attributes.find((a) => a.name.toLowerCase() === col)
@@ -1146,11 +1396,12 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     }
   }
 
-  const commentIdxRegex = /COMMENT\s+ON\s+INDEX\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
+  const commentIdxRegex =
+    /COMMENT\s+ON\s+INDEX\s+([`"\[\]\w.]+)\s+IS\s+(?:'((?:''|\\'|[^'])*)'|"((?:""|\\"|[^"])*)")/gi
   let icMatch: RegExpExecArray | null
   while ((icMatch = commentIdxRegex.exec(clean)) !== null) {
     const idxName = cleanIdentifier(icMatch[1]).toLowerCase()
-    const comm = extractQuotedComment(icMatch[2], icMatch[3])
+    const comm = unescapeSqlCommentLiteral(icMatch[2], icMatch[3])
     for (const ent of entityMap.values()) {
       if (ent.indexes) {
         const foundIdx = ent.indexes.find((i) => i.name.toLowerCase() === idxName)
@@ -1189,14 +1440,24 @@ export function parseSQLToDesign(sqlText: string): SQLImportResult {
     }
   }
 
-  // 2. 企业常用逻辑外键推断（如 orders.user_id 自动匹配 users 表，满足互联网大厂禁止物理外键的规范）
+  // 2. 企业常用逻辑外键推断（如 orders.user_id 自动匹配 users 表，以及 parent_id 自引用推断）
   for (const entity of entities) {
     for (const attr of entity.attributes) {
       if (attr.is_primary_key) continue
-      const fkNameMatch = attr.name.toLowerCase().match(/^([a-z0-9_]+)_id$/)
+      const lowerAttr = attr.name.toLowerCase()
+      if (lowerAttr === 'parent_id') {
+        addRelation(entity, entity)
+        continue
+      }
+      const fkNameMatch = lowerAttr.match(/^([a-z0-9_]+)_id$/)
       if (fkNameMatch) {
         const prefix = fkNameMatch[1]
-        const candidates = [prefix, `${prefix}s`, `${prefix}es`]
+        const candidates = [
+          prefix,
+          `${prefix}s`,
+          `${prefix}es`,
+          ...(prefix.endsWith('y') ? [`${prefix.slice(0, -1)}ies`] : []),
+        ]
         for (const candidate of candidates) {
           const parent = entityMap.get(candidate)
           if (parent && parent.id !== entity.id) {

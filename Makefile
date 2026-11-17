@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-server test test-race eval check clean run
+.PHONY: all build build-web build-server test test-race eval eval-live check clean run
 
 BINARY_NAME=archcanvas
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0")
@@ -11,7 +11,8 @@ all: build
 build-web:
 	@echo "==> 构建前端静态资源 (web)..."
 	@cd web && npm run build
-	@echo "==> 复制静态资源至 Go embed 目录..."
+	@echo "==> 清空历史陈旧静态产物并同步至 Go embed 目录..."
+	@rm -rf server/internal/static/dist/assets
 	@mkdir -p server/internal/static/dist
 	@cp -r web/dist/* server/internal/static/dist/
 
@@ -33,15 +34,19 @@ test-race:
 	@cd server && go test -race ./...
 
 eval:
-	@echo "==> 执行 AI 需求澄清与建模基准评测 (35 场景)..."
+	@echo "==> 执行离线确定性需求澄清与端到端编译/迁移基准评测 (35 场景)..."
 	@cd server && go test -v ./internal/eval -run TestRunBenchmark
 
+eval-live:
+	@echo "==> 执行真实在线大模型基准评测 (ARCHCANVAS_LIVE_EVAL=1)..."
+	@cd server && ARCHCANVAS_LIVE_EVAL=1 go test -v ./internal/eval -run TestRunBenchmark
+
 check:
-	@echo "==> 执行前端类型检查..."
-	@cd web && npm run typecheck
+	@echo "==> 执行前端类型检查与单元测试..."
+	@cd web && npm run typecheck && npm test
 	@echo "==> 执行后端静态检查 (go vet)..."
 	@cd server && go vet ./...
-	@echo "==> 执行全量单元测试与竞态检测..."
+	@echo "==> 执行后端全量单元测试与竞态检测..."
 	@$(MAKE) test-race
 	@echo "==> 质量检测全部通过！"
 
@@ -50,6 +55,7 @@ run: build
 	@./$(BINARY_NAME)
 
 clean:
-	@echo "==> 清理构建产物..."
+	@echo "==> 清理构建产物并还原开发态静态占位页..."
 	@rm -f $(BINARY_NAME) $(BINARY_NAME).exe
-	@rm -rf web/dist server/tmp tmp
+	@rm -rf web/dist server/tmp tmp server/internal/static/dist/assets
+	@cp server/internal/static/dev_placeholder.html server/internal/static/dist/index.html

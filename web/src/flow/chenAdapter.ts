@@ -12,6 +12,7 @@ import type {
   Relation,
 } from '../types/dsl'
 import { getAttributeChineseName, getEntityChineseName } from '../utils/chinese'
+import { isForeignKeyColumnName } from './adapter'
 import type { ChenEntityNodeData } from '../components/chen/ChenEntityNode'
 import type { ChenRelationNodeData } from '../components/chen/ChenRelationNode'
 import type { ChenAttributeNodeData } from '../components/chen/ChenAttributeNode'
@@ -77,9 +78,7 @@ export function detectJunctionTable(
   const attributes = entity.attributes || []
 
   // 2. 识别两端外键候选字段并匹配父实体
-  const foreignKeys = attributes.filter(
-    (a) => (a.name.endsWith('_id') || a.name.endsWith('id')) && a.name.toLowerCase() !== 'id',
-  )
+  const foreignKeys = attributes.filter((a) => isForeignKeyColumnName(a.name))
 
   const matchedParents: Entity[] = []
   const matchedFkAttrIds = new Set<string>()
@@ -134,7 +133,7 @@ export function detectJunctionTable(
     // 排除已匹配的外键
     if (matchedFkAttrIds.has(a.id)) return false
     // 排除主键
-    if (a.is_primary_key && (a.name.toLowerCase() === 'id' || a.name.endsWith('_id') || a.name.endsWith('id'))) return false
+    if (a.is_primary_key && (a.name.toLowerCase() === 'id' || isForeignKeyColumnName(a.name))) return false
     if (a.name.toLowerCase() === 'id') return false
     // 排除审计技术字段
     const aLower = a.name.toLowerCase()
@@ -658,18 +657,23 @@ export function resolveChenCollisions(nodes: ChenNode[], minGap: number = 24): v
       for (let j = i + 1; j < nodes.length; j++) {
         const nodeB = nodes[j]
         const boundsB = getNodeBounds(nodeB)
+        const nAIsAttr = nodeA.type === 'chenAttribute'
+        const nBIsAttr = nodeB.type === 'chenAttribute'
+
+        const attrEntityIdA = nAIsAttr ? (nodeA.data as ChenAttributeNodeData).entityId : undefined
+        const attrEntityIdB = nBIsAttr ? (nodeB.data as ChenAttributeNodeData).entityId : undefined
 
         // 若为同属一个实体的兄弟属性，天然保留水平排布间距，要求 gap 为 8px 即可
         const isSiblingAttrs =
           boundsA.isAttribute &&
           boundsB.isAttribute &&
-          Boolean((nodeA.data as any)?.entityId) &&
-          (nodeA.data as any)?.entityId === (nodeB.data as any)?.entityId
+          Boolean(attrEntityIdA) &&
+          attrEntityIdA === attrEntityIdB
 
         // 实体与其自身的子属性，保留初始上下对齐间距（>= 12px 即不重叠）
         const isParentChild =
-          (boundsA.isAnchor && boundsB.isAttribute && (nodeB.data as any)?.entityId === nodeA.id) ||
-          (boundsB.isAnchor && boundsA.isAttribute && (nodeA.data as any)?.entityId === nodeB.id)
+          (boundsA.isAnchor && boundsB.isAttribute && attrEntityIdB === nodeA.id) ||
+          (boundsB.isAnchor && boundsA.isAttribute && attrEntityIdA === nodeB.id)
 
         const currentGap = isSiblingAttrs ? 8 : isParentChild ? 12 : minGap
 
@@ -906,7 +910,8 @@ export function toChenFlowElements(
     processedPairKeys.add(pairKey)
 
     const diaId = `rel-${rel.id}`
-    const relCard = (rel.cardinality || (rel as any).relation_type_id || 'one_to_many') as Cardinality
+    const relCard: Cardinality =
+      rel.cardinality || (rel.relation_type_id as Cardinality | undefined) || 'one_to_many'
     const verb = getRelationshipVerb(src.name, tgt.name, relCard)
     regularDiamonds.push({
       id: diaId,
@@ -947,10 +952,7 @@ export function toChenFlowElements(
   for (const entity of normalEntities) {
     const pkAttrs = entity.attributes.filter((a) => a.is_primary_key)
     const bizAttrs = entity.attributes.filter(
-      (a) =>
-        !a.is_primary_key &&
-        !a.name.toLowerCase().endsWith('_id') &&
-        !a.name.toLowerCase().endsWith('id'),
+      (a) => !a.is_primary_key && !isForeignKeyColumnName(a.name),
     )
 
     const selectedAttrs: Attribute[] = [...pkAttrs, ...bizAttrs.slice(0, 4)]
@@ -1105,7 +1107,8 @@ export function toChenFlowElements(
   for (const reg of regularDiamonds) {
     const defaultPos = layout.relationPositions.get(reg.id) || { x: 250, y: 250 }
     const customPos = customPositions?.[reg.id]
-    const card = (reg.relation.cardinality || (reg.relation as any).relation_type_id || 'one_to_many') as Cardinality
+    const card: Cardinality =
+      reg.relation.cardinality || (reg.relation.relation_type_id as Cardinality | undefined) || 'one_to_many'
 
     nodes.push({
       id: reg.id,
@@ -1175,7 +1178,8 @@ export function toChenFlowElements(
 
   // 10. 生成常规外键关系与自引用关系的边（就近几何 Handle 对接）
   for (const reg of regularDiamonds) {
-    const card = (reg.relation.cardinality || (reg.relation as any).relation_type_id || 'one_to_many') as Cardinality
+    const card: Cardinality =
+      reg.relation.cardinality || (reg.relation.relation_type_id as Cardinality | undefined) || 'one_to_many'
     const is1to1 = card === 'one_to_one'
     const isM2M = card === 'many_to_many'
     const srcCard = isM2M ? 'M' : '1'
@@ -1289,41 +1293,21 @@ export function conceptualToChenFlowElements(
     const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
     conceptMap.set(cid, c)
     lookupMap.set(cid, c)
+    if (c.id) {
+      lookupMap.set(c.id, c)
+      lookupMap.set(c.id.toLowerCase(), c)
+    }
     lookupMap.set(c.name.toLowerCase(), c)
     if (c.display_name) {
       lookupMap.set(c.display_name.toLowerCase(), c)
     }
   }
 
-  // 2. 为每个概念精选属性并分列上下两排
   interface ConceptAttrLayout {
     topAttrs: ConceptAttribute[]
     bottomAttrs: ConceptAttribute[]
   }
   const conceptAttrMap = new Map<string, ConceptAttrLayout>()
-
-  for (const c of concepts) {
-    const cid = c.id || `concept_${c.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
-    const attrs = c.attributes || []
-
-    // 优先保留业务标识（is_business_key），再补充常规业务属性，最多 4 个
-    const keyAttrs = attrs.filter((a) => a.is_business_key)
-    const bizAttrs = attrs.filter((a) => !a.is_business_key)
-
-    const selectedAttrs: ConceptAttribute[] = [
-      ...keyAttrs,
-      ...bizAttrs.slice(0, Math.max(0, 4 - keyAttrs.length)),
-    ]
-    if (selectedAttrs.length === 0 && attrs.length > 0) {
-      selectedAttrs.push(attrs[0])
-    }
-
-    const topCount = Math.ceil(selectedAttrs.length / 2)
-    conceptAttrMap.set(cid, {
-      topAttrs: selectedAttrs.slice(0, topCount),
-      bottomAttrs: selectedAttrs.slice(topCount),
-    })
-  }
 
   // 3. 解析概念关联关系
   interface ResolvedRelation {
@@ -1705,6 +1689,41 @@ export function conceptualToChenFlowElements(
   return { nodes, edges }
 }
 
+export type ChenBackingMode = 'conceptual' | 'physical'
+
+/**
+ * 判定当前陈氏概念视图实际承载与编辑的数据源：
+ * - 'conceptual': 直接消费并编辑 Layer 1 业务概念模型 (`conceptualDesign`)
+ * - 'physical': 反向投影并同步编辑物理表模型 (`design`)
+ */
+export function getChenBackingMode(params: {
+  conceptualDesign?: ConceptualDesign
+  design?: ERDesign
+  agentPhase?: string
+}): ChenBackingMode {
+  const hasConcepts = Boolean(
+    params.conceptualDesign &&
+      Array.isArray(params.conceptualDesign.concepts) &&
+      params.conceptualDesign.concepts.length > 0,
+  )
+  const hasEntities = Boolean(
+    params.design && Array.isArray(params.design.entities) && params.design.entities.length > 0,
+  )
+
+  if (
+    hasConcepts &&
+    (params.agentPhase === 'concept_ready' || params.agentPhase === 'deriving_physical' || !hasEntities)
+  ) {
+    return 'conceptual'
+  }
+
+  if (hasEntities) {
+    return 'physical'
+  }
+
+  return 'conceptual'
+}
+
 /**
  * 统一陈氏图渲染适配器：优先零损失消费原生业务概念模型，降级适配物理表
  */
@@ -1715,33 +1734,19 @@ export function renderChenFlowElements(params: {
   selectedId?: string | null
   customPositions?: Record<string, Position>
 }): { nodes: ChenNode[]; edges: ChenEdgeType[] } {
-  const { conceptualDesign, design, agentPhase, selectedId, customPositions } = params
+  const { conceptualDesign, design, selectedId, customPositions } = params
+  const mode = getChenBackingMode(params)
 
-  const hasConcepts = Boolean(
-    conceptualDesign &&
-      Array.isArray(conceptualDesign.concepts) &&
-      conceptualDesign.concepts.length > 0,
-  )
-  const hasEntities = Boolean(
-    design && Array.isArray(design.entities) && design.entities.length > 0,
-  )
-
-  // 1. 若处于概念设计阶段，或有概念模型且无物理表，直接消费概念模型
-  if (
-    hasConcepts &&
-    (agentPhase === 'concept_ready' || agentPhase === 'deriving_physical' || !hasEntities)
-  ) {
-    return conceptualToChenFlowElements(conceptualDesign!, selectedId, customPositions)
+  if (mode === 'conceptual' && conceptualDesign && conceptualDesign.concepts?.length > 0) {
+    return conceptualToChenFlowElements(conceptualDesign, selectedId, customPositions)
   }
 
-  // 2. 若存在物理表设计，反向推导陈氏图
-  if (hasEntities && design) {
+  if (mode === 'physical' && design && design.entities?.length > 0) {
     return toChenFlowElements(design, selectedId, customPositions)
   }
 
-  // 3. 兜底
-  if (hasConcepts) {
-    return conceptualToChenFlowElements(conceptualDesign!, selectedId, customPositions)
+  if (conceptualDesign && conceptualDesign.concepts?.length > 0) {
+    return conceptualToChenFlowElements(conceptualDesign, selectedId, customPositions)
   }
 
   return { nodes: [], edges: [] }

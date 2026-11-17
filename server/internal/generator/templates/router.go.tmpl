@@ -18,7 +18,7 @@ func SetupRouter(handlers Handlers) *gin.Engine {
 	api := r.Group("/api/v1")
 	{
 		{{- range .Entities }}
-		{{ .VarName }}Group := api.Group("/{{ .TableName }}")
+		{{ .VarName }}Group := api.Group("/{{ .RoutePath }}")
 		{
 			{{ .VarName }}Group.POST("", handlers.{{ .StructName }}.Create)
 			{{ .VarName }}Group.GET("/:id", handlers.{{ .StructName }}.GetDetail)

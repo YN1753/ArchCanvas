@@ -74,7 +74,7 @@ export default function ModelSelector({
   const [detectedModels, setDetectedModels] = useState<string[]>([])
   const [isManualInput, setIsManualInput] = useState(false)
 
-  // 点击外部收起浮层
+  // 点击外部或按 Escape 收起浮层
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
@@ -85,11 +85,19 @@ export default function ModelSelector({
         setIsManualInput(false)
       }
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false)
+        setView('list')
+      }
+    }
     if (open) {
       document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleKeyDown)
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
     }
   }, [open])
 
@@ -154,8 +162,11 @@ export default function ModelSelector({
       } else {
         setStatusMsg({ type: 'error', text: '未能从该服务地址解析到可用模型' })
       }
-    } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err?.message || '探测失败，请检查地址或密钥' })
+    } catch (err: unknown) {
+      setStatusMsg({
+        type: 'error',
+        text: err instanceof Error ? err.message : '探测失败，请检查地址或密钥',
+      })
     } finally {
       setDetecting(false)
     }
@@ -193,8 +204,11 @@ export default function ModelSelector({
         setOpen(false)
         setView('list')
       }
-    } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err?.message || '保存失败' })
+    } catch (err: unknown) {
+      setStatusMsg({
+        type: 'error',
+        text: err instanceof Error ? err.message : '保存失败',
+      })
     } finally {
       setSaving(false)
     }

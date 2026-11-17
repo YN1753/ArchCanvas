@@ -6,6 +6,9 @@ import {
   detectJunctionTable,
 } from './chenAdapter'
 import type { ERDesign, ConceptualDesign, Entity } from '../types/dsl'
+import type { ChenEntityNodeData } from '../components/chen/ChenEntityNode'
+import type { ChenRelationNodeData } from '../components/chen/ChenRelationNode'
+import type { ChenAttributeNodeData } from '../components/chen/ChenAttributeNode'
 
 function testGetSelfLoopPath() {
   // 1. 测试横向排版（默认 Dagre LR 布局：Entity 在左，Diamond 在右）
@@ -21,8 +24,10 @@ function testGetSelfLoopPath() {
   assert.ok(bly - tly > 80, `顶部与底部弧线之间净空充足 (当前间距: ${bly - tly}px)`)
 
   // 2. 测试纵向排版（上下分流）
-  const [leftPath, llx, lly] = getSelfLoopPath(200, 200, 200, 450, 'top')
-  const [rightPath, rlx, rly] = getSelfLoopPath(200, 450, 200, 200, 'bottom')
+  const [leftPath, llx] = getSelfLoopPath(200, 200, 200, 450, 'top')
+  const [rightPath, rlx] = getSelfLoopPath(200, 450, 200, 200, 'bottom')
+  assert.ok(leftPath.startsWith('M 200 200 C'), '纵向左弧线起点正确')
+  assert.ok(rightPath.startsWith('M 200 450 C'), '纵向右弧线起点正确')
   assert.ok(llx < 200, '纵向顶部弧线向左分流')
   assert.ok(rlx > 200, '纵向底部弧线向右分流')
   assert.ok(rlx - llx > 60, '纵向分流净空充足')
@@ -65,8 +70,9 @@ function testToChenFlowElementsSelfRelation() {
   const relationNode = nodes.find((n) => n.id === 'rel-rel_dept_parent')
   assert.ok(relationNode, '自引用菱形联系节点存在且未被硬过滤')
   assert.equal(relationNode.type, 'chenRelation')
-  assert.equal((relationNode.data as any).name, '层级包含', '推导出自引用层级联系动词')
-  assert.equal((relationNode.data as any).cardinality, 'one_to_many')
+  const relData = relationNode.data as ChenRelationNodeData
+  assert.equal(relData.name, '层级包含', '推导出自引用层级联系动词')
+  assert.equal(relData.cardinality, 'one_to_many')
 
   // 3. 验证生成了双向回折的自环边
   const selfEdges = edges.filter((e) => e.data?.isSelfLoop)
@@ -90,17 +96,16 @@ function testToChenFlowElementsSelfRelation() {
 
 function testConceptualToChenFlowElementsSelfRelation() {
   const conceptualDesign: ConceptualDesign = {
-    domain_name: '组织架构',
+    summary: '组织架构',
     concepts: [
       {
         id: 'concept_dept',
         name: 'Department',
         display_name: '部门',
         description: '组织架构部门',
-        business_rules: [],
         attributes: [
-          { name: 'id', category: 'identifier', is_business_key: true, required: true, is_unique: true, description: '部门主键' },
-          { name: 'name', category: 'descriptive', is_business_key: false, required: true, is_unique: false, description: '部门名称' },
+          { name: 'id', category: 'string', is_business_key: true, required: true, is_unique: true, description: '部门主键' },
+          { name: 'name', category: 'string', is_business_key: false, required: true, is_unique: false, description: '部门名称' },
         ],
       },
     ],
@@ -124,7 +129,7 @@ function testConceptualToChenFlowElementsSelfRelation() {
   // 2. 验证概念自引用菱形联系节点被生成
   const relationNode = nodes.find((n) => n.id === 'rel-rel_concept_self')
   assert.ok(relationNode, '概念自引用菱形节点存在')
-  assert.equal((relationNode.data as any).name, '层级包含')
+  assert.equal((relationNode.data as ChenRelationNodeData).name, '层级包含')
 
   // 3. 验证生成双弧自环边
   const selfEdges = edges.filter((e) => e.data?.isSelfLoop)
@@ -381,7 +386,9 @@ function testChen2DCompactLayout() {
   assert.equal(edgeRelUToUser.targetHandle, 'left-target', '水平关系宿端从左侧入')
 
   // 5. 验证外侧属性吸附（用户属性在正上方，不遮挡下方去往各表的连线）
-  const userAttrNodes = nodes.filter((n) => n.type === 'chenAttribute' && (n.data as any).entityId === 'ent_user')
+  const userAttrNodes = nodes.filter(
+    (n) => n.type === 'chenAttribute' && (n.data as ChenAttributeNodeData).entityId === 'ent_user',
+  )
   assert.ok(userAttrNodes.length > 0, '用户属性存在')
   for (const an of userAttrNodes) {
     assert.ok(an.position.y < userNode.position.y, '用户属性全部整齐排布在用户实体正上方')
@@ -455,7 +462,7 @@ function testChenZeroOverlapForMultiEntities() {
       { id: 'rel_d_u', source_entity_id: 'ent_dept', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
       { id: 'rel_u_r', source_entity_id: 'ent_user', target_entity_id: 'ent_role', cardinality: 'many_to_many' },
       { id: 'rel_r_p', source_entity_id: 'ent_role', target_entity_id: 'ent_perm', cardinality: 'many_to_many' },
-      { id: 'rel_u_pos', source_entity_id: 'ent_user', target_entity_id: 'ent_pos', cardinality: 'many_to_one' },
+      { id: 'rel_u_pos', source_entity_id: 'ent_pos', target_entity_id: 'ent_user', cardinality: 'one_to_many' },
     ],
   }
 
@@ -503,12 +510,12 @@ function testChenZeroOverlapForMultiEntities() {
   // 验证实体中文概念名称规范性：严禁出现「tenant概念」等假后缀，必须为干净标准中文名词
   const tenantNode = nodes.find((n) => n.id === 'ent_tenant')
   const posNode = nodes.find((n) => n.id === 'ent_pos')
-  assert.equal((tenantNode?.data as any)?.displayName, '租户', 'tenant 对应中文概念名为「租户」而非「tenant概念」')
-  assert.equal((posNode?.data as any)?.displayName, '岗位', 'position 对应中文概念名为「岗位」而非「position概念」')
+  assert.equal((tenantNode?.data as ChenEntityNodeData | undefined)?.displayName, '租户', 'tenant 对应中文概念名为「租户」而非「tenant概念」')
+  assert.equal((posNode?.data as ChenEntityNodeData | undefined)?.displayName, '岗位', 'position 对应中文概念名为「岗位」而非「position概念」')
 
   for (const n of nodes) {
     if (n.type === 'chenEntity') {
-      const dn = (n.data as any)?.displayName || ''
+      const dn = (n.data as ChenEntityNodeData).displayName || ''
       assert.ok(!dn.endsWith('概念'), `实体名称「${dn}」严禁出现「概念」假后缀`)
     }
   }
@@ -519,14 +526,14 @@ function testChenZeroOverlapForMultiEntities() {
 
 function testConceptualAutoLayoutStabilityAndZeroDrift() {
   const conceptualDesign: ConceptualDesign = {
-    domain_name: '企业组织架构',
+    summary: '企业组织架构',
     concepts: [
-      { id: 'tenant', name: 'Tenant', display_name: '租户', description: '企业租户', attributes: [{ id: 't_id', name: 'id', is_business_key: true, required: true }] },
-      { id: 'user', name: 'User', display_name: '用户', description: '企业用户', attributes: [{ id: 'u_id', name: 'id', is_business_key: true, required: true }] },
-      { id: 'dept', name: 'Department', display_name: '部门', description: '组织部门', attributes: [{ id: 'd_id', name: 'id', is_business_key: true, required: true }] },
-      { id: 'role', name: 'Role', display_name: '角色', description: '系统角色', attributes: [{ id: 'r_id', name: 'id', is_business_key: true, required: true }] },
-      { id: 'perm', name: 'Permission', display_name: '权限', description: '操作权限', attributes: [{ id: 'p_id', name: 'id', is_business_key: true, required: true }] },
-      { id: 'pos', name: 'Position', display_name: '岗位', description: '工作岗位', attributes: [{ id: 'pos_id', name: 'id', is_business_key: true, required: true }] },
+      { id: 'tenant', name: 'Tenant', display_name: '租户', description: '企业租户', attributes: [{ id: 't_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
+      { id: 'user', name: 'User', display_name: '用户', description: '企业用户', attributes: [{ id: 'u_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
+      { id: 'dept', name: 'Department', display_name: '部门', description: '组织部门', attributes: [{ id: 'd_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
+      { id: 'role', name: 'Role', display_name: '角色', description: '系统角色', attributes: [{ id: 'r_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
+      { id: 'perm', name: 'Permission', display_name: '权限', description: '操作权限', attributes: [{ id: 'p_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
+      { id: 'pos', name: 'Position', display_name: '岗位', description: '工作岗位', attributes: [{ id: 'pos_id', name: 'id', category: 'string', is_business_key: true, required: true }] },
       // 包含一个可能因误点击落在极值负坐标的孤立概念
       { id: 'rogue', name: 'RogueConcept', display_name: '新概念', description: '测试', position: { x: -620, y: -1880 }, attributes: [] },
     ],
@@ -547,11 +554,14 @@ function testConceptualAutoLayoutStabilityAndZeroDrift() {
 
   for (let i = 0; i < 5; i++) {
     const { nodes } = conceptualToChenFlowElements(conceptualDesign, undefined, {})
-    const currentCoords = new Map(nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]))
+    const currentCoords: Map<string, { x: number; y: number }> = new Map(
+      nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
+    )
 
-    if (prevCoords) {
+    if (prevCoords !== null) {
+      const snapshot = prevCoords
       for (const [id, coord] of currentCoords.entries()) {
-        const prev = prevCoords.get(id)!
+        const prev = snapshot.get(id)!
         assert.equal(
           coord.x,
           prev.x,

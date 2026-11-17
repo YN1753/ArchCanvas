@@ -1,0 +1,34 @@
+# ArchCanvas 服务与大模型端点配置模板
+# 首次运行服务若不存在 configs/config.yaml，系统会自动生成默认配置；
+# 也可将本文件复制为 config.yaml 按需调整。
+
+server:
+  # 默认仅绑定本机回环地址；如需局域网/容器暴露请改为 0.0.0.0 并配置 ARCHCANVAS_AUTH_TOKEN
+  host: 127.0.0.1
+  port: 8080
+
+database:
+  path: ./data/archcanvas.db
+
+agent:
+  default_model_provider: deepseek
+  models:
+    deepseek:
+      provider: deepseek
+      base_url: https://api.deepseek.com/v1
+      # 引用 configs/.env 或系统环境变量名，切勿将真实密钥提交至版本库
+      api_key: DEEPSEEK_API_KEY
+      model: deepseek-chat
+      timeout_second: 120
+    openai:
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: OPENAI_API_KEY
+      model: gpt-4o-mini
+      timeout_second: 120
+    ollama:
+      provider: ollama
+      base_url: http://127.0.0.1:11434/v1
+      api_key: ""
+      model: qwen2.5-coder:7b
+      timeout_second: 180

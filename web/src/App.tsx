@@ -14,6 +14,7 @@ const SchemaReviewDrawer = lazy(() => import('./components/SchemaReviewDrawer'))
 
 export default function App() {
   const bootstrap = useStore((state) => state.bootstrap)
+  const retryBootstrap = useStore((state) => state.retryBootstrap)
   const ready = useStore((state) => state.ready)
   const bootError = useStore((state) => state.bootError)
   const dataDialogOpen = useStore((state) => state.dataDialogOpen)
@@ -27,6 +28,8 @@ export default function App() {
     void bootstrap()
   }, [bootstrap])
 
+  const hasModalOpen = dataDialogOpen || scaffoldDialogOpen || reviewDrawerOpen
+
   // 全局快捷键：⌘/Ctrl + S (保存)、⌘/Ctrl + L (切换AI侧栏)、⌘/Ctrl + Z (撤销)、⇧⌘Z (重做)
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -37,6 +40,11 @@ export default function App() {
       if (isMod && key === 's') {
         event.preventDefault()
         void useStore.getState().saveNow()
+        return
+      }
+
+      // 模态框/抽屉打开时暂停画布级快捷键，避免误撤销底层画布
+      if (hasModalOpen || document.querySelector('[role="dialog"]')) {
         return
       }
 
@@ -76,11 +84,15 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [hasModalOpen])
 
   if (!ready) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 bg-[#faf7f0] text-[#1f1f1f]">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-full flex-col items-center justify-center gap-3 bg-[#faf7f0] text-[#1f1f1f]"
+      >
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#df4e3e] text-white border-[1.5px] border-[#1f1f1f] text-sm font-bold shadow-[2px_2px_0px_#1f1f1f] animate-pulse">
           AC
         </div>
@@ -91,10 +103,13 @@ export default function App() {
 
   if (bootError) {
     return (
-      <div className="grid h-full place-items-center bg-[#faf7f0] p-8">
-        <div className="max-w-lg rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-6 shadow-[4px_4px_0px_#1f1f1f]">
+      <main className="grid h-full place-items-center bg-[#faf7f0] p-8">
+        <div
+          role="alert"
+          className="max-w-lg rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-6 shadow-[4px_4px_0px_#1f1f1f]"
+        >
           <div className="flex items-center gap-2 text-[#df4e3e] font-bold text-sm">
-            <svg className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
             <span>服务连接失败</span>
@@ -103,11 +118,23 @@ export default function App() {
             {bootError}
           </p>
           <p className="mt-3.5 text-xs leading-relaxed text-stone-600">
-            请确认后端服务已启动：<code className="ident text-[#df4e3e] bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.5 rounded font-bold">cd server && go run ./cmd/server</code>
+            请确认后端服务已启动：
+            <code className="ident text-[#df4e3e] bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.5 rounded font-bold">
+              cd server && go run ./cmd/server
+            </code>
             （默认监听 127.0.0.1:8080）。
           </p>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void retryBootstrap()}
+              className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-4 py-2 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer"
+            >
+              重新连接服务
+            </button>
+          </div>
         </div>
-      </div>
+      </main>
     )
   }
 
@@ -123,10 +150,10 @@ export default function App() {
           {/* 左侧 AI 架构师侧栏 (可随时一键展开/折叠，支持快捷键 ⌘L) */}
           <AiSidebar />
 
-          {/* 中间全尺寸画布 */}
-          <div className="relative min-w-0 flex-1 h-full">
+          {/* 中间全尺寸主画布 */}
+          <main className="relative min-w-0 flex-1 h-full">
             <Canvas />
-          </div>
+          </main>
 
           {/* 右侧属性检查器与 DDL 预览面板 */}
           <Inspector />

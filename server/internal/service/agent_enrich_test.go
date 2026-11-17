@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"archcanvas/internal/domain"
-	"archcanvas/request"
+	"archcanvas/internal/dto"
 )
 
 func TestEnrichSemanticsRuleBased(t *testing.T) {
@@ -40,7 +40,7 @@ func TestEnrichSemanticsRuleBased(t *testing.T) {
 		},
 	}
 
-	result, err := agentSvc.EnrichSemantics(context.Background(), request.EnrichSemanticsReq{
+	result, err := agentSvc.EnrichSemantics(context.Background(), dto.EnrichSemanticsReq{
 		Design: &design,
 	})
 	if err != nil {

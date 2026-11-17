@@ -13,9 +13,11 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil) // 显式禁用默认全信任反向代理，防范客户端 IP 伪造
 	r.Use(middleware.TraceMiddleware())
-	r.Use(gin.Logger())
+	r.Use(middleware.RequestLogger())
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS())
+	r.Use(middleware.MaxBodyBytes(middleware.DefaultMaxBodyBytes))
+	r.Use(middleware.OptionalTokenAuth())
 
 	// 根路径健康探针（适配容器与反向代理探活）
 	r.GET("/healthz", handlers.Health.Check)
@@ -27,6 +29,9 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	models := route.Group("models")
 	{
 		models.GET("list", handlers.Project.GetModels)
+		// 支持通过 POST JSON Body 安全传递探测所需的 base_url 与 api_key，避免密钥出现在 URL Query 中
+		models.POST("list", handlers.Project.ProbeModels)
+		models.POST("probe", handlers.Project.ProbeModels)
 		// 保存模型配置并持久化至 config.yaml 与 .env
 		models.POST("save", handlers.Project.SaveModel)
 	}

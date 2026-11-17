@@ -1,4 +1,4 @@
-package request
+package dto
 
 import "archcanvas/internal/domain"
 
@@ -12,9 +12,9 @@ type DeleteProjectReq struct {
 }
 
 type UpdateProjectReq struct {
-	ProjectID   string `json:"project_id" binding:"required"`
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	ProjectID   string  `json:"project_id" binding:"required"`
+	Name        string  `json:"name" binding:"required"`
+	Description *string `json:"description"`
 }
 
 type GetProjectReq struct {

@@ -7,6 +7,7 @@ import type { ProjectSlice, Store } from '../types'
 import { errorMessage, loadChenPositions } from '../utils'
 
 let isBootstrapping = false
+let projectSwitchSeq = 0
 
 export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (set, get) => ({
   ready: false,
@@ -65,7 +66,6 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
 
   selectModel(provider: string, model: string, base_url?: string) {
     set({ selectedModel: { provider, model, base_url } })
-    // 切换模型时同步持久化到服务端的 config.yaml，保持与 CC-Switch 一致的配置写入
     const targetBaseURL =
       base_url ||
       get().providers.find((p) => p.name === provider)?.base_url ||
@@ -123,10 +123,11 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
   },
 
   async bootstrap() {
-    if (isBootstrapping || get().ready) {
+    if (isBootstrapping || (get().ready && !get().bootError)) {
       return
     }
     isBootstrapping = true
+    const seq = ++projectSwitchSeq
     try {
       void get().fetchModels()
       let projects = await api.listProjects()
@@ -135,8 +136,12 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
         projects = await api.listProjects()
       }
       const project = projects[0]
-      const detail = await api.getProject(project.id)
-      const design = await api.getERDesign(project.id)
+      const [detail, design] = await Promise.all([
+        api.getProject(project.id),
+        api.getERDesign(project.id),
+      ])
+      if (seq !== projectSwitchSeq) return
+
       const conceptualDesign =
         detail.conceptual_design && detail.conceptual_design.concepts && detail.conceptual_design.concepts.length > 0
           ? detail.conceptual_design
@@ -159,18 +164,26 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       get().recompute(ensureLayout(design))
       void get().fetchProjectMessages(project.id)
     } catch (error) {
-      set({ ready: true, bootError: errorMessage(error) })
+      if (seq === projectSwitchSeq) {
+        set({ ready: true, bootError: errorMessage(error) })
+      }
     } finally {
       isBootstrapping = false
     }
   },
 
+  async retryBootstrap() {
+    set({ ready: false, bootError: null })
+    await get().bootstrap()
+  },
+
   async selectProject(id) {
     if (get().project?.id === id) return
+    const seq = ++projectSwitchSeq
     if (get().aiRunning) {
       get().stopAI()
     }
-    // 1. 切换前先尝试将当前项目未落库的防抖变更立即保存
+    // 1. 切换前先等待当前项目未落库的防抖/在途变更完整刷盘
     if (get().project) {
       try {
         await get().saveNow()
@@ -178,9 +191,12 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
         console.warn('切换项目前自动保存失败:', err)
       }
     }
+    if (seq !== projectSwitchSeq) return
 
     try {
       const [detail, design] = await Promise.all([api.getProject(id), api.getERDesign(id)])
+      if (seq !== projectSwitchSeq) return
+
       const conceptualDesign =
         detail.conceptual_design && detail.conceptual_design.concepts && detail.conceptual_design.concepts.length > 0
           ? detail.conceptual_design
@@ -207,12 +223,18 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       get().recompute(ensureLayout(design))
       void get().fetchProjectMessages(id)
     } catch (error) {
-      set({ toast: { kind: 'error', text: errorMessage(error) } })
+      if (seq === projectSwitchSeq) {
+        set({ toast: { kind: 'error', text: errorMessage(error) } })
+      }
     }
   },
 
   async createProject(name, description = '') {
-    // 1. 创建新项目前先尝试将当前项目未落库的变更立即保存
+    const seq = ++projectSwitchSeq
+    if (get().aiRunning) {
+      get().stopAI()
+    }
+    // 1. 创建新项目前先将当前项目未落库的变更完整保存
     if (get().project) {
       try {
         await get().saveNow()
@@ -220,10 +242,13 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
         console.warn('新建项目前自动保存失败:', err)
       }
     }
+    if (seq !== projectSwitchSeq) return
 
     try {
       const project = await api.createProject(name, description)
       const projects = await api.listProjects()
+      if (seq !== projectSwitchSeq) return
+
       get().resetHistory()
       set({
         projects,
@@ -244,12 +269,13 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       get().recompute({ entities: [], relations: [] })
       set({ toast: { kind: 'info', text: `已成功创建项目「${name}」` } })
     } catch (error) {
-      set({ toast: { kind: 'error', text: errorMessage(error) } })
+      if (seq === projectSwitchSeq) {
+        set({ toast: { kind: 'error', text: errorMessage(error) } })
+      }
     }
   },
 
   async deleteProject(id) {
-    // 若当前正在删除活动项目，立即清理其历史与防抖定时器，防止已删除项目异步回写
     if (get().project?.id === id) {
       if (get().aiRunning) {
         get().stopAI()
@@ -278,15 +304,16 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
     }
   },
 
-  async updateProject(id, name, description = '') {
+  async updateProject(id, name, description) {
     try {
       const updated = await api.updateProject(id, name, description)
-      const projects = get().projects.map((p) => (p.id === id ? updated : p))
-      set({ projects })
-      if (get().project?.id === id) {
-        set({ project: updated })
-      }
-      set({ toast: { kind: 'info', text: `项目已更名为「${name}」` } })
+      const projects = get().projects.map((p) => (p.id === id ? { ...p, ...updated } : p))
+      const current = get().project
+      set({
+        projects,
+        project: current?.id === id ? { ...current, ...updated } : current,
+        toast: { kind: 'info', text: `项目已更名为「${name}」` },
+      })
     } catch (error) {
       set({ toast: { kind: 'error', text: `更新项目失败: ${errorMessage(error)}` } })
     }

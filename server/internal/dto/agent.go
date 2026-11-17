@@ -1,4 +1,4 @@
-package request
+package dto
 
 import "archcanvas/internal/domain"
 

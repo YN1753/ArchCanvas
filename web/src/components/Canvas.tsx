@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -7,13 +7,18 @@ import {
   ReactFlow,
   applyNodeChanges,
   useReactFlow,
+  type Edge,
   type EdgeChange,
+  type Node,
   type NodeChange,
   type OnConnect,
 } from '@xyflow/react'
 
 import { toFlowEdges, toFlowNodes } from '../flow/adapter'
-import { renderChenFlowElements } from '../flow/chenAdapter'
+import { getChenBackingMode, renderChenFlowElements } from '../flow/chenAdapter'
+import type { ChenAttributeNodeData } from './chen/ChenAttributeNode'
+import type { ChenEntityNodeData } from './chen/ChenEntityNode'
+import type { ChenRelationNodeData } from './chen/ChenRelationNode'
 import { useStore } from '../store/erStore'
 import RelationEdgeView from './RelationEdge'
 import TableNodeView from './TableNode'
@@ -43,6 +48,7 @@ export default function Canvas() {
   const select = useStore((state) => state.select)
   const moveEntities = useStore((state) => state.moveEntities)
   const deleteEntity = useStore((state) => state.deleteEntity)
+  const deleteAttribute = useStore((state) => state.deleteAttribute)
   const deleteRelation = useStore((state) => state.deleteRelation)
   const addRelation = useStore((state) => state.addRelation)
   const addEntity = useStore((state) => state.addEntity)
@@ -63,24 +69,80 @@ export default function Canvas() {
   const addConceptRelation = useStore((state) => state.addConceptRelation)
   const deleteConceptRelation = useStore((state) => state.deleteConceptRelation)
   const deleteConceptAttribute = useStore((state) => state.deleteConceptAttribute)
+  const dataDialogOpen = useStore((state) => state.dataDialogOpen)
+  const reviewDrawerOpen = useStore((state) => state.reviewDrawerOpen)
 
-  const [nodes, setNodes] = useState<any[]>([])
-  const [edges, setEdges] = useState<any[]>([])
+  const [nodes, setNodes] = useState<Node[]>([])
+  const [edges, setEdges] = useState<Edge[]>([])
   const [copied, setCopied] = useState(false)
   const [zoomLevel, setZoomLevel] = useState(100)
   const [toolMode, setToolMode] = useState<'select' | 'pan'>('select')
-  const [isSpacePressed, setIsSpacePressed] = useState(false)
   const initialFittedKeyRef = useRef<string | null>(null)
+  const chenLayoutCacheRef = useRef<{
+    topologyKey: string
+    positions: Record<string, { x: number; y: number }>
+  } | null>(null)
 
   const { fitView, screenToFlowPosition, zoomIn, zoomOut } = useReactFlow()
 
   const selectedEntityID = selection?.kind === 'entity' ? selection.id : null
   const selectedRelationID = selection?.kind === 'relation' ? selection.id : null
+  const selectedAnyID = selectedEntityID ?? selectedRelationID
+
+  const chenBackingMode = useMemo(
+    () => getChenBackingMode({ conceptualDesign, design, agentPhase }),
+    [conceptualDesign, design, agentPhase],
+  )
 
   const isCanvasEmpty =
     canvasViewMode === 'chen'
       ? (conceptualDesign?.concepts?.length ?? 0) === 0 && design.entities.length === 0
       : design.entities.length === 0
+
+  // 拓扑结构签名：仅当节点/关系/关键属性数量或手动坐标发生变化时重算 O(N^2) 碰撞布局；文案/注释变更复用已解算坐标
+  const chenTopologyKey = useMemo(() => {
+    if (canvasViewMode !== 'chen') return ''
+    if (chenBackingMode === 'conceptual') {
+      const cSig = (conceptualDesign?.concepts ?? [])
+        .map(
+          (c) =>
+            `${c.id ?? c.name}:${c.name}:${c.position ? `${c.position.x},${c.position.y}` : ''}:${(c.attributes ?? [])
+              .map((a) => `${a.id ?? a.name}:${a.is_business_key ? 1 : 0}`)
+              .join(',')}`,
+        )
+        .join('|')
+      const rSig = (conceptualDesign?.relations ?? [])
+        .map(
+          (r) =>
+            `${r.id ?? ''}:${r.source_concept}->${r.target_concept}:${r.cardinality}:${r.position ? `${r.position.x},${r.position.y}` : ''}`,
+        )
+        .join('|')
+      return `c@@${cSig}@@${rSig}@@${JSON.stringify(chenPositions)}`
+    }
+    const eSig = design.entities
+      .map(
+        (e) =>
+          `${e.id}:${e.name}:${String(e.is_junction_table)}:${e.attributes
+            .map((a) => `${a.id}:${a.name}:${a.is_primary_key ? 1 : 0}`)
+            .join(',')}`,
+      )
+      .join('|')
+    const rSig = design.relations
+      .map((r) => `${r.id}:${r.source_entity_id}->${r.target_entity_id}:${r.cardinality}`)
+      .join('|')
+    return `p@@${eSig}@@${rSig}@@${JSON.stringify(chenPositions)}`
+  }, [canvasViewMode, chenBackingMode, conceptualDesign, design, chenPositions])
+
+  const createCanvasEntity = (pos?: { x: number; y: number }) => {
+    if (canvasViewMode === 'chen' && chenBackingMode === 'conceptual') {
+      addConcept(pos)
+      return
+    }
+    const newEntityId = addEntity(pos)
+    if (canvasViewMode === 'chen' && pos) {
+      updateChenPositions([{ id: newEntityId, position: pos }])
+    }
+  }
 
   // 当 AI 侧栏点击实体标签或手动触发 focusEntity 时，镜头平滑飞至目标表
   useEffect(() => {
@@ -93,68 +155,103 @@ export default function Canvas() {
     })
   }, [focusedEntityId, fitView])
 
-  // 空格键临时抓手平移支持 (Figma / Whiteboard 标准交互)
+  // 1. 数据模型或拓扑变化时更新节点与连线（不包含仅选中态变更，避免点击节点重跑 50 轮碰撞求解）
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        const target = e.target as HTMLElement | null
-        if (target) {
-          const tag = target.tagName.toLowerCase()
-          if (tag === 'input' || tag === 'textarea' || target.isContentEditable) {
-            return
-          }
-        }
-        e.preventDefault()
-        setIsSpacePressed(true)
-      }
-    }
+    const activeSel = useStore.getState().selection
+    const selEntId = activeSel?.kind === 'entity' ? activeSel.id : null
+    const selRelId = activeSel?.kind === 'relation' ? activeSel.id : null
+    const selId = selEntId ?? selRelId
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        setIsSpacePressed(false)
-      }
-    }
-
-    const handleBlur = () => {
-      setIsSpacePressed(false)
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    window.addEventListener('blur', handleBlur)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-      window.removeEventListener('blur', handleBlur)
-    }
-  }, [])
-
-  useEffect(() => {
     if (canvasViewMode === 'chen') {
+      const cached = chenLayoutCacheRef.current
+      const effectiveCustomPositions =
+        cached && cached.topologyKey === chenTopologyKey
+          ? { ...cached.positions, ...chenPositions }
+          : chenPositions
+
       const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
         conceptualDesign,
         design,
         agentPhase,
-        selectedId: selectedEntityID ?? selectedRelationID,
-        customPositions: chenPositions,
+        selectedId: selId,
+        customPositions: effectiveCustomPositions,
       })
+
+      if (!cached || cached.topologyKey !== chenTopologyKey) {
+        const solvedPos: Record<string, { x: number; y: number }> = {}
+        for (const n of chenNodes) {
+          solvedPos[n.id] = { x: n.position.x, y: n.position.y }
+        }
+        chenLayoutCacheRef.current = {
+          topologyKey: chenTopologyKey,
+          positions: solvedPos,
+        }
+      }
+
       setNodes(chenNodes)
       setEdges(chenEdges)
     } else {
-      setNodes(toFlowNodes(design, selectedEntityID))
-      setEdges(toFlowEdges(design, selectedRelationID))
+      setNodes(toFlowNodes(design, selEntId))
+      setEdges(toFlowEdges(design, selRelId))
     }
   }, [
     design,
     conceptualDesign,
     agentPhase,
-    selectedEntityID,
-    selectedRelationID,
     canvasViewMode,
     chenPositions,
+    chenTopologyKey,
   ])
 
-  // 页面刷新、初次挂载或切换项目/视图模式时，保留用户已保存的节点坐标并自动适屏居中；仅当物理表全处于原点无有效坐标时才自动排版
+  // 2. 纯选中态切换时仅做 O(N) 轻量布尔标记同步，零布局重算
+  useEffect(() => {
+    if (canvasViewMode === 'chen') {
+      setNodes((prev) =>
+        prev.map((n) => {
+          let nextSelected = false
+          if (n.type === 'chenEntity') {
+            const d = n.data as ChenEntityNodeData
+            nextSelected = Boolean(
+              selectedAnyID && (n.id === selectedAnyID || d.concept?.id === selectedAnyID || d.entity?.id === selectedAnyID),
+            )
+          } else if (n.type === 'chenRelation') {
+            const d = n.data as ChenRelationNodeData
+            nextSelected = Boolean(
+              selectedAnyID && (n.id === selectedAnyID || d.relationId === selectedAnyID),
+            )
+          }
+          return n.selected === nextSelected ? n : { ...n, selected: nextSelected }
+        }),
+      )
+      setEdges((prev) =>
+        prev.map((e) => {
+          const nextSelected = Boolean(
+            selectedAnyID &&
+              (e.source === `rel-${selectedAnyID}` ||
+                e.target === `rel-${selectedAnyID}` ||
+                e.source === selectedAnyID ||
+                e.target === selectedAnyID),
+          )
+          return Boolean(e.selected) === nextSelected ? e : { ...e, selected: nextSelected }
+        }),
+      )
+    } else {
+      setNodes((prev) =>
+        prev.map((n) => {
+          const nextSelected = n.id === selectedEntityID
+          return Boolean(n.selected) === nextSelected ? n : { ...n, selected: nextSelected }
+        }),
+      )
+      setEdges((prev) =>
+        prev.map((e) => {
+          const nextSelected = e.id === selectedRelationID
+          return Boolean(e.selected) === nextSelected ? e : { ...e, selected: nextSelected }
+        }),
+      )
+    }
+  }, [canvasViewMode, selectedEntityID, selectedRelationID, selectedAnyID])
+
+  // 页面刷新、初次挂载或切换项目/视图模式时，保留用户已保存的节点坐标并自动适屏居中
   useEffect(() => {
     if (!projectID) return
     const count =
@@ -176,11 +273,10 @@ export default function Canvas() {
       }
     }
 
-    // 多阶延迟适屏调度：在 60ms, 180ms, 360ms 各触发一次，确保 ReactFlow 测量 DOM 节点后 100% 成功适屏居中
     const timers = [60, 180, 360].map((delay) =>
       window.setTimeout(() => {
         void fitView({ padding: 0.18, duration: 300 })
-      }, delay)
+      }, delay),
     )
     return () => timers.forEach((t) => window.clearTimeout(t))
   }, [
@@ -192,21 +288,38 @@ export default function Canvas() {
     fitView,
   ])
 
-  const handleNodesChange = (changes: NodeChange<any>[]) => {
+  const handleNodesChange = (changes: NodeChange[]) => {
     if (canvasViewMode === 'chen') {
       for (const change of changes) {
         if (change.type === 'remove') {
-          if (change.id.startsWith('rel-')) {
-            deleteConceptRelation(change.id.slice(4))
-          } else if (change.id.startsWith('attr-')) {
-            const attrNode = nodes.find((n) => n.id === change.id)
-            const entityId = attrNode?.data?.entityId
-            const attrId = attrNode?.data?.conceptAttribute?.id || attrNode?.data?.conceptAttribute?.name
-            if (entityId && attrId) {
-              deleteConceptAttribute(entityId, attrId)
+          if (chenBackingMode === 'physical') {
+            if (change.id.startsWith('junction-')) {
+              deleteEntity(change.id.slice('junction-'.length))
+            } else if (change.id.startsWith('rel-')) {
+              deleteRelation(change.id.slice(4))
+            } else if (change.id.startsWith('attr-')) {
+              const attrNode = nodes.find((n) => n.id === change.id)
+              const attrData = attrNode?.data as ChenAttributeNodeData | undefined
+              if (attrData?.entityId && attrData?.attribute?.id) {
+                deleteAttribute(attrData.entityId, attrData.attribute.id)
+              }
+            } else {
+              deleteEntity(change.id)
             }
           } else {
-            deleteConcept(change.id)
+            if (change.id.startsWith('rel-')) {
+              deleteConceptRelation(change.id.slice(4))
+            } else if (change.id.startsWith('attr-')) {
+              const attrNode = nodes.find((n) => n.id === change.id)
+              const attrData = attrNode?.data as ChenAttributeNodeData | undefined
+              const entityId = attrData?.entityId
+              const attrId = attrData?.conceptAttribute?.id || attrData?.conceptAttribute?.name
+              if (entityId && attrId) {
+                deleteConceptAttribute(entityId, attrId)
+              }
+            } else {
+              deleteConcept(change.id)
+            }
           }
         }
       }
@@ -224,32 +337,54 @@ export default function Canvas() {
     }
   }
 
-  const handleEdgesChange = (changes: EdgeChange<any>[]) => {
+  const handleEdgesChange = (changes: EdgeChange[]) => {
     if (canvasViewMode === 'chen') {
       for (const change of changes) {
         if (change.type === 'remove') {
           const edge = edges.find((e) => e.id === change.id)
           if (edge) {
+            const juncNodeId = edge.source?.startsWith('junction-')
+              ? edge.source
+              : edge.target?.startsWith('junction-')
+                ? edge.target
+                : null
+            if (juncNodeId && chenBackingMode === 'physical') {
+              deleteEntity(juncNodeId.slice('junction-'.length))
+              continue
+            }
+
             const relNodeId = edge.source?.startsWith('rel-')
               ? edge.source
               : edge.target?.startsWith('rel-')
-              ? edge.target
-              : null
+                ? edge.target
+                : null
             if (relNodeId) {
-              deleteConceptRelation(relNodeId.slice(4))
+              if (chenBackingMode === 'physical') {
+                deleteRelation(relNodeId.slice(4))
+              } else {
+                deleteConceptRelation(relNodeId.slice(4))
+              }
               continue
             }
+
             const attrNodeId = edge.source?.startsWith('attr-')
               ? edge.source
               : edge.target?.startsWith('attr-')
-              ? edge.target
-              : null
+                ? edge.target
+                : null
             if (attrNodeId) {
               const attrNode = nodes.find((n) => n.id === attrNodeId)
-              const entityId = attrNode?.data?.entityId
-              const attrId = attrNode?.data?.conceptAttribute?.id || attrNode?.data?.conceptAttribute?.name
-              if (entityId && attrId) {
-                deleteConceptAttribute(entityId, attrId)
+              const attrData = attrNode?.data as ChenAttributeNodeData | undefined
+              if (chenBackingMode === 'physical') {
+                if (attrData?.entityId && attrData?.attribute?.id) {
+                  deleteAttribute(attrData.entityId, attrData.attribute.id)
+                }
+              } else {
+                const entityId = attrData?.entityId
+                const attrId = attrData?.conceptAttribute?.id || attrData?.conceptAttribute?.name
+                if (entityId && attrId) {
+                  deleteConceptAttribute(entityId, attrId)
+                }
               }
             }
           }
@@ -265,33 +400,37 @@ export default function Canvas() {
   }
 
   const handleConnect: OnConnect = (connection) => {
+    if (!connection.source || !connection.target) return
     if (canvasViewMode === 'chen') {
-      if (connection.source && connection.target) {
-        if (
-          !connection.source.startsWith('attr-') &&
-          !connection.target.startsWith('attr-') &&
-          !connection.source.startsWith('rel-') &&
-          !connection.target.startsWith('rel-')
-        ) {
+      if (
+        !connection.source.startsWith('attr-') &&
+        !connection.target.startsWith('attr-') &&
+        !connection.source.startsWith('rel-') &&
+        !connection.target.startsWith('rel-') &&
+        !connection.source.startsWith('junction-') &&
+        !connection.target.startsWith('junction-')
+      ) {
+        if (chenBackingMode === 'physical') {
+          addRelation(connection.source, connection.target)
+        } else {
           addConceptRelation(connection.source, connection.target)
         }
       }
       return
     }
-    if (connection.source && connection.target) {
-      addRelation(connection.source, connection.target)
-    }
+    addRelation(connection.source, connection.target)
   }
 
   const handleAutoLayout = () => {
     if (canvasViewMode === 'chen') {
+      chenLayoutCacheRef.current = null
       resetChenPositions()
-      const currentConceptual = useStore.getState().conceptualDesign
+      const currentState = useStore.getState()
       const { nodes: chenNodes, edges: chenEdges } = renderChenFlowElements({
-        conceptualDesign: currentConceptual,
-        design,
-        agentPhase,
-        selectedId: selectedEntityID ?? selectedRelationID,
+        conceptualDesign: currentState.conceptualDesign,
+        design: currentState.design,
+        agentPhase: currentState.agentPhase,
+        selectedId: selectedAnyID,
         customPositions: {},
       })
       setNodes(chenNodes)
@@ -300,7 +439,6 @@ export default function Canvas() {
       autoLayout()
     }
 
-    // 多阶延迟确保渲染与测量完毕后平滑适屏居中
     for (const delay of [60, 180, 360]) {
       window.setTimeout(() => {
         void fitView({ padding: 0.18, duration: 300 })
@@ -359,6 +497,7 @@ export default function Canvas() {
         <div className="relative min-h-0 flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed text-amber-200/90 selection:bg-[#df4e3e] selection:text-white">
           <textarea
             readOnly
+            aria-label="ER DSL JSON 源码"
             value={jsonString}
             spellCheck={false}
             className="ident h-full w-full resize-none bg-transparent outline-none select-text"
@@ -371,10 +510,12 @@ export default function Canvas() {
   // ----------------------------------------------------
   // 画布主视图（温暖图纸白板风）
   // ----------------------------------------------------
+  const isModalOverlayOpen = dataDialogOpen || reviewDrawerOpen
+
   return (
     <div
       className={`relative h-full w-full bg-[#faf7f0] ${
-        isSpacePressed || toolMode === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''
+        toolMode === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
       onDoubleClick={(event) => {
         const target = event.target as HTMLElement
@@ -389,11 +530,7 @@ export default function Canvas() {
             x: Math.round(flowPos.x / 20) * 20,
             y: Math.round(flowPos.y / 20) * 20,
           }
-          if (canvasViewMode === 'chen') {
-            addConcept(pos)
-          } else {
-            addEntity(pos)
-          }
+          createCanvasEntity(pos)
         }
       }}
     >
@@ -411,7 +548,7 @@ export default function Canvas() {
         snapToGrid={true}
         snapGrid={[20, 20]}
         elevateNodesOnSelect={true}
-        panOnDrag={toolMode === 'pan' || isSpacePressed ? true : [1]}
+        panOnDrag={toolMode === 'pan' ? true : [1]}
         panActivationKeyCode="Space"
         onNodeDragStop={(_, _node, draggedNodes) => {
           if (!draggedNodes || draggedNodes.length === 0) return
@@ -440,8 +577,8 @@ export default function Canvas() {
         onNodeClick={(_, node) => {
           if (canvasViewMode === 'chen') {
             if (node.type === 'chenRelation') {
-              const data = node.data as any
-              if (data?.isJunctionTable) {
+              const data = node.data as ChenRelationNodeData
+              if (data?.isJunctionTable && data.relationId) {
                 select({ kind: 'entity', id: data.relationId })
               } else if (data?.relationId) {
                 select({ kind: 'relation', id: data.relationId })
@@ -449,10 +586,19 @@ export default function Canvas() {
               return
             }
             if (node.type === 'chenAttribute') {
-              const data = node.data as any
+              const data = node.data as ChenAttributeNodeData
               if (data?.entityId) {
                 select({ kind: 'entity', id: data.entityId })
               }
+              return
+            }
+            if (node.type === 'chenEntity') {
+              const data = node.data as ChenEntityNodeData
+              const targetId =
+                (chenBackingMode === 'physical' ? data?.entity?.id : data?.concept?.id) ||
+                data?.conceptId ||
+                node.id
+              select({ kind: 'entity', id: targetId })
               return
             }
           }
@@ -462,6 +608,14 @@ export default function Canvas() {
         onNodeMouseLeave={() => setHoveredEntityId(null)}
         onEdgeClick={(_, edge) => {
           if (canvasViewMode === 'chen') {
+            if (edge.source?.startsWith('junction-')) {
+              select({ kind: 'entity', id: edge.source.slice('junction-'.length) })
+              return
+            }
+            if (edge.target?.startsWith('junction-')) {
+              select({ kind: 'entity', id: edge.target.slice('junction-'.length) })
+              return
+            }
             if (edge.source?.startsWith('rel-')) {
               select({ kind: 'relation', id: edge.source.slice(4) })
               return
@@ -484,16 +638,14 @@ export default function Canvas() {
         onMoveEnd={(_, viewport) => {
           setZoomLevel(Math.round(viewport.zoom * 100))
         }}
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={isModalOverlayOpen ? null : ['Backspace', 'Delete']}
         proOptions={{ hideAttribution: true }}
         minZoom={0.1}
         maxZoom={2.5}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.5} color="#d6cfc4" />
 
-        {(canvasViewMode === 'chen'
-          ? (conceptualDesign?.concepts?.length || 0) > 0
-          : design.entities.length > 0) ? (
+        {!isCanvasEmpty ? (
           <MiniMap
             pannable
             zoomable
@@ -507,21 +659,27 @@ export default function Canvas() {
         ) : null}
       </ReactFlow>
 
-      {/* 左侧垂直工具胶囊 (1:1 复刻参考图) */}
+      {/* 左侧垂直工具胶囊 */}
       <div className="absolute left-6 top-28 z-20 select-none">
-        <div className="flex flex-col items-center gap-1.5 rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-1.5 shadow-[2px_2px_0px_#1f1f1f]">
+        <div
+          role="toolbar"
+          aria-label="画布视图控制工具栏"
+          className="flex flex-col items-center gap-1.5 rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-1.5 shadow-[2px_2px_0px_#1f1f1f]"
+        >
           {/* 箭头指针 */}
           <button
             type="button"
+            aria-label="选择与拖拽模式"
+            aria-pressed={toolMode === 'select'}
             onClick={() => setToolMode('select')}
-            className={`rounded-xl p-2 transition ${
-              toolMode === 'select' && !isSpacePressed
+            className={`rounded-xl p-2 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e] ${
+              toolMode === 'select'
                 ? 'bg-[#fdf0ee] border border-[#df4e3e] text-[#df4e3e] shadow-2xs'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
             title="选择与拖拽模式"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
             </svg>
           </button>
@@ -529,15 +687,17 @@ export default function Canvas() {
           {/* 抓手平移 */}
           <button
             type="button"
+            aria-label="平移画布模式"
+            aria-pressed={toolMode === 'pan'}
             onClick={() => setToolMode((m) => (m === 'pan' ? 'select' : 'pan'))}
-            className={`rounded-xl p-2 transition ${
-              toolMode === 'pan' || isSpacePressed
+            className={`rounded-xl p-2 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e] ${
+              toolMode === 'pan'
                 ? 'bg-[#fdf0ee] border border-[#df4e3e] text-[#df4e3e] shadow-2xs'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
-            title="平移画布模式 (支持按住 Space 空格键临时平移，或鼠标中键拖拽)"
+            title="平移画布模式 (在画布内支持按住 Space 临时平移，或鼠标中键拖拽)"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />
             </svg>
           </button>
@@ -547,11 +707,12 @@ export default function Canvas() {
           {/* 整理排版布局 */}
           <button
             type="button"
+            aria-label="整理排版布局"
             onClick={handleAutoLayout}
-            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition"
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
             title="整理排版布局 (自动紧凑对齐)"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <rect x="3" y="3" width="7" height="6" rx="1.5" />
               <rect x="14" y="3" width="7" height="6" rx="1.5" />
               <rect x="8.5" y="15" width="7" height="6" rx="1.5" />
@@ -562,11 +723,12 @@ export default function Canvas() {
           {/* 适应视口 */}
           <button
             type="button"
+            aria-label="适应视口"
             onClick={() => void fitView({ padding: 0.2, duration: 300 })}
-            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition"
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 hover:text-[#df4e3e] active:scale-95 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
             title="适应视口"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
           </button>
@@ -576,11 +738,12 @@ export default function Canvas() {
           {/* 放大 */}
           <button
             type="button"
+            aria-label="放大画布"
             onClick={() => void zoomIn({ duration: 200 })}
-            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 transition"
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
             title="放大画布"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
             </svg>
           </button>
@@ -588,11 +751,12 @@ export default function Canvas() {
           {/* 缩小 */}
           <button
             type="button"
+            aria-label="缩小画布"
             onClick={() => void zoomOut({ duration: 200 })}
-            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 transition"
+            className="rounded-xl p-2 text-stone-600 hover:bg-stone-50 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
             title="缩小画布"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
             </svg>
           </button>
@@ -606,13 +770,12 @@ export default function Canvas() {
         </div>
       </div>
 
-      {/* 空白画布起草引导区 (1:1 复刻参考图「在纸上先画架构」) */}
+      {/* 空白画布起草引导区 */}
       {isCanvasEmpty ? (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center p-6 select-none overflow-y-auto no-scrollbar pb-32">
           <div className="pointer-events-auto flex flex-col items-center max-w-xl w-full text-center">
-            {/* 顶部架构蓝图图章 */}
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white text-blue-500 shadow-[2px_2px_0px_#1f1f1f] mb-2">
-              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg aria-hidden="true" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <rect x="3" y="3" width="7" height="6" rx="1" />
                 <rect x="14" y="3" width="7" height="6" rx="1" />
                 <rect x="8.5" y="15" width="7" height="6" rx="1" />
@@ -629,18 +792,12 @@ export default function Canvas() {
                 : '双击画布扔一张表，或把业务说清楚，让 AI 帮你起草'}
             </p>
 
-            {/* 3 张核心操作卡片 */}
+            {/* 3 张语义化按钮操作卡片 */}
             <div className="w-full space-y-2.5 mt-5">
-              {/* 卡片 1: 空白建实体 / 概念 */}
-              <div
-                onClick={() => {
-                  if (canvasViewMode === 'chen') {
-                    addConcept()
-                  } else {
-                    addEntity()
-                  }
-                }}
-                className="group rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1"
+              <button
+                type="button"
+                onClick={() => createCanvasEntity()}
+                className="group w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#df4e3e]/40 bg-[#fdf0ee] text-[#df4e3e] font-bold text-lg group-hover:scale-105 transition">
                   +
@@ -655,15 +812,15 @@ export default function Canvas() {
                       : '像贴便签一样新建一张表'}
                   </div>
                 </div>
-              </div>
+              </button>
 
-              {/* 卡片 2: 导入已有 SQL / DDL */}
-              <div
+              <button
+                type="button"
                 onClick={() => openDataDialog('import-sql')}
-                className="group rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1"
+                className="group w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#df4e3e]/40 bg-[#fdf0ee] text-[#df4e3e] group-hover:scale-105 transition">
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                   </svg>
                 </div>
@@ -671,10 +828,10 @@ export default function Canvas() {
                   <div className="text-sm font-bold text-[#1f1f1f]">导入已有 SQL / DDL</div>
                   <div className="text-xs text-stone-500 mt-0.5">粘贴建表脚本，瞬间逆向生成架构画板</div>
                 </div>
-              </div>
+              </button>
 
-              {/* 卡片 3: AI 起草架构 */}
-              <div
+              <button
+                type="button"
                 onClick={() => {
                   setAiSidebarOpen(true)
                   setTimeout(() => {
@@ -682,10 +839,10 @@ export default function Canvas() {
                     textarea?.focus()
                   }, 80)
                 }}
-                className="group rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1"
+                className="group w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-4 shadow-[2px_2px_0px_#1f1f1f] hover:translate-x-0.5 hover:-translate-y-0.5 transition cursor-pointer flex items-center gap-3.5 text-left active:translate-x-1 active:translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#df4e3e]"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#df4e3e]/40 bg-[#fdf0ee] text-[#df4e3e] group-hover:scale-105 transition">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg aria-hidden="true" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                   </svg>
                 </div>
@@ -693,9 +850,8 @@ export default function Canvas() {
                   <div className="text-sm font-bold text-[#1f1f1f]">AI 起草架构</div>
                   <div className="text-xs text-stone-500 mt-0.5">打开左侧 AI 架构师，自动铺开实体</div>
                 </div>
-              </div>
+              </button>
             </div>
-
           </div>
         </div>
       ) : null}

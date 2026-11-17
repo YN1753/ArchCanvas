@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"archcanvas/internal/domain"
-	"archcanvas/request"
+	"archcanvas/internal/dto"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -43,17 +44,25 @@ type inferredSemanticsPayload struct {
 // EnrichSemantics 轻量 LLM 全图概念层语义推导核心算子
 func (a *AgentService) EnrichSemantics(
 	ctx context.Context,
-	req request.EnrichSemanticsReq,
+	req dto.EnrichSemanticsReq,
 ) (*EnrichSemanticsResult, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	runCtx, finishRun := a.lifecycle.beginRun(ctx, req.ProjectID, defaultAgentRunTimeout)
+	defer finishRun()
+
 	var currentDesign *domain.ERDesign
 
 	if req.Design != nil && len(req.Design.Entities) > 0 {
 		currentDesign = req.Design
 	} else if a.ProjectService != nil && req.ProjectID != "" {
-		d, err := a.ProjectService.GetERDesign(ctx, req.ProjectID)
-		if err == nil && d != nil && len(d.Entities) > 0 {
-			currentDesign = d
+		d, err := a.ProjectService.GetERDesign(runCtx, req.ProjectID)
+		if err != nil {
+			return nil, err
 		}
+		currentDesign = d
 	}
 
 	if currentDesign == nil || len(currentDesign.Entities) == 0 {
@@ -69,37 +78,39 @@ func (a *AgentService) EnrichSemantics(
 		}, nil
 	}
 
-	// 深拷贝一份以防外部并发修改
 	designCopy := deepCopyERDesign(*currentDesign)
 
-	// 1. 尝试使用轻量 LLM 进行全图语义推导
-	enrichedPayload, err := a.inferSemanticsWithLLM(ctx, req, designCopy)
-	if err != nil && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
-		return nil, ctx.Err()
+	enrichedPayload, err := a.inferSemanticsWithLLM(runCtx, req, designCopy)
+	if err != nil && (errors.Is(err, context.Canceled) || runCtx.Err() != nil) {
+		return nil, runCtx.Err()
 	}
 	if enrichedPayload == nil || len(enrichedPayload.Entities) == 0 {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if runCtx.Err() != nil {
+			return nil, runCtx.Err()
 		}
-		// LLM 调用失败或不可用时，优雅降级至启发式规则语义推导
 		enrichedPayload = inferSemanticsRuleBased(designCopy)
 	}
 
-	// 2. 将推导出的语义合并回物理表 ERDesign
 	applySemanticsToDesign(&designCopy, enrichedPayload)
 
-	// 3. 构建/同步概念数据模型 (ConceptualDesign / 陈氏图)，并保留已有概念节点坐标
 	rawConceptualDesign := buildConceptualDesignFromEnriched(designCopy, enrichedPayload)
 	var existingConceptual *domain.ConceptualDesign
 	if a.ProjectService != nil && req.ProjectID != "" {
-		existingConceptual, _ = a.ProjectService.GetConceptualDesign(ctx, req.ProjectID)
+		existingConceptual, _ = a.ProjectService.GetConceptualDesign(runCtx, req.ProjectID)
 	}
 	conceptualDesign := mergeConceptualDesign(existingConceptual, rawConceptualDesign)
 
-	// 4. 若有 project_id，持久化到服务端数据库
 	if a.ProjectService != nil && req.ProjectID != "" {
-		_, _ = a.ProjectService.SaveERDesign(ctx, req.ProjectID, designCopy)
-		_ = a.ProjectService.SaveConceptualDesign(ctx, req.ProjectID, conceptualDesign)
+		savedRes, err := a.ProjectService.SaveERDesign(runCtx, req.ProjectID, designCopy)
+		if err != nil {
+			return nil, fmt.Errorf("持久化富化物理模型失败: %w", err)
+		}
+		if savedRes != nil && savedRes.Design != nil {
+			designCopy = *savedRes.Design
+		}
+		if err := a.ProjectService.SaveConceptualDesign(runCtx, req.ProjectID, conceptualDesign); err != nil {
+			return nil, fmt.Errorf("持久化富化概念模型失败: %w", err)
+		}
 	}
 
 	return &EnrichSemanticsResult{
@@ -110,7 +121,7 @@ func (a *AgentService) EnrichSemantics(
 
 func (a *AgentService) inferSemanticsWithLLM(
 	ctx context.Context,
-	req request.EnrichSemanticsReq,
+	req dto.EnrichSemanticsReq,
 	design domain.ERDesign,
 ) (*inferredSemanticsPayload, error) {
 	if a.ModelManager == nil {
@@ -196,9 +207,13 @@ func (a *AgentService) inferSemanticsWithLLM(
 		}
 
 		if attempt < maxRetries {
+			assistantText := truncateRunes(raw, 3000)
+			if strings.TrimSpace(assistantText) == "" {
+				assistantText = "[empty response]"
+			}
 			feedbackPrompt := "【语义推导格式纠错】你上一轮输出未能通过系统 JSON 结构化解析，请必须返回包含 entities 与 relations 的纯标准 JSON，确保括号闭合，勿输出无关的解释性文字。"
 			currentMessages = append(currentMessages,
-				schema.AssistantMessage(raw, nil),
+				schema.AssistantMessage(assistantText, nil),
 				schema.UserMessage(feedbackPrompt),
 			)
 		}
@@ -210,30 +225,12 @@ func (a *AgentService) inferSemanticsWithLLM(
 func buildEnrichSemanticsMessages(design domain.ERDesign) []*schema.Message {
 	var system strings.Builder
 	system.WriteString("你是一位精通领域驱动设计（DDD）与数据库逆向工程的资深概念建模专家。\n")
-	system.WriteString("请深入分析以下数据库物理表结构、字段命名及关联关系，结合全局业务上下文（如企业ERP、电商交易、多租户SaaS、CRM等），为全图推导地道、准确的**业务概念中文名称与释义**。\n\n")
+	system.WriteString("请深入分析以下数据库物理表结构、字段命名及关联关系，结合全局业务上下文，为全图推导地道、准确的**业务概念中文名称与释义**。\n\n")
 	system.WriteString("【命名核心铁律（必须严格执行）】：\n")
-	system.WriteString("1. 【实体概念名（comment）】：必须是纯粹、地道的高阶中文名词（如'租户'、'岗位'、'员工'、'角色'、'订单'、'商品'），绝对严禁拼接'表'、'实体'、'概念'等技术噪音后缀！\n")
-	system.WriteString("2. 【属性名称（comment）】：根据字段名与所在业务实体推导简洁准确的中文释义（如'租户编码'、'岗位名称'、'联系电话'、'启用状态'、'创建时间'）。\n")
+	system.WriteString("1. 【实体概念名（comment）】：必须是纯粹、地道的高阶中文名词（如'租户'、'岗位'、'员工'、'角色'、'订单'、'商品'），严禁拼接'表'、'实体'、'概念'等技术后缀！\n")
+	system.WriteString("2. 【属性名称（comment）】：根据字段名与所在业务实体推导简洁准确的中文释义。\n")
 	system.WriteString("3. 【联系动词（relation name）】：推导简洁明了的概念层动词（如'包含'、'拥有'、'担任'、'归属'、'购买'）。\n\n")
-	system.WriteString("【输出要求】：\n")
-	system.WriteString("直接且仅输出标准的 JSON 格式：\n")
-	system.WriteString("```json\n")
-	system.WriteString("{\n")
-	system.WriteString("  \"entities\": [\n")
-	system.WriteString("    {\n")
-	system.WriteString("      \"name\": \"表名（英文）\",\n")
-	system.WriteString("      \"comment\": \"纯粹中文概念名\",\n")
-	system.WriteString("      \"description\": \"一句话业务含义\",\n")
-	system.WriteString("      \"attributes\": [\n")
-	system.WriteString("        { \"name\": \"字段名\", \"comment\": \"字段中文释义\" }\n")
-	system.WriteString("      ]\n")
-	system.WriteString("    }\n")
-	system.WriteString("  ],\n")
-	system.WriteString("  \"relations\": [\n")
-	system.WriteString("    { \"source_concept\": \"源表名\", \"target_concept\": \"目标表名\", \"name\": \"动词\" }\n")
-	system.WriteString("  ]\n")
-	system.WriteString("}\n")
-	system.WriteString("```")
+	system.WriteString("【输出要求】：直接且仅输出包含 entities 与 relations 的标准 JSON 对象。")
 
 	var user strings.Builder
 	user.WriteString("【当前待推导全图数据模型】：\n")
@@ -279,7 +276,7 @@ func buildEnrichSemanticsMessages(design domain.ERDesign) []*schema.Message {
 
 	return []*schema.Message{
 		schema.SystemMessage(system.String()),
-		schema.UserMessage(user.String()),
+		schema.UserMessage(truncateRunes(user.String(), maxPromptContextChars)),
 	}
 }
 
@@ -315,18 +312,14 @@ func applySemanticsToDesign(design *domain.ERDesign, payload *inferredSemanticsP
 					attr.Comment = c
 				}
 			}
-		} else {
-			// 若未匹配，执行规范清洗
-			if ent.Comment != "" {
-				ent.Comment = sanitizeConceptName(ent.Comment)
-			}
+		} else if ent.Comment != "" {
+			ent.Comment = sanitizeConceptName(ent.Comment)
 		}
 	}
 }
 
 func sanitizeConceptName(name string) string {
 	name = strings.TrimSpace(name)
-	// 剥离可能带有的假后缀
 	name = strings.TrimSuffix(name, "概念")
 	name = strings.TrimSuffix(name, "信息表")
 	name = strings.TrimSuffix(name, "数据表")
@@ -345,6 +338,7 @@ var technicalAuditFields = map[string]bool{
 	"lock_version": true, "revision": true,
 }
 
+// detectPhysicalJunctionTable 严格要求 _id 外键后缀并精确匹配目标表名或单数名，杜绝将含 paid/valid/pid 的普通业务表误删。
 func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Entity) (bool, *domain.Entity, *domain.Entity) {
 	if entity.IsJunctionTable != nil && !*entity.IsJunctionTable {
 		return false, nil, nil
@@ -355,10 +349,10 @@ func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Enti
 
 	for _, attr := range entity.Attributes {
 		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
-		if lowerName == "id" || (!strings.HasSuffix(lowerName, "_id") && !strings.HasSuffix(lowerName, "id")) {
+		if lowerName == "id" || !strings.HasSuffix(lowerName, "_id") {
 			continue
 		}
-		base := strings.TrimSuffix(strings.TrimSuffix(lowerName, "_id"), "id")
+		base := strings.TrimSuffix(lowerName, "_id")
 		if base == "" {
 			continue
 		}
@@ -366,9 +360,9 @@ func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Enti
 			if cand.ID == entity.ID {
 				continue
 			}
-			cName := strings.ToLower(cand.Name)
-			cSingular := strings.TrimSuffix(cName, "s")
-			if cName == base || cSingular == base || strings.Contains(cName, base) || strings.Contains(base, cSingular) {
+			cName := strings.ToLower(strings.TrimSpace(cand.Name))
+			cSingular := toSingularName(cName)
+			if cName == base || cSingular == base {
 				already := false
 				for _, p := range matchedParents {
 					if p.ID == cand.ID {
@@ -385,7 +379,7 @@ func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Enti
 		}
 	}
 
-	if len(matchedParents) < 2 {
+	if len(matchedParents) != 2 {
 		return false, nil, nil
 	}
 
@@ -393,7 +387,12 @@ func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Enti
 		return true, &matchedParents[0], &matchedParents[1]
 	}
 
-	if len(entity.Attributes) > 6 {
+	tableLower := strings.ToLower(strings.TrimSpace(entity.Name))
+	singA := toSingularName(matchedParents[0].Name)
+	singB := toSingularName(matchedParents[1].Name)
+	nameMatches := (strings.Contains(tableLower, strings.ToLower(matchedParents[0].Name)) || strings.Contains(tableLower, singA)) &&
+		(strings.Contains(tableLower, strings.ToLower(matchedParents[1].Name)) || strings.Contains(tableLower, singB))
+	if !nameMatches || len(entity.Attributes) > 6 {
 		return false, nil, nil
 	}
 
@@ -403,16 +402,13 @@ func detectPhysicalJunctionTable(entity domain.Entity, allEntities []domain.Enti
 			continue
 		}
 		lowerName := strings.ToLower(strings.TrimSpace(attr.Name))
-		if lowerName == "id" || (attr.IsPrimaryKey && strings.HasSuffix(lowerName, "id")) {
-			continue
-		}
-		if technicalAuditFields[lowerName] {
+		if lowerName == "id" || attr.IsPrimaryKey || technicalAuditFields[lowerName] {
 			continue
 		}
 		bizAttrCount++
 	}
 
-	if bizAttrCount > 1 {
+	if bizAttrCount > 0 {
 		return false, nil, nil
 	}
 	return true, &matchedParents[0], &matchedParents[1]
@@ -478,7 +474,7 @@ func buildConceptualDesignFromEnriched(
 			ID:          e.ID,
 			Name:        e.Name,
 			DisplayName: displayName,
-			Position:    e.Position,
+			Position:    clonePosition(e.Position),
 			Attributes:  attrs,
 		})
 	}
@@ -531,28 +527,33 @@ func buildConceptualDesignFromEnriched(
 	}
 }
 
+// mapDBTypeToCategory 优先判定 TINYINT(1) / BOOL，消除原先被 INT 子串提前拦截导致的不可达死代码。
 func mapDBTypeToCategory(dbType string) domain.AttributeCategory {
 	u := strings.ToUpper(strings.TrimSpace(dbType))
-	if strings.Contains(u, "INT") || strings.Contains(u, "DECIMAL") || strings.Contains(u, "NUMERIC") || strings.Contains(u, "FLOAT") || strings.Contains(u, "DOUBLE") {
-		return "number"
-	}
 	if strings.Contains(u, "BOOL") || strings.Contains(u, "TINYINT(1)") {
 		return "boolean"
+	}
+	if (strings.Contains(u, "INT") && !strings.Contains(u, "POINT") && !strings.Contains(u, "INTERVAL")) ||
+		strings.Contains(u, "DECIMAL") || strings.Contains(u, "NUMERIC") || strings.Contains(u, "FLOAT") || strings.Contains(u, "DOUBLE") || strings.Contains(u, "REAL") {
+		return "number"
 	}
 	if strings.Contains(u, "TIME") || strings.Contains(u, "DATE") {
 		return "datetime"
 	}
-	if strings.Contains(u, "BLOB") || strings.Contains(u, "BINARY") {
+	if strings.Contains(u, "BLOB") || strings.Contains(u, "BINARY") || strings.Contains(u, "BYTEA") {
 		return "media"
 	}
 	return "string"
 }
 
+// capitalize 按 Unicode Rune 安全首字符大写，避免单字节切片破坏中文或 UTF-8 字符。
 func capitalize(s string) string {
-	if s == "" {
+	runes := []rune(s)
+	if len(runes) == 0 {
 		return ""
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }
 
 func deepCopyERDesign(src domain.ERDesign) domain.ERDesign {
@@ -565,19 +566,19 @@ func deepCopyERDesign(src domain.ERDesign) domain.ERDesign {
 	return out
 }
 
-// 启发式离线规则推导
 func inferSemanticsRuleBased(design domain.ERDesign) *inferredSemanticsPayload {
 	dict := map[string]string{
 		"tenant": "租户", "tenants": "租户",
 		"position": "岗位", "positions": "岗位", "job": "岗位", "jobs": "岗位",
-		"user": "用户", "users": "用户", "account": "账号",
+		"user": "用户", "users": "用户", "account": "账号", "accounts": "账号",
 		"role": "角色", "roles": "角色", "permission": "权限点", "permissions": "权限点",
 		"department": "部门", "departments": "部门", "dept": "部门", "org": "组织机构",
 		"employee": "员工", "employees": "员工", "staff": "员工",
 		"company": "企业", "enterprise": "企业",
-		"order": "订单", "orders": "订单", "order_item": "订单明细", "product": "商品", "sku": "SKU规格",
-		"customer": "客户", "client": "客户",
-		"log": "日志", "audit_log": "审计日志",
+		"order": "订单", "orders": "订单", "order_item": "订单明细", "order_items": "订单明细",
+		"product": "商品", "products": "商品", "sku": "SKU规格", "skus": "SKU规格",
+		"customer": "客户", "customers": "客户", "client": "客户",
+		"log": "日志", "logs": "日志", "audit_log": "审计日志", "audit_logs": "审计日志",
 	}
 
 	attrDict := map[string]string{
@@ -598,43 +599,41 @@ func inferSemanticsRuleBased(design domain.ERDesign) *inferredSemanticsPayload {
 		clean := strings.ToLower(strings.TrimSpace(e.Name))
 		comment := e.Comment
 		if comment == "" {
-			if v, ok := dict[clean]; ok {
-				comment = v
+			if c, ok := dict[clean]; ok {
+				comment = c
+			} else if c, ok := dict[toSingularName(clean)]; ok {
+				comment = c
 			} else {
 				comment = capitalize(clean)
 			}
+		} else {
+			comment = sanitizeConceptName(comment)
 		}
 
-		attrs := make([]struct {
-			Name    string `json:"name"`
-			Comment string `json:"comment"`
-		}, 0, len(e.Attributes))
-
+		entSem := inferredEntitySemantic{
+			Name:        e.Name,
+			Comment:     comment,
+			Description: comment + "业务实体",
+		}
 		for _, a := range e.Attributes {
-			attrClean := strings.ToLower(strings.TrimSpace(a.Name))
-			attrComment := a.Comment
-			if attrComment == "" {
-				if v, ok := attrDict[attrClean]; ok {
-					attrComment = v
+			ac := a.Comment
+			if ac == "" {
+				lowerA := strings.ToLower(strings.TrimSpace(a.Name))
+				if v, ok := attrDict[lowerA]; ok {
+					ac = v
 				} else {
-					attrComment = capitalize(attrClean)
+					ac = a.Name
 				}
 			}
-			attrs = append(attrs, struct {
+			entSem.Attributes = append(entSem.Attributes, struct {
 				Name    string `json:"name"`
 				Comment string `json:"comment"`
 			}{
 				Name:    a.Name,
-				Comment: attrComment,
+				Comment: ac,
 			})
 		}
-
-		payload.Entities = append(payload.Entities, inferredEntitySemantic{
-			Name:        e.Name,
-			Comment:     comment,
-			Description: fmt.Sprintf("%s业务实体", comment),
-			Attributes:  attrs,
-		})
+		payload.Entities = append(payload.Entities, entSem)
 	}
 
 	return payload

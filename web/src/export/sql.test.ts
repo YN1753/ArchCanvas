@@ -74,6 +74,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
           is_nullable: false,
           is_unique: false,
           comment: '自增主键',
+          description: '',
         },
         {
           id: 'attr_2',
@@ -84,6 +85,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
           is_nullable: false,
           is_unique: true,
           comment: '用户名唯一',
+          description: '',
         },
       ],
     }
@@ -164,6 +166,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: false,
               comment: '主键自增',
+              description: '',
             },
             {
               id: 'attr_2',
@@ -174,6 +177,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: true,
               comment: '绑定的手机号',
+              description: '',
             },
           ],
         },
@@ -217,6 +221,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: false,
               comment: '商品主键',
+              description: '',
             },
             {
               id: 'attr_2',
@@ -227,6 +232,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: false,
               comment: '商品标题',
+              description: '',
             },
           ],
         },
@@ -264,6 +270,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: false,
               comment: '主键自增',
+              description: '',
             },
             {
               id: 'attr_2',
@@ -274,6 +281,7 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
               is_nullable: false,
               is_unique: true,
               comment: "Owner's Email 地址",
+              description: '',
             },
           ],
           indexes: [
@@ -308,6 +316,108 @@ describe('SQL Export & Reverse Parsing with Comment Preservation', () => {
     const importedIdx = importedEntity.indexes.find((i) => i.name === 'idx_accounts_email')
     assert.ok(importedIdx)
     assert.strictEqual(importedIdx.comment, '邮箱唯一检索索引')
+  })
+
+  it('composite primary key generates valid table-level PRIMARY KEY across MySQL, PostgreSQL, and SQLite', () => {
+    const compositeEntity: Entity = {
+      id: 'ent_ur',
+      name: 'user_roles',
+      comment: '用户角色关联表',
+      attributes: [
+        {
+          id: 'a1',
+          name: 'user_id',
+          db_type: 'BIGINT',
+          code_type: 'uint64',
+          is_primary_key: true,
+          is_nullable: false,
+          is_unique: false,
+          description: '',
+        },
+        {
+          id: 'a2',
+          name: 'role_id',
+          db_type: 'BIGINT',
+          code_type: 'uint64',
+          is_primary_key: true,
+          is_nullable: false,
+          is_unique: false,
+          description: '',
+        },
+      ],
+    }
+
+    const mysqlDDL = entityToSQL(compositeEntity, 'mysql')
+    assert.ok(!mysqlDDL.includes('AUTO_INCREMENT'), '复合主键在 MySQL 下禁止生成多个 AUTO_INCREMENT')
+    assert.ok(mysqlDDL.includes('PRIMARY KEY (`user_id`, `role_id`)'))
+
+    const pgDDL = entityToSQL(compositeEntity, 'postgres')
+    assert.ok(!pgDDL.includes('BIGSERIAL'), '复合主键在 PostgreSQL 下禁止生成多个行内 BIGSERIAL')
+    assert.ok(pgDDL.includes('PRIMARY KEY ("user_id", "role_id")'))
+
+    const sqliteDDL = entityToSQL(compositeEntity, 'sqlite')
+    assert.ok(!sqliteDDL.includes('AUTOINCREMENT'), '复合主键在 SQLite 下禁止生成行内 AUTOINCREMENT')
+    assert.ok(sqliteDDL.includes('PRIMARY KEY ("user_id", "role_id")'))
+  })
+
+  it('composite UNIQUE KEY does not pollute individual column is_unique, and POINT/INTERVAL are not misclassified as integer', () => {
+    const sql = `
+      CREATE TABLE locations (
+        id BIGINT PRIMARY KEY,
+        coords POINT NOT NULL,
+        lease_span INTERVAL NOT NULL,
+        user_id BIGINT NOT NULL,
+        role_id BIGINT NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        UNIQUE KEY uk_user_role (user_id, role_id)
+      );
+    `
+    const parsed = parseSQLToDesign(sql)
+    assert.strictEqual(parsed.design.entities.length, 1)
+    const loc = parsed.design.entities[0]
+    const userCol = loc.attributes.find((a) => a.name === 'user_id')!
+    const roleCol = loc.attributes.find((a) => a.name === 'role_id')!
+    const statusCol = loc.attributes.find((a) => a.name === 'status')!
+    const coordsCol = loc.attributes.find((a) => a.name === 'coords')!
+
+    assert.strictEqual(userCol.is_unique, false, '复合唯一索引不应污染单列 user_id.is_unique')
+    assert.strictEqual(roleCol.is_unique, false, '复合唯一索引不应污染单列 role_id.is_unique')
+    assert.strictEqual(statusCol.default_value, 'pending')
+    assert.ok(loc.indexes?.some((idx) => idx.name === 'uk_user_role' && idx.is_unique === true))
+
+    // 导出 SQLite 时 POINT 不应被误判为 INTEGER
+    const sqliteOut = entityToSQL({ ...loc, attributes: [coordsCol] }, 'sqlite')
+    assert.ok(!sqliteOut.includes('"coords" INTEGER'), 'POINT 类型严禁因包含 INT 子串被误判为 INTEGER')
+  })
+
+  it('designToSQL orders parent tables before child tables referencing them', () => {
+    const design: ERDesign = {
+      entities: [
+        {
+          id: 'e_child',
+          name: 'orders',
+          attributes: [
+            { id: 'c1', name: 'id', db_type: 'BIGINT', code_type: 'uint64', is_primary_key: true, is_nullable: false, is_unique: false, description: '' },
+            { id: 'c2', name: 'user_id', db_type: 'BIGINT', code_type: 'uint64', is_primary_key: false, is_nullable: false, is_unique: false, description: '' },
+          ],
+        },
+        {
+          id: 'e_parent',
+          name: 'users',
+          attributes: [
+            { id: 'p1', name: 'id', db_type: 'BIGINT', code_type: 'uint64', is_primary_key: true, is_nullable: false, is_unique: false, description: '' },
+          ],
+        },
+      ],
+      relations: [
+        { id: 'r1', source_entity_id: 'e_parent', target_entity_id: 'e_child', cardinality: 'one_to_many' },
+      ],
+    }
+
+    const ddl = designToSQL(design, 'postgres')
+    const usersIdx = ddl.indexOf('CREATE TABLE "users"')
+    const ordersIdx = ddl.indexOf('CREATE TABLE "orders"')
+    assert.ok(usersIdx >= 0 && ordersIdx > usersIdx, '被外键引用的父表 users 必须排在子表 orders 之前建表')
   })
 })
 

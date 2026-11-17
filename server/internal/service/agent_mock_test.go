@@ -3,8 +3,8 @@ package service
 import (
 	"archcanvas/internal/agent"
 	"archcanvas/internal/domain"
+	"archcanvas/internal/dto"
 	"archcanvas/internal/service/tools"
-	"archcanvas/request"
 	"context"
 	"encoding/json"
 	"sync"
@@ -135,7 +135,7 @@ func TestAgent_MockNormalConceptFlow(t *testing.T) {
 	}
 
 	svc := NewAgentService(modelManager, nil)
-	outCh, err := svc.ProposeConcepts(context.Background(), request.ProposeConceptsReq{
+	outCh, err := svc.ProposeConcepts(context.Background(), dto.ProposeConceptsReq{
 		ProjectID:     "proj_mock_1",
 		Input:         "构建一个商城系统，包含用户注册管理和订单创建流转",
 		ModelProvider: "mock",
@@ -193,7 +193,7 @@ func TestAgent_MockClarificationBranch(t *testing.T) {
 	}
 
 	svc := NewAgentService(modelManager, nil)
-	outCh, err := svc.ProposeConcepts(context.Background(), request.ProposeConceptsReq{
+	outCh, err := svc.ProposeConcepts(context.Background(), dto.ProposeConceptsReq{
 		ProjectID:     "proj_mock_2",
 		Input:         "我们要搭建一个支持商品和交付的系统",
 		ModelProvider: "mock",
@@ -304,7 +304,7 @@ func TestAgent_MockContextCancel(t *testing.T) {
 	}
 
 	svc := NewAgentService(modelManager, nil)
-	outCh, err := svc.ProposeConcepts(ctx, request.ProposeConceptsReq{
+	outCh, err := svc.ProposeConcepts(ctx, dto.ProposeConceptsReq{
 		ProjectID:     "proj_mock_cancel",
 		Input:         "做一套客户关系系统",
 		ModelProvider: "mock",

@@ -77,9 +77,9 @@ func (r *Relation) UnmarshalJSON(data []byte) error {
 }
 
 func (r Relation) MarshalJSON() ([]byte, error) {
-	relType := r.RelationTypeID
+	relType := r.Cardinality
 	if relType == "" {
-		relType = r.Cardinality
+		relType = r.RelationTypeID
 	}
 	if relType == "" {
 		relType = "one_to_many"

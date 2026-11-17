@@ -13,7 +13,7 @@
   <a href="https://github.com/YN1753/ArchCanvas/actions"><img src="https://img.shields.io/github/actions/workflow/status/YN1753/ArchCanvas/release.yml?style=flat-square&label=Release%20CI" alt="Release CI" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-orange?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64-blueviolet?style=flat-square" alt="Architecture" />
-  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go Version" />
+  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react" alt="React Version" />
   <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=flat-square&logo=sqlite" alt="SQLite" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
@@ -84,8 +84,8 @@
 - **阶段二：物理建表与类型建模（`save_er_design`）**：
   - 架构师角色推导物理 SQL 类型（`BIGINT`, `VARCHAR(128)`, `DATETIME`）、代码映射类型（`uint64`, `string`）、主键与外键关联；
   - 推导完成后自动委托领域服务进行原子持久化，画板自动排版刷新；
-- **自环关系智能净化**：
-  - 自动过滤 `source == target` 的自引用关系连线（如 `parent_id` 树形结构），保留表中外键字段的同时避免生成遮挡画布的表内回环；
+- **自引用关系双弧呈现**：
+  - 完整支持 `source == target` 的树形自引用结构（如部门 `parent_id` 层级树），在陈氏视图中自动排布双向分流贝塞尔环弧，在物理视图中保留平滑自环连线；
 - **空白画板智能自愈排版**：
   - 首次从空画板通过自然语言对话生成实体时，系统自动识别并执行初次居中自动整理，无需用户手动拖拽调整。
 
@@ -150,10 +150,10 @@
 
 | 评测维度 | 测试样本量 | 实测指标 | 目标基线 | 状态 | 说明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **歧义检测漏判率** (FN Rate) | 25 条标注业务需求 | **0.00%** (0/25) | < 5.0% | **PASS** | 结合代码层前置规则拦截与实体数量门禁，彻底杜绝模糊输入的模型脑补 |
-| **歧义检测误判率** (FP Rate) | 25 条标注业务需求 | **0.00%** (0/25) | < 10.0% | **PASS** | 完整长需求正常放行，零误伤正常业务建模 |
-| **物理建模规则通过率** | 10 个典型业务场景 | **100.00%** (10/10) | 100.0% | **PASS** | 严格校验主键声明、实体端点存在性、M:N 中间表与类型一致性 |
-| **端到端工程编译通过率** | 10 个生成项目 | **100.00%** (10/10) | 100.0% | **PASS** | 将生成项目写入隔离目录，真实执行 `go build ./cmd/server` 与 `go vet` |
+| **歧义检测漏判率** (`FN / P`) | 15 条正样本 (共 25 条) | **0.00%** (0/15) | <= 5.0% | **PASS** | 结合代码层前置规则拦截与实体数量门禁，有效拦截模糊输入 |
+| **歧义检测误判率** (`FP / N`) | 10 条负样本 (共 25 条) | **0.00%** (0/10) | <= 10.0% | **PASS** | 完整长需求与增量短指令正常放行，零误伤正常业务建模 |
+| **物理建模规则通过率** | 10 个典型业务场景 | **100.00%** (10/10) | 100.0% | **PASS** | 真实调用物理推导引擎，严格校验主键非空、外键列落地与 M:N 中间表 |
+| **端到端编译 + AutoMigrate 通过率** | 10 个生成项目 | **100.00%** (10/10) | 100.0% | **PASS** | 独立模块真实执行 `go build`、`go vet` 与内存 SQLite `InitDB` 表迁移冒烟 |
 
 ---
 
@@ -176,10 +176,10 @@
 ```mermaid
 flowchart TD
     Client["前端 Web (Vite + React 19 + React Flow + Zustand)"] -->|"HTTP / SSE"| Router["Gin Router (/api/v1)"]
-    Router --> Middleware["CORS 中间件"]
+    Router --> Middleware["安全/CORS/Trace 中间件"]
     Middleware --> Handler["Handler 控制器层 (Project / Agent / Generator)"]
     
-    Handler -->|"强类型参数绑定校验 (ShouldBindJSON / DTO)"| DTO["Request DTO 层 (request/*)"]
+    Handler -->|"强类型参数绑定与校验 (internal/dto + internal/validator)"| DTO["DTO & Validator 层"]
     Handler -->|"调度领域业务用例"| Service["Service 业务层 (Project / Agent / Generator)"]
     
     Service -->|"大模型调用 & 模型探测"| AgentMgr["ModelManager (Eino SDK 多厂商驱动 & BaseURL 探测)"]
@@ -201,26 +201,29 @@ flowchart TD
 ```text
 archcanvas/
 ├── server/                      # Go 后端工程
-│   ├── cmd/server/main.go       # 系统主入口，显式依赖容器组装
+│   ├── cmd/server/main.go       # 系统主入口，显式依赖容器组装与优雅停机
 │   ├── configs/                 # 配置文件目录
-│   │   ├── config.yaml          # 全局服务与大模型配置
-│   │   └── .env                 # 环境变量与 API Key（支持热写回）
+│   │   ├── config.example.yaml  # 服务与大模型配置模板
+│   │   └── .env.example         # 环境变量与访问令牌模板
 │   ├── internal/
-│   │   ├── agent/               # 大模型驱动 (Eino SDK)、多模型缓存与探测管理
-│   │   ├── config/              # 配置加载、.env 更新与 YAML 双向写回
-│   │   ├── database/            # SQLite 连接初始化与全自动表结构迁移
-│   │   ├── domain/              # 纯领域实体 (ERDesign, BusinessConcept) 与业务枚举
+│   │   ├── agent/               # 大模型驱动 (Eino SDK)、并发探测与 SSRF 安全守卫
+│   │   ├── config/              # 配置加载、0600 原子写盘与 YAML/.env 同步
+│   │   ├── database/            # SQLite IMMEDIATE 事务连接池与自动迁移
+│   │   ├── domain/              # 纯领域实体 (ERDesign, BusinessConcept, SchemaReview)
+│   │   ├── dto/                 # 强类型请求/响应 DTO 定义
+│   │   ├── eval/                # 35 场景自动化质量门禁与 E2E 编译迁移评测
 │   │   ├── generator/           # Go 工程脚手架生成引擎 (13 类模板、AST 格式化、流式打包)
 │   │   ├── handler/             # Gin HTTP 控制器 (参数绑定、SSE 响应、ZIP 流式下发)
-│   │   ├── middleware/          # CORS 跨域控制
+│   │   ├── middleware/          # CORS、Bearer 鉴权、请求体限流与 slog TraceID 追踪
 │   │   ├── model/               # GORM 物理数据模型映射
-│   │   ├── repository/          # 数据仓储实现 (事务级联删除、坐标记忆、UUIDv7 自动重映射)
+│   │   ├── repository/          # 数据仓储实现 (事务级联删除、两阶段 ID 重映射、字段保序)
 │   │   ├── router/              # 语义化 API 路由注册 (/api/v1)
-│   │   └── service/             # 核心服务 (ProjectService, AgentService 两阶段编排)
+│   │   ├── service/             # 核心服务 (ProjectService, AgentService 三层架构编排)
+│   │   ├── static/              # //go:embed 静态 SPA 托管与目录防遍历
+│   │   └── validator/           # 领域输入与 SQL 标识符统一校验器
 │   ├── pkg/
 │   │   ├── id/                  # RFC 9562 UUIDv7 有序唯一标识生成与校验
 │   │   └── response/            # 统一 API 响应格式封装
-│   ├── request/                 # 强类型请求入参 DTO 定义
 │   └── go.mod                   # Go 依赖清单
 │
 └── web/                         # 前端 React SPA 工程
@@ -232,18 +235,21 @@ archcanvas/
     │   │   │   ├── ChenRelationNode.tsx  # 菱形联系节点（业务动词 + 1:1/1:N/M:N 基数）
     │   │   │   ├── ChenAttributeNode.tsx # 椭圆属性节点（纯净名词 + 经典下划线主键）
     │   │   │   └── ChenEdge.tsx          # 带有 1/N/M 徽标与虚线属性连接的智能连线
-    │   │   ├── AiPanel.tsx      # 底部/侧栏 AI 架构指令坞 (⌘L 快捷收展)
+    │   │   ├── AiSidebar.tsx    # 左侧 AI 架构师侧栏与三阶段工作台 (⌘L 快捷收展)
     │   │   ├── Canvas.tsx       # 全尺寸架构画板与双视图切换控制
     │   │   ├── ClarificationDeck.tsx # 需求歧义渐进式澄清卡片组
-    │   │   ├── DataDialog.tsx   # 导入导出弹窗 (SQL DDL 逆向 / JSON / Mermaid)
-    │   │   ├── Inspector.tsx    # 右侧属性检查器与 DDL 即时预览
+    │   │   ├── Combobox.tsx     # 支持键盘导航与即时过滤的复合输入框
+    │   │   ├── DataDialog.tsx   # 导入导出弹窗 (SQL DDL 逆向 / JSON / Mermaid / PNG / SVG)
+    │   │   ├── Inspector.tsx    # 右侧属性检查器与三方言 DDL 即时预览
     │   │   ├── ModelSelector.tsx# 暖纸感模型即时探测下拉选择器
     │   │   ├── ProjectMenu.tsx  # 项目管理菜单 (新建/切换/重命名/删除)
     │   │   ├── ScaffoldDialog.tsx # 暖纸新野兽派代码树与代码预览工作台
-    │   │   ├── Select.tsx       # 纯手工定制新野兽派下拉组件
+    │   │   ├── SchemaReviewDrawer.tsx # Layer 3 架构师深度体检报告抽屉
+    │   │   ├── Select.tsx       # 支持完整无障碍键盘导航的定制下拉组件
     │   │   ├── TableNode.tsx    # 物理数据库表卡片节点
+    │   │   ├── Toast.tsx        # 全局状态通知横幅 (ARIA Live Region)
     │   │   ├── RelationEdge.tsx # 物理字段级关联连线
-    │   │   └── Toolbar.tsx      # 顶部控制栏 (双视图切换、撤销重做、脚手架导出)
+    │   │   └── Toolbar.tsx      # 顶部控制栏 (双视图切换、撤销重做、体检、脚手架导出)
     │   ├── export/              # SQL DDL 逆向解析/导出、Mermaid 转换与图片导出
     │   ├── flow/                # React Flow 适配器与排版算法
     │   │   ├── adapter.ts       # 物理关系图数据模型投影转换
@@ -283,14 +289,14 @@ ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go
 
 2. 解压并单命令启动：
    ```bash
-   # 默认启动 (监听 0.0.0.0:8080，配置与 SQLite 数据库默认保存在 exe 同级目录下)
+   # 默认安全启动 (监听本机 127.0.0.1:8080，配置与 SQLite 数据库默认保存在 exe 同级目录下)
    ./archcanvas
 
    # 动态自定义端口启动 (如 9090)
    ./archcanvas -port 9090
 
-   # 自定义主机、端口与数据库存储路径
-   ./archcanvas -host 127.0.0.1 -p 8888 -d /data/my_archcanvas.db
+   # 局域网暴露启动（建议同步配置 ARCHCANVAS_AUTH_TOKEN 保护 API）
+   ARCHCANVAS_AUTH_TOKEN="your-secret-token" ./archcanvas -host 0.0.0.0 -p 8888 -d /data/my_archcanvas.db
    ```
 
 3. 终端启动 Banner 示例：
@@ -300,7 +306,6 @@ ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go
      │  AI 驱动的领域业务架构建模与企业级数据库智能 CAD            │
      ├─────────────────────────────────────────────────────────────┤
      │  * 本地 Web 入口 : http://localhost:8080                    │
-     │  * 局域网访问   : http://0.0.0.0:8080                       │
      │  * 数据文件     : /path/to/data/archcanvas.db               │
      │  * 配置目录     : /path/to/configs                          │
      ╰─────────────────────────────────────────────────────────────╯
@@ -308,15 +313,16 @@ ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go
 
 4. 打开浏览器访问终端输出的地址（如 `http://localhost:8080`）即可立即开始建模！
 
-#### ⚙️ 命令行参数一览
+#### ⚙️ 命令行参数与安全环境变量一览
 
 | 参数 | 简写 | 环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | `-port` | `-p` | `PORT` | `8080` | HTTP 服务监听端口（优先级：命令行 > 环境变量 > 配置文件） |
-| `-host` | - | `HOST` | `0.0.0.0` | HTTP 服务绑定主机地址（如 `127.0.0.1` 仅限本机访问） |
-| `-config` | `-c` | - | `exe同级/configs` | 指定配置文件目录路径（首次运行若不存在自动生成默认配置） |
+| `-host` | - | `HOST` | `127.0.0.1` | HTTP 服务绑定主机地址（默认仅限本机访问；指定 `0.0.0.0` 可对局域网开放） |
+| `-config` | `-c` | - | `exe同级/configs` | 指定配置文件目录路径（首次运行若不存在自动生成 `0600` 权限默认配置） |
 | `-data` | `-d` | - | `exe同级/data/archcanvas.db` | 指定 SQLite 数据库文件路径（支持相对与绝对路径） |
 | `-version` | `-v` | - | - | 查看当前版本号、Git Commit Hash 与构建时间 |
+| - | - | `ARCHCANVAS_AUTH_TOKEN` | 空（关闭） | 可选 API 访问令牌，开启后请求需携带 `Authorization: Bearer <token>` |
 
 ---
 
@@ -366,8 +372,8 @@ git push origin v1.0.0
 ### 方式三：前后端分离开发模式
 
 #### 1. 环境准备
-- **Go**：`>= 1.22`
-- **Node.js**：`>= 18`
+- **Go**：`>= 1.27`
+- **Node.js**：`>= 20`
 
 #### 2. 启动后端开发服务
 ```bash
@@ -414,9 +420,14 @@ npm run dev
 | `GET` | `/api/v1/projects/detail` | 获取项目元信息与设计图 | Query (`?id=xxx`) |
 | `GET` | `/api/v1/projects/get-er-design` | 拉取项目完整 ER 设计 | Query (`?id=xxx`) |
 | `POST` | `/api/v1/projects/save-er-design` | 保存画板设计（UUIDv7 重映射与坐标记忆） | JSON Body (`project_id`, `entities`, `relations`) |
-| `GET` | `/api/v1/models/list` | 获取/动态探测可用模型列表 | Query (`?base_url=...&api_key=...&provider=...`) |
+| `GET` | `/api/v1/models/list` | 获取已配置可用模型列表（无敏感参数） | 无或 `?provider=...` |
+| `POST` | `/api/v1/models/list` | 安全探测自定义端点可用模型列表（避免密钥入 URL 日志） | JSON Body (`provider, base_url, api_key`) |
 | `POST` | `/api/v1/models/save` | 保存并热切换模型配置 | JSON Body (`provider, model, base_url, api_key, set_as_default`) |
-| `POST` | `/api/v1/agent/chat` | AI 两阶段架构推导（SSE 流式） | JSON Body (`project_id, input, model_provider, model_name`) |
+| `POST` | `/api/v1/agent/propose-concepts` | Layer 1 业务概念建模与澄清门禁（SSE 流式） | JSON Body (`project_id, input, model_provider, model_name`) |
+| `POST` | `/api/v1/agent/derive-physical` | Layer 2 概念转物理表与索引工程推导（SSE 流式） | JSON Body (`project_id, dialect, conceptual_design, ...`) |
+| `POST` | `/api/v1/agent/review-schema` | Layer 3 架构师深度体检与评分报告（SSE 流式） | JSON Body (`project_id, dialect, ...`) |
+| `POST` | `/api/v1/agent/enrich-semantics` | 全图物理表逆向概念层双语富化 | JSON Body (`project_id, dialect, design, ...`) |
+| `POST` | `/api/v1/agent/chat` | 一键串联两阶段架构推导（SSE 流式） | JSON Body (`project_id, input, model_provider, model_name`) |
 | `POST` | `/api/v1/generator/preview` | 预览生成的工程代码与文件树 | JSON Body (`project_id, module_name, port, db_driver, ...`) |
 | `POST` | `/api/v1/generator/download` | 纯内存流式导出工程 ZIP 压缩包 | JSON Body (`project_id, module_name, port, db_driver, ...`) |
 

@@ -65,8 +65,13 @@ export interface HistorySlice {
   flushSaveConceptual: () => Promise<void>
   recordSnapshot: (debounceKey?: string) => void
   resetHistory: () => void
-  mutate: (next: ERDesign, debounceKey?: string) => void
+  mutate: (next: ERDesign, debounceKey?: string, extras?: Partial<Store>) => void
   mutateConceptual: (next: ConceptualDesign, debounceKey?: string, extras?: Partial<Store>) => void
+  mutateBoth: (nextDesign: ERDesign, nextConceptual: ConceptualDesign, extras?: Partial<Store>) => void
+  mutateChenPositions: (
+    nextPositions: Record<string, Position>,
+    nextConceptual?: ConceptualDesign,
+  ) => void
   withEntities: (updater: (entities: Entity[]) => Entity[], debounceKey?: string) => void
 }
 
@@ -84,6 +89,7 @@ export interface ProjectSlice {
   modelsError: string | null
 
   bootstrap: () => Promise<void>
+  retryBootstrap: () => Promise<void>
   selectProject: (id: string) => Promise<void>
   createProject: (name: string, description?: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
@@ -101,7 +107,7 @@ export interface ErDesignSlice {
 
   moveEntity: (id: string, position: { x: number; y: number }) => void
   moveEntities: (moves: Array<{ id: string; position: { x: number; y: number } }>) => void
-  addEntity: (position?: { x: number; y: number }) => void
+  addEntity: (position?: { x: number; y: number }) => string
   renameEntity: (id: string, name: string) => void
   updateEntity: (id: string, patch: Partial<Entity>) => void
   deleteEntity: (id: string) => void
@@ -169,7 +175,6 @@ export interface AiChatSlice {
   setReviewDrawerOpen: (open: boolean) => void
   setReviewReport: (report: SchemaReviewReport | null) => void
 
-  runAI: (input: string) => Promise<void>
   stopAI: () => void
   proposeConcepts: (input: string) => Promise<void>
   derivePhysical: (dialect?: DatabaseDialect) => Promise<void>

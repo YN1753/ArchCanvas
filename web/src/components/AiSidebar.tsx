@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectMessage } from '../api/client'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import type { ClarificationCard, ProjectMessage } from '../api/client'
 import { useStore } from '../store/erStore'
-import type { DatabaseDialect } from '../types/dsl'
+import type { ConceptualDesign, DatabaseDialect, SchemaReviewReport } from '../types/dsl'
 import ClarificationDeck from './ClarificationDeck'
 import ModelSelector from './ModelSelector'
 
@@ -10,21 +10,21 @@ interface AssistantPayload {
   thinking?: string
   status?: string
   need_clarification?: boolean
-  clarification_cards?: any[]
+  clarification_cards?: ClarificationCard[]
   questions?: string[]
   applied_entities_count?: number
   applied_relations_count?: number
   applied_entities?: string[]
-  conceptual_design?: any
-  review_report?: any
+  conceptual_design?: ConceptualDesign
+  review_report?: SchemaReviewReport
   error?: string
 }
 
 function parseAssistantContent(raw: string): AssistantPayload {
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object') {
-      return parsed
+      return parsed as AssistantPayload
     }
   } catch {
     // raw plain text fallback
@@ -43,8 +43,8 @@ function formatTime(isoString: string): string {
 
 function cleanThinking(text: string): string {
   return text
-    .replace(/^#+\s*/gm, '') // remove ## markdown headers
-    .replace(/\*\*(.*?)\*\*/g, '$1') // remove ** bolding
+    .replace(/^#+\s*/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
     .trim()
 }
 
@@ -67,10 +67,12 @@ function ThinkingBlock({
     <div className="py-0.5">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         className="group inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-sans text-stone-400 hover:text-stone-700 hover:bg-stone-50 transition select-none"
       >
         <svg
+          aria-hidden="true"
           className={`w-3 h-3 text-stone-400 transition-transform ${open ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
@@ -93,7 +95,7 @@ function ThinkingBlock({
   )
 }
 
-function UserBubble({ msg }: { msg: ProjectMessage }) {
+const UserBubble = memo(function UserBubble({ msg }: { msg: ProjectMessage }) {
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="max-w-[88%] rounded-2xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-3.5 py-2.5 text-white shadow-[2px_2px_0px_#1f1f1f]">
@@ -104,26 +106,32 @@ function UserBubble({ msg }: { msg: ProjectMessage }) {
       <span className="text-[10px] text-stone-400 font-mono pr-1">{formatTime(msg.created_at)}</span>
     </div>
   )
-}
+})
 
-function AssistantCard({ msg }: { msg: ProjectMessage }) {
-  const payload = parseAssistantContent(msg.content)
+const AssistantCard = memo(function AssistantCard({ msg }: { msg: ProjectMessage }) {
+  const payload = useMemo(() => parseAssistantContent(msg.content), [msg.content])
   const focusEntity = useStore((state) => state.focusEntity)
-  const design = useStore((state) => state.design)
+  const needsFallbackLookup =
+    (!payload.applied_entities || payload.applied_entities.length === 0) &&
+    Boolean(payload.applied_entities_count && payload.applied_entities_count > 0 && payload.summary)
+
+  // 仅当历史消息缺少 applied_entities 列表时才读取原始值分隔串，避免编辑表字段时连带重渲染全部历史消息卡片
+  const fallbackEntityNamesKey = useStore((state) =>
+    needsFallbackLookup ? state.design.entities.map((e) => e.name).join('\u0001') : '',
+  )
 
   const entityNames = useMemo(() => {
     if (payload.applied_entities && payload.applied_entities.length > 0) {
       return payload.applied_entities
     }
-    // 降级兜底：从当前画布实体名称中提取并在 summary 中匹配
-    if (payload.applied_entities_count && payload.applied_entities_count > 0 && payload.summary) {
+    if (needsFallbackLookup && payload.summary && fallbackEntityNamesKey) {
       const summaryLower = payload.summary.toLowerCase()
-      return design.entities
-        .filter((e) => summaryLower.includes(e.name.toLowerCase()))
-        .map((e) => e.name)
+      return fallbackEntityNamesKey
+        .split('\u0001')
+        .filter((name) => name && summaryLower.includes(name.toLowerCase()))
     }
     return []
-  }, [payload.applied_entities, payload.applied_entities_count, payload.summary, design.entities])
+  }, [payload.applied_entities, payload.summary, needsFallbackLookup, fallbackEntityNamesKey])
 
   return (
     <div className="flex flex-col items-start gap-1">
@@ -158,17 +166,14 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           )}
         </div>
 
-        {/* 思考过程折叠条 */}
         {payload.thinking && <ThinkingBlock thinking={payload.thinking} />}
 
-        {/* 核心业务总结 */}
         {payload.summary && (
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#1f1f1f] font-sans font-medium select-text">
             {payload.summary}
           </p>
         )}
 
-        {/* 架构体检报告摘要卡片 */}
         {payload.review_report && (
           <div className="flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 p-2.5">
             <div className="flex items-center gap-2">
@@ -177,8 +182,8 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
                   (payload.review_report.score ?? 0) >= 80
                     ? 'text-emerald-700'
                     : (payload.review_report.score ?? 0) >= 60
-                    ? 'text-amber-700'
-                    : 'text-rose-700'
+                      ? 'text-amber-700'
+                      : 'text-rose-700'
                 }`}
               >
                 {payload.review_report.score ?? 0} 分
@@ -190,7 +195,7 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
             <button
               type="button"
               onClick={() => {
-                useStore.getState().setReviewReport(payload.review_report)
+                useStore.getState().setReviewReport(payload.review_report ?? null)
                 useStore.getState().setReviewDrawerOpen(true)
               }}
               className="rounded-lg border border-[#1f1f1f] bg-white px-2.5 py-1 text-[11px] font-bold text-[#1f1f1f] shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#faf7f0] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer"
@@ -200,10 +205,9 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           </div>
         )}
 
-        {/* 概念模型提示 */}
         {payload.conceptual_design?.concepts && payload.conceptual_design.concepts.length > 0 && (
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1">
-            <svg className="w-3.5 h-3.5 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg aria-hidden="true" className="w-3.5 h-3.5 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
             <span>
@@ -212,18 +216,16 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
           </div>
         )}
 
-        {/* 错误提示 */}
         {payload.error && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-2 text-xs text-red-600">
             {payload.error}
           </div>
         )}
 
-        {/* 落盘状态徽章与实体一键定位胶囊 */}
         {payload.applied_entities_count !== undefined && payload.applied_entities_count > 0 && (
           <div className="space-y-1.5 pt-0.5">
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1">
-              <svg className="w-3.5 h-3.5 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <svg aria-hidden="true" className="w-3.5 h-3.5 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               <span>
@@ -244,7 +246,7 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
                     className="group/tag inline-flex items-center gap-1 rounded-md border border-[#1f1f1f] bg-[#faf7f0] px-2 py-0.5 text-[11px] font-mono font-bold text-[#1f1f1f] shadow-[1px_1px_0px_#1f1f1f] hover:bg-white hover:text-[#df4e3e] hover:border-[#df4e3e] hover:shadow-[1.5px_1.5px_0px_#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer"
                     title={`在画布中居中定位并查看「${name}」表`}
                   >
-                    <svg className="w-3 h-3 text-stone-400 group-hover/tag:text-[#df4e3e] transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg aria-hidden="true" className="w-3 h-3 text-stone-400 group-hover/tag:text-[#df4e3e] transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
@@ -259,7 +261,7 @@ function AssistantCard({ msg }: { msg: ProjectMessage }) {
       <span className="text-[10px] text-stone-400 font-mono pl-1">{formatTime(msg.created_at)}</span>
     </div>
   )
-}
+})
 
 function DerivePhysicalCard() {
   const conceptualDesign = useStore((state) => state.conceptualDesign)
@@ -267,19 +269,15 @@ function DerivePhysicalCard() {
   const targetDialect = useStore((state) => state.targetDialect)
   const setTargetDialect = useStore((state) => state.setTargetDialect)
   const derivePhysical = useStore((state) => state.derivePhysical)
-  const reviewSchema = useStore((state) => state.reviewSchema)
   const setCanvasViewMode = useStore((state) => state.setCanvasViewMode)
   const aiRunning = useStore((state) => state.aiRunning)
 
   const conceptsCount = conceptualDesign?.concepts?.length ?? 0
   const relationsCount = conceptualDesign?.relations?.length ?? 0
-
-  const isPhysicalReady = agentPhase === 'physical_ready'
   const isDeriving = agentPhase === 'deriving_physical'
 
-  // 模型推导完成（physical_ready）或空闲状态下，不主动常驻展示推导卡片
   // 仅在概念就绪（concept_ready）或正在推导（deriving_physical）时显示
-  if (conceptsCount === 0 || isPhysicalReady || agentPhase === 'idle') {
+  if (conceptsCount === 0 || (agentPhase !== 'concept_ready' && !isDeriving)) {
     return null
   }
 
@@ -293,33 +291,26 @@ function DerivePhysicalCard() {
     <div className="w-full rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-3">
       <div className="flex items-center justify-between border-b border-stone-100 pb-2">
         <div className="flex items-center gap-1.5">
-          <svg className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg aria-hidden="true" className="w-4 h-4 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2 1.5 3 3.5 3s3.5-1 3.5-3V7c0-2-1.5-3-3.5-3S4 5 4 7zm0 5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m-7-5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m10 0v10c0 2 1.5 3 3.5 3s3.5-1 3.5-3V7c0-2-1.5-3-3.5-3s-3.5 1-3.5 3zm0 5c0 2 1.5 3 3.5 3s3.5-1 3.5-3m-7-5c0 2 1.5 3 3.5 3s3.5-1 3.5-3" />
           </svg>
           <span className="text-xs font-bold text-[#1f1f1f]">
-            {isPhysicalReady ? '物理模型与索引就绪' : '概念模型就绪 · 物理推导'}
+            概念模型就绪 · 物理推导
           </span>
         </div>
         <span
           className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            isPhysicalReady
-              ? 'bg-emerald-100 text-emerald-800'
-              : isDeriving
-              ? 'bg-amber-100 text-amber-800 animate-pulse'
-              : 'bg-sky-100 text-sky-800'
+            isDeriving ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-sky-100 text-sky-800'
           }`}
         >
-          {isPhysicalReady ? '已生成物理表' : isDeriving ? '正在推导中' : '待推导物理表'}
+          {isDeriving ? '正在推导中' : '待推导物理表'}
         </span>
       </div>
 
       <p className="text-[11.5px] leading-relaxed text-stone-600">
-        {isPhysicalReady
-          ? `已成功生成生产级数据表结构（含 M:N 中间表解耦、审计字段与智能索引配置）。`
-          : `已提炼 ${conceptsCount} 个业务概念、${relationsCount} 组关联关系。选择目标数据库方言后，可一键推导物理建表规范与索引。`}
+        已提炼 {conceptsCount} 个业务概念、{relationsCount} 组关联关系。选择目标数据库方言后，可一键推导物理建表规范与索引。
       </p>
 
-      {/* 方言选择器 */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-stone-400">
@@ -351,7 +342,6 @@ function DerivePhysicalCard() {
         </div>
       </div>
 
-      {/* 操作按钮区 */}
       <div className="space-y-2 pt-1">
         <button
           type="button"
@@ -366,40 +356,24 @@ function DerivePhysicalCard() {
             </>
           ) : (
             <>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
-              <span>{isPhysicalReady ? '重新推导物理表与索引' : '推导物理表与索引'}</span>
+              <span>推导物理表与索引</span>
             </>
           )}
         </button>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCanvasViewMode('chen')}
-            className="flex-1 py-1.5 px-2.5 rounded-lg border border-stone-300 bg-white text-[11px] font-bold text-stone-700 hover:border-[#1f1f1f] hover:bg-stone-50 transition flex items-center justify-center gap-1 cursor-pointer"
-          >
-            <svg className="w-3 h-3 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-            <span>陈氏白板审阅</span>
-          </button>
-
-          {isPhysicalReady && (
-            <button
-              type="button"
-              disabled={aiRunning}
-              onClick={() => void reviewSchema(targetDialect)}
-              className="flex-1 py-1.5 px-2.5 rounded-lg border border-[#1f1f1f] bg-stone-900 text-[11px] font-bold text-white hover:bg-stone-800 transition flex items-center justify-center gap-1 cursor-pointer shadow-[1px_1px_0px_#1f1f1f]"
-            >
-              <svg className="w-3 h-3 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-              <span>架构质量体检</span>
-            </button>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => setCanvasViewMode('chen')}
+          className="w-full py-1.5 px-2.5 rounded-lg border border-stone-300 bg-white text-[11px] font-bold text-stone-700 hover:border-[#1f1f1f] hover:bg-stone-50 transition flex items-center justify-center gap-1 cursor-pointer"
+        >
+          <svg aria-hidden="true" className="w-3 h-3 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+          </svg>
+          <span>陈氏白板审阅</span>
+        </button>
       </div>
     </div>
   )
@@ -425,6 +399,7 @@ export default function AiSidebar() {
   const conceptualDesign = useStore((state) => state.conceptualDesign)
 
   const [input, setInput] = useState('')
+  const [confirmingClear, setConfirmingClear] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -433,6 +408,10 @@ export default function AiSidebar() {
   const scrollRafRef = useRef<number | null>(null)
 
   const hasProject = Boolean(project)
+
+  useEffect(() => {
+    setConfirmingClear(false)
+  }, [project?.id])
 
   const scrollToBottom = (smooth = true) => {
     if (!scrollContainerRef.current) return
@@ -450,7 +429,6 @@ export default function AiSidebar() {
     setShowScrollBottom(!isNear && (aiRunning || messages.length > 2))
   }
 
-  // 自动平滑滚动到底部（仅在用户处于底部附近时吸附，防抖动）
   useEffect(() => {
     if (!isNearBottomRef.current) return
 
@@ -459,7 +437,6 @@ export default function AiSidebar() {
     }
 
     scrollRafRef.current = window.requestAnimationFrame(() => {
-      // 流式输出 chunk 时使用 instant 滚动，避免平滑滚动动画频繁排队导致页面抖动
       scrollToBottom(!aiRunning)
     })
 
@@ -468,9 +445,8 @@ export default function AiSidebar() {
         window.cancelAnimationFrame(scrollRafRef.current)
       }
     }
-  }, [messages, aiRunning, aiThinking, aiResult])
+  }, [messages, aiRunning, aiThinking, aiResult, aiError])
 
-  // 输入框自适应高度
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
@@ -482,7 +458,6 @@ export default function AiSidebar() {
     const text = input.trim()
     if (!text || !hasProject || aiRunning) return
 
-    // 检查是否为用户明确要求重新推导物理模型的快捷指令
     const isReDeriveCommand = /^(重新推导|重新生成|重新弄|重新推导物理表|重新推导物理模型|重新推导模型|重新生成物理表|再推导一次|重新推导一下|重新来|重新来过)$/i.test(
       text.replace(/[\s，。！!,.?？]+/g, ''),
     )
@@ -500,8 +475,10 @@ export default function AiSidebar() {
   }
 
   const clarificationCards = aiResult?.requirement?.clarification_cards ?? []
+  const clarificationQuestions = aiResult?.requirement?.questions ?? []
   const hasClarificationDeck = Boolean(
-    aiResult && aiResult.requirement && clarificationCards.length > 0
+    aiResult?.requirement?.need_clarification &&
+      (clarificationCards.length > 0 || clarificationQuestions.length > 0),
   )
 
   const quickPrompts = [
@@ -512,18 +489,21 @@ export default function AiSidebar() {
 
   return (
     <aside
-      className={`transition-all duration-200 ease-in-out flex flex-col border-r-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none shadow-sm z-20 shrink-0 overflow-hidden ${
-        aiSidebarOpen ? 'w-[360px] opacity-100' : 'w-0 opacity-0 border-r-0 pointer-events-none'
+      aria-label="AI 架构师侧边栏"
+      className={`transition-all duration-200 ease-in-out flex flex-col border-r-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none z-30 shrink-0 overflow-hidden ${
+        aiSidebarOpen
+          ? 'fixed inset-y-0 left-0 w-[360px] max-w-[92vw] lg:static opacity-100 shadow-[4px_0_16px_rgba(0,0,0,0.08)] lg:shadow-sm'
+          : 'w-0 opacity-0 border-r-0 pointer-events-none'
       }`}
     >
-      <div className="w-[360px] flex h-full flex-col">
-        {/* 1. 顶栏：标题、消息计数、清空与收起按键 */}
+      <div className="w-[360px] max-w-[92vw] flex h-full flex-col">
+        {/* 1. 顶栏：标题、消息计数、内联清空确认与收起按键 */}
         <div className="flex items-center justify-between border-b-[1.5px] border-[#1f1f1f] bg-white px-3.5 py-2.5 shadow-[0px_2px_0px_#1f1f1f]">
           <div className="flex items-center gap-2 min-w-0">
             <span className="flex h-2 w-2 rounded-full bg-[#df4e3e] shrink-0" />
-            <span className="text-xs font-bold uppercase tracking-wider text-[#1f1f1f] whitespace-nowrap">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[#1f1f1f] whitespace-nowrap">
               AI 架构师
-            </span>
+            </h2>
             {messages.length > 0 && (
               <span className="rounded-full bg-stone-100 px-1.5 py-0.2 text-[10px] font-mono text-stone-500 shrink-0">
                 {messages.length}
@@ -532,28 +512,50 @@ export default function AiSidebar() {
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            {/* 清空对话历史 */}
-            {messages.length > 0 && (
-              <button
-                type="button"
-                onClick={() => void clearProjectMessages()}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition"
-                title="清空当前项目的对话历史"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            )}
+            {messages.length > 0 &&
+              (confirmingClear ? (
+                <div className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[11px]">
+                  <span className="font-semibold text-rose-700">确认清空?</span>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingClear(false)}
+                    className="rounded px-1.5 py-0.2 font-semibold text-stone-600 hover:bg-white transition cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmingClear(false)
+                      void clearProjectMessages()
+                    }}
+                    className="rounded bg-[#df4e3e] px-1.5 py-0.2 font-bold text-white hover:bg-[#c84031] transition cursor-pointer"
+                  >
+                    清空
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  aria-label="清空当前项目的对话历史"
+                  onClick={() => setConfirmingClear(true)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                  title="清空当前项目的对话历史"
+                >
+                  <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              ))}
 
-            {/* 收起侧栏 */}
             <button
               type="button"
+              aria-label="收起 AI 侧栏"
               onClick={() => setAiSidebarOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-500 hover:text-[#1f1f1f] hover:bg-stone-100 transition"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-500 hover:text-[#1f1f1f] hover:bg-stone-100 transition cursor-pointer"
               title="收起 AI 侧栏 (⌘L)"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
               </svg>
             </button>
@@ -576,7 +578,7 @@ export default function AiSidebar() {
                 <DerivePhysicalCard />
 
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[2px_2px_0px_#1f1f1f]">
-                  <svg className="w-6 h-6 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <svg aria-hidden="true" className="w-6 h-6 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                 </div>
@@ -599,7 +601,7 @@ export default function AiSidebar() {
                         setInput(p)
                         textareaRef.current?.focus()
                       }}
-                      className="w-full text-left rounded-xl border border-stone-200 bg-white p-2.5 text-xs text-stone-700 hover:border-[#1f1f1f] hover:shadow-[2px_2px_0px_#1f1f1f] transition"
+                      className="w-full text-left rounded-xl border border-stone-200 bg-white p-2.5 text-xs text-stone-700 hover:border-[#1f1f1f] hover:shadow-[2px_2px_0px_#1f1f1f] transition cursor-pointer"
                     >
                       {p}
                     </button>
@@ -609,13 +611,13 @@ export default function AiSidebar() {
             ) : (
               <>
                 {messages.map((m) =>
-                  m.role === 'user' ? <UserBubble key={m.id} msg={m} /> : <AssistantCard key={m.id} msg={m} />
+                  m.role === 'user' ? <UserBubble key={m.id} msg={m} /> : <AssistantCard key={m.id} msg={m} />,
                 )}
                 <DerivePhysicalCard />
               </>
             )}
 
-            {/* 实时推理状态卡片 (当 AI 正在运行且尚未落库完成时展示) */}
+            {/* 实时推理状态卡片 */}
             {aiRunning && (
               <div className="rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3.5 shadow-[2px_2px_0px_#1f1f1f] space-y-2">
                 <div className="flex items-center justify-between gap-2">
@@ -638,24 +640,39 @@ export default function AiSidebar() {
                 </div>
 
                 {aiThinking && <ThinkingBlock thinking={aiThinking} defaultOpen={false} isStreaming={true} />}
-
-                {aiError && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 font-medium flex items-center gap-1.5">
-                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <span>{aiError}</span>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* 交互式需求编排确认卡片 (需要用户决策时) */}
+            {/* 常驻可见错误横幅（流结束后依然保留，支持一键关闭） */}
+            {aiError && (
+              <div
+                role="alert"
+                className="rounded-2xl border-[1.5px] border-rose-300 bg-rose-50 p-3 text-xs text-rose-700 font-medium flex items-start justify-between gap-2 shadow-[2px_2px_0px_#1f1f1f]"
+              >
+                <div className="flex items-start gap-2 min-w-0">
+                  <svg aria-hidden="true" className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span className="break-words select-text leading-relaxed">{aiError}</span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="关闭错误提示"
+                  onClick={dismissAiResult}
+                  className="shrink-0 rounded p-0.5 text-rose-500 hover:bg-rose-100 hover:text-rose-800 transition cursor-pointer"
+                  title="关闭错误提示"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* 交互式需求编排确认卡片 */}
             {hasClarificationDeck && aiResult?.requirement && (
               <div className="pt-1">
                 <ClarificationDeck
                   cards={clarificationCards}
-                  questions={aiResult.requirement.questions}
+                  questions={clarificationQuestions}
                   loading={aiRunning}
                   onDismiss={dismissAiResult}
                   onConfirm={async (decisionPrompt) => {
@@ -669,7 +686,6 @@ export default function AiSidebar() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* 向上回看时浮现的快速吸底按钮 */}
           {showScrollBottom && (
             <button
               type="button"
@@ -680,22 +696,30 @@ export default function AiSidebar() {
               }}
               className="absolute bottom-3 right-4 z-20 flex items-center gap-1.5 rounded-full border-[1.5px] border-[#1f1f1f] bg-white px-2.5 py-1 text-[11px] font-bold text-stone-700 shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#faf7f0] hover:text-[#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition select-none animate-in fade-in slide-in-from-bottom-2 duration-150 cursor-pointer"
             >
-              <svg className="w-3.5 h-3.5 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <svg aria-hidden="true" className="w-3.5 h-3.5 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
               </svg>
               <span>回到最新</span>
-              {aiRunning && (
-                <span className="h-1.5 w-1.5 rounded-full bg-[#df4e3e] animate-ping" />
-              )}
+              {aiRunning && <span className="h-1.5 w-1.5 rounded-full bg-[#df4e3e] animate-ping" />}
             </button>
           )}
         </div>
 
         {/* 3. 底部固定指令输入区 */}
-        <div className="border-t-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[0px_-2px_0px_#1f1f1f]">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submit()
+          }}
+          className="border-t-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[0px_-2px_0px_#1f1f1f]"
+        >
           <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#faf7f0] p-2.5 shadow-[2px_2px_0px_#1f1f1f] focus-within:border-[#df4e3e] transition">
+            <label htmlFor="ai-sidebar-textarea" className="sr-only">
+              向 AI 架构师描述您的业务需求或增量修改
+            </label>
             <textarea
               id="ai-sidebar-textarea"
+              name="prompt"
               ref={textareaRef}
               value={input}
               rows={2}
@@ -705,6 +729,12 @@ export default function AiSidebar() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) {
+                    if (!e.nativeEvent.isComposing) {
+                      e.preventDefault()
+                    }
+                    return
+                  }
                   e.preventDefault()
                   void submit()
                 }
@@ -722,6 +752,7 @@ export default function AiSidebar() {
                 {aiRunning ? (
                   <button
                     type="button"
+                    aria-label="停止生成"
                     onClick={() => stopAI()}
                     className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#1f1f1f] text-white shadow-[1px_1px_0px_#df4e3e] hover:bg-[#df4e3e] active:translate-x-0.5 active:translate-y-0.5 transition shrink-0 cursor-pointer"
                     title="停止生成"
@@ -730,13 +761,13 @@ export default function AiSidebar() {
                   </button>
                 ) : (
                   <button
-                    type="button"
-                    onClick={() => void submit()}
+                    type="submit"
+                    aria-label="发送需求"
                     disabled={!hasProject || input.trim().length === 0}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] text-white shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#c84031] disabled:opacity-40 disabled:cursor-not-allowed active:translate-x-0.5 active:translate-y-0.5 transition shrink-0"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] text-white shadow-[1px_1px_0px_#1f1f1f] hover:bg-[#c84031] disabled:opacity-40 disabled:cursor-not-allowed active:translate-x-0.5 active:translate-y-0.5 transition shrink-0 cursor-pointer"
                     title="发送需求 (Enter)"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
                     </svg>
                   </button>
@@ -744,7 +775,7 @@ export default function AiSidebar() {
               </div>
             </div>
           </div>
-        </div>
+        </form>
       </div>
     </aside>
   )

@@ -4,6 +4,27 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@xyflow') || id.includes('node_modules/d3-')) {
+            return 'vendor-flow'
+          }
+          if (id.includes('node_modules/dagre') || id.includes('node_modules/graphlib')) {
+            return 'vendor-dagre'
+          }
+          if (id.includes('node_modules/zod')) {
+            return 'vendor-zod'
+          }
+          if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) {
+            return 'vendor-react'
+          }
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

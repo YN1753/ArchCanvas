@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"{{ .ModuleName }}/internal/model"
 	"{{ .ModuleName }}/internal/service"
 	"{{ .ModuleName }}/pkg/response"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type {{ .Entity.StructName }}Handler struct {
@@ -50,7 +52,11 @@ func (h *{{ .Entity.StructName }}Handler) GetDetail(c *gin.Context) {
 	item, err := h.svc.GetDetail(c.Request.Context(), idStr)
 	{{- end }}
 	if err != nil {
-		response.Fail(c, 404, "记录不存在")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, 404, "记录不存在")
+			return
+		}
+		response.Fail(c, 500, "查询详情失败: "+err.Error())
 		return
 	}
 	response.Success(c, item)
@@ -95,6 +101,10 @@ func (h *{{ .Entity.StructName }}Handler) Update(c *gin.Context) {
 	}
 	{{- end }}
 	if err := h.svc.Update(c.Request.Context(), &item); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, 404, "记录不存在")
+			return
+		}
 		response.Fail(c, 500, "更新失败: "+err.Error())
 		return
 	}
@@ -118,7 +128,7 @@ func (h *{{ .Entity.StructName }}Handler) Delete(c *gin.Context) {
 	}
 	err = h.svc.Delete(c.Request.Context(), {{ .Entity.PrimaryKey.GoType }}(id))
 	{{- else }}
-	err = h.svc.Delete(c.Request.Context(), idStr)
+	err := h.svc.Delete(c.Request.Context(), idStr)
 	{{- end }}
 	if err != nil {
 		response.Fail(c, 500, "删除失败: "+err.Error())

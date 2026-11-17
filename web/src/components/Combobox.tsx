@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 interface ComboboxProps {
   value: string
@@ -18,7 +18,18 @@ export default function Combobox({
   inputClassName = '',
 }: ComboboxProps) {
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const listboxId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
+
+  const filteredSuggestions = useMemo(() => {
+    const query = value.trim().toLowerCase()
+    if (!query) return suggestions
+    const exactHit = suggestions.some((s) => s.toLowerCase() === query)
+    if (exactHit) return suggestions
+    const matches = suggestions.filter((s) => s.toLowerCase().includes(query))
+    return matches.length > 0 ? matches : suggestions
+  }, [suggestions, value])
 
   useEffect(() => {
     if (!open) return
@@ -33,25 +44,91 @@ export default function Combobox({
     return () => window.removeEventListener('mousedown', handleOutsideClick)
   }, [open])
 
+  useEffect(() => {
+    if (open) {
+      const idx = filteredSuggestions.findIndex((s) => s.toLowerCase() === value.toLowerCase())
+      setActiveIndex(idx >= 0 ? idx : 0)
+    }
+  }, [open, filteredSuggestions, value])
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+
+    if (event.key === 'Escape') {
+      if (open) {
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+      }
+      return
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (!open) {
+        setOpen(true)
+      } else if (filteredSuggestions.length > 0) {
+        setActiveIndex((prev) => (prev + 1) % filteredSuggestions.length)
+      }
+      return
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (!open) {
+        setOpen(true)
+      } else if (filteredSuggestions.length > 0) {
+        setActiveIndex((prev) => (prev - 1 + filteredSuggestions.length) % filteredSuggestions.length)
+      }
+      return
+    }
+
+    if (event.key === 'Enter' && open && activeIndex >= 0 && filteredSuggestions[activeIndex]) {
+      event.preventDefault()
+      onChange(filteredSuggestions[activeIndex])
+      setOpen(false)
+    }
+  }
+
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div
+      ref={containerRef}
+      className={`relative ${className}`}
+      onBlur={(event) => {
+        if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
+          setOpen(false)
+        }
+      }}
+    >
       <div className="relative flex items-center">
         <input
           type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-autocomplete="list"
+          aria-label={placeholder || '数据库字段类型'}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            onChange(e.target.value)
+            if (!open) setOpen(true)
+          }}
           onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           spellCheck={false}
+          autoComplete="off"
           className={`w-full pr-5 ${inputClassName}`}
         />
         <button
           type="button"
           tabIndex={-1}
+          aria-label="展开常用类型建议"
           onClick={() => setOpen((prev) => !prev)}
           className="absolute right-1 text-stone-400 hover:text-[#1f1f1f] p-0.5 rounded transition cursor-pointer"
         >
           <svg
+            aria-hidden="true"
             className={`w-3 h-3 transition-transform ${open ? 'rotate-180 text-[#df4e3e]' : ''}`}
             fill="none"
             viewBox="0 0 24 24"
@@ -64,28 +141,44 @@ export default function Combobox({
       </div>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100">
+        <div
+          id={listboxId}
+          role="listbox"
+          className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100"
+        >
           <div className="px-2 py-1 text-[10px] font-bold text-stone-500 border-b border-stone-200 mb-0.5">
             常用数据库类型
           </div>
-          {suggestions.map((suggestion) => {
+          {filteredSuggestions.map((suggestion, idx) => {
             const isSelected = suggestion.toLowerCase() === value.toLowerCase()
+            const isHighlighted = idx === activeIndex
             return (
-              <div
+              <button
                 key={suggestion}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onMouseEnter={() => setActiveIndex(idx)}
+                onMouseDown={(e) => {
+                  // 防止点击选项前触发输入框 blur 提前卸载列表
+                  e.preventDefault()
+                }}
                 onClick={() => {
                   onChange(suggestion)
                   setOpen(false)
                 }}
-                className={`flex items-center justify-between rounded px-2 py-1 text-xs font-mono cursor-pointer transition ${
+                className={`w-full flex items-center justify-between rounded px-2 py-1 text-left text-xs font-mono cursor-pointer transition ${
                   isSelected
                     ? 'bg-[#fdf0ee] font-bold text-[#df4e3e]'
-                    : 'text-[#1f1f1f] hover:bg-stone-100'
+                    : isHighlighted
+                      ? 'bg-stone-100 text-[#1f1f1f]'
+                      : 'text-[#1f1f1f] hover:bg-stone-100'
                 }`}
               >
                 <span>{suggestion}</span>
                 {isSelected && (
                   <svg
+                    aria-hidden="true"
                     className="w-3 h-3 text-[#df4e3e] shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
@@ -95,7 +188,7 @@ export default function Combobox({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-              </div>
+              </button>
             )
           })}
         </div>

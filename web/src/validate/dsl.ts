@@ -25,6 +25,13 @@ const indexDefinitionSchema = z.object({
   comment: z.string().optional(),
 })
 
+const defaultValueSchema = z.preprocess((val) => {
+  if (val === undefined || val === null) return undefined
+  if (typeof val === 'string') return val
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val)
+  return JSON.stringify(val)
+}, z.string().nullable().optional())
+
 const attributeSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -34,7 +41,7 @@ const attributeSchema = z.object({
   is_primary_key: z.boolean(),
   is_nullable: z.boolean(),
   is_unique: z.boolean(),
-  default_value: z.unknown().optional(),
+  default_value: defaultValueSchema,
   description: z.string().default(''),
 })
 

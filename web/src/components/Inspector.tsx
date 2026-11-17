@@ -20,7 +20,7 @@ import {
   getAttributeChineseName,
   getEntityChineseName,
 } from '../utils/chinese'
-import { detectJunctionTable } from '../flow/chenAdapter'
+import { detectJunctionTable, getChenBackingMode } from '../flow/chenAdapter'
 import Combobox from './Combobox'
 import Select from './Select'
 
@@ -617,6 +617,10 @@ function EntityInspector({ entityID }: { entityID: string }) {
     () => (entity ? detectJunctionTable(entity, allEntities) : { isJunction: false, businessFieldCount: 0 }),
     [entity, allEntities],
   )
+  const sqlString = useMemo(
+    () => (entity && tab === 'sql' ? entityToSQL(entity, previewDialect) : ''),
+    [entity, tab, previewDialect],
+  )
 
   if (!entity) {
     return (
@@ -627,7 +631,6 @@ function EntityInspector({ entityID }: { entityID: string }) {
   }
 
   const entityChinese = entity.comment?.trim() || getEntityChineseName(entity.name)
-  const sqlString = entityToSQL(entity, previewDialect)
 
   const handleAddIndex = () => {
     const existing = entity.indexes || []
@@ -902,14 +905,21 @@ function EntityInspector({ entityID }: { entityID: string }) {
 
 function ConceptRelationInspector({ relationID }: { relationID: string }) {
   const rel = useStore((state) =>
-    (state.conceptualDesign.relations || []).find(
-      (r) =>
-        (r.id && (r.id === relationID || `rel-${r.id}` === relationID || relationID.includes(r.id))) ||
-        (r.source_concept &&
-          r.target_concept &&
-          relationID.toLowerCase().includes(r.source_concept.toLowerCase()) &&
-          relationID.toLowerCase().includes(r.target_concept.toLowerCase())),
-    ),
+    (state.conceptualDesign.relations || []).find((r) => {
+      if (r.id && (r.id === relationID || `rel-${r.id}` === relationID)) {
+        return true
+      }
+      const srcCid = `concept_${r.source_concept.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+      const tgtCid = `concept_${r.target_concept.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+      const fallbackCid = `rel_${srcCid}_${tgtCid}`
+      const fallbackRaw = `rel_${r.source_concept}_${r.target_concept}`
+      return (
+        relationID === fallbackCid ||
+        relationID === `rel-${fallbackCid}` ||
+        relationID === fallbackRaw ||
+        relationID === `rel-${fallbackRaw}`
+      )
+    }),
   )
   const updateConceptRelation = useStore((state) => state.updateConceptRelation)
   const deleteConceptRelation = useStore((state) => state.deleteConceptRelation)
@@ -1037,7 +1047,8 @@ function RelationInspector({ relationID }: { relationID: string }) {
     sublabel: entity.comment?.trim() || getEntityChineseName(entity.name, entity.comment),
   }))
 
-  const currentCard = (relation.cardinality || (relation as any).relation_type_id || 'one_to_many') as Cardinality
+  const currentCard: Cardinality =
+    relation.cardinality || (relation.relation_type_id as Cardinality | undefined) || 'one_to_many'
   const relLabel = CARDINALITY_CHINESE[currentCard]?.label ?? '关联'
 
   return (
@@ -1184,7 +1195,11 @@ function OverviewInspector() {
 export default function Inspector() {
   const selection = useStore((state) => state.selection)
   const canvasViewMode = useStore((state) => state.canvasViewMode)
+  const conceptualDesign = useStore((state) => state.conceptualDesign)
+  const design = useStore((state) => state.design)
+  const agentPhase = useStore((state) => state.agentPhase)
   const isChenView = canvasViewMode === 'chen'
+  const chenBackingMode = getChenBackingMode({ conceptualDesign, design, agentPhase })
   const inspectorOpen = useStore((state) => state.inspectorOpen)
   const setInspectorOpen = useStore((state) => state.setInspectorOpen)
   const select = useStore((state) => state.select)
@@ -1207,16 +1222,21 @@ export default function Inspector() {
 
   const hasConceptRelation = useStore((state) =>
     selection?.kind === 'relation'
-      ? state.conceptualDesign.relations.some(
-          (r) =>
-            r.id === selection.id ||
-            `rel-${r.id}` === selection.id ||
-            (r.id && selection.id.includes(r.id)) ||
-            (r.source_concept &&
-              r.target_concept &&
-              selection.id.toLowerCase().includes(r.source_concept.toLowerCase()) &&
-              selection.id.toLowerCase().includes(r.target_concept.toLowerCase())),
-        )
+      ? state.conceptualDesign.relations.some((r) => {
+          if (r.id && (r.id === selection.id || `rel-${r.id}` === selection.id)) {
+            return true
+          }
+          const srcCid = `concept_${r.source_concept.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+          const tgtCid = `concept_${r.target_concept.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+          const fallbackCid = `rel_${srcCid}_${tgtCid}`
+          const fallbackRaw = `rel_${r.source_concept}_${r.target_concept}`
+          return (
+            selection.id === fallbackCid ||
+            selection.id === `rel-${fallbackCid}` ||
+            selection.id === fallbackRaw ||
+            selection.id === `rel-${fallbackRaw}`
+          )
+        })
       : false,
   )
   const hasPhysicalRelation = useStore((state) =>
@@ -1232,7 +1252,7 @@ export default function Inspector() {
 
   const inspectorTitle = useMemo(() => {
     if (!selection) return '项目设计诊断总览'
-    if (isChenView) {
+    if (isChenView && chenBackingMode === 'conceptual') {
       if (selection.kind === 'entity') {
         return hasConcept ? '业务概念属性检查器' : hasPhysicalEntity ? '数据实体表检查器' : '概念实体检查器'
       }
@@ -1248,11 +1268,11 @@ export default function Inspector() {
       return hasPhysicalRelation ? '物理外键与关联配置' : '关系属性配置'
     }
     return '架构检查器'
-  }, [selection, isChenView, hasConcept, hasPhysicalEntity, hasConceptRelation, hasPhysicalRelation])
+  }, [selection, isChenView, chenBackingMode, hasConcept, hasPhysicalEntity, hasConceptRelation, hasPhysicalRelation])
 
   const renderEntityContent = () => {
     if (!selection || selection.kind !== 'entity') return null
-    if (isChenView) {
+    if (isChenView && chenBackingMode === 'conceptual') {
       if (hasConcept) return <ConceptInspector conceptID={selection.id} />
       if (hasPhysicalEntity) return <EntityInspector entityID={selection.id} />
       return <ConceptInspector conceptID={selection.id} />
@@ -1264,7 +1284,7 @@ export default function Inspector() {
 
   const renderRelationContent = () => {
     if (!selection || selection.kind !== 'relation') return null
-    if (isChenView) {
+    if (isChenView && chenBackingMode === 'conceptual') {
       if (hasConceptRelation) return <ConceptRelationInspector relationID={selection.id} />
       if (hasPhysicalRelation) return <RelationInspector relationID={selection.id} />
       return <ConceptRelationInspector relationID={selection.id} />
@@ -1276,8 +1296,11 @@ export default function Inspector() {
 
   return (
     <aside
-      className={`transition-all duration-200 ease-in-out flex flex-col border-l-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none shadow-sm z-20 shrink-0 overflow-hidden ${
-        inspectorOpen ? 'w-[340px] opacity-100' : 'w-0 opacity-0 border-l-0 pointer-events-none'
+      aria-label="架构属性检查器"
+      className={`transition-all duration-200 ease-in-out flex flex-col border-l-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none shadow-sm z-30 shrink-0 overflow-hidden ${
+        inspectorOpen
+          ? 'fixed inset-y-0 right-0 w-[340px] max-w-[92vw] xl:static opacity-100 shadow-[-4px_0_16px_rgba(0,0,0,0.08)] xl:shadow-sm'
+          : 'w-0 opacity-0 border-l-0 pointer-events-none'
       }`}
     >
       <div className="w-[340px] flex h-full flex-col">

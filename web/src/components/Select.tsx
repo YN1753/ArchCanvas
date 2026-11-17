@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 export interface SelectOption<T = string> {
   value: T
@@ -37,12 +37,29 @@ export default function Select<T extends string = string>({
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const listboxId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const enableSearch = searchable ?? options.length > 8
 
-  // 点击外部关闭
+  const selectedOption = useMemo(
+    () => options.find((opt) => opt.value === value),
+    [options, value],
+  )
+
+  const filteredOptions = useMemo(() => {
+    if (!search.trim()) return options
+    const query = search.toLowerCase().trim()
+    return options.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(query) ||
+        (opt.sublabel && opt.sublabel.toLowerCase().includes(query)) ||
+        (opt.badge && opt.badge.toLowerCase().includes(query)),
+    )
+  }, [options, search])
+
   useEffect(() => {
     if (!open) return
 
@@ -57,46 +74,75 @@ export default function Select<T extends string = string>({
     return () => window.removeEventListener('mousedown', handleOutsideClick)
   }, [open])
 
-  // ESC 键关闭
   useEffect(() => {
-    if (!open) return
+    if (open) {
+      const idx = filteredOptions.findIndex((opt) => opt.value === value && !opt.disabled)
+      setActiveIndex(idx >= 0 ? idx : filteredOptions.findIndex((opt) => !opt.disabled))
+      if (enableSearch) {
+        const timer = window.setTimeout(() => {
+          searchInputRef.current?.focus()
+        }, 40)
+        return () => window.clearTimeout(timer)
+      }
+    }
+  }, [open, enableSearch, filteredOptions, value])
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
+  const moveHighlight = (delta: 1 | -1) => {
+    if (filteredOptions.length === 0) return
+    let idx = activeIndex
+    for (let step = 0; step < filteredOptions.length; step++) {
+      idx = (idx + delta + filteredOptions.length) % filteredOptions.length
+      if (!filteredOptions[idx]?.disabled) {
+        setActiveIndex(idx)
+        return
+      }
+    }
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (disabled) return
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+
+    if (event.key === 'Escape') {
+      if (open) {
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+        setSearch('')
+      }
+      return
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (!open) {
+        setOpen(true)
+      } else {
+        moveHighlight(1)
+      }
+      return
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (!open) {
+        setOpen(true)
+      } else {
+        moveHighlight(-1)
+      }
+      return
+    }
+
+    if (event.key === 'Enter' && open) {
+      event.preventDefault()
+      const picked = filteredOptions[activeIndex]
+      if (picked && !picked.disabled) {
+        onChange(picked.value)
         setOpen(false)
         setSearch('')
       }
     }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open])
-
-  // 聚焦搜索输入框
-  useEffect(() => {
-    if (open && enableSearch) {
-      const timer = window.setTimeout(() => {
-        searchInputRef.current?.focus()
-      }, 50)
-      return () => window.clearTimeout(timer)
-    }
-  }, [open, enableSearch])
-
-  const selectedOption = useMemo(
-    () => options.find((opt) => opt.value === value),
-    [options, value]
-  )
-
-  const filteredOptions = useMemo(() => {
-    if (!search.trim()) return options
-    const query = search.toLowerCase().trim()
-    return options.filter(
-      (opt) =>
-        opt.label.toLowerCase().includes(query) ||
-        (opt.sublabel && opt.sublabel.toLowerCase().includes(query)) ||
-        (opt.badge && opt.badge.toLowerCase().includes(query))
-    )
-  }, [options, search])
+  }
 
   const isSmall = size === 'sm'
 
@@ -105,18 +151,27 @@ export default function Select<T extends string = string>({
       ref={containerRef}
       className={`relative inline-block ${className}`}
       title={title}
+      onKeyDown={handleKeyDown}
+      onBlur={(event) => {
+        if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
+          setOpen(false)
+          setSearch('')
+        }
+      }}
     >
-      {/* 自定义触发器按钮 */}
       <button
         type="button"
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         onClick={() => {
           if (!disabled) {
             setOpen((prev) => !prev)
             if (open) setSearch('')
           }
         }}
-        className={`w-full flex items-center justify-between gap-1.5 rounded border-[1.5px] bg-white transition select-none outline-none shadow-[1px_1px_0px_#1f1f1f] ${
+        className={`w-full flex items-center justify-between gap-1.5 rounded border-[1.5px] bg-white transition select-none outline-none focus-visible:ring-2 focus-visible:ring-[#df4e3e]/30 shadow-[1px_1px_0px_#1f1f1f] ${
           isSmall ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
         } ${
           open
@@ -139,8 +194,8 @@ export default function Select<T extends string = string>({
           )}
         </span>
 
-        {/* 自定义指示箭头 */}
         <svg
+          aria-hidden="true"
           className={`shrink-0 w-3 h-3 text-stone-400 transition-transform duration-150 ${
             open ? 'rotate-180 text-[#df4e3e]' : ''
           }`}
@@ -153,19 +208,18 @@ export default function Select<T extends string = string>({
         </svg>
       </button>
 
-      {/* 自定义下拉菜单面板 */}
       {open && (
         <div
           className={`absolute left-0 z-50 min-w-full overflow-hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white shadow-[3px_3px_0px_#1f1f1f] ${
             placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'
           } ${dropdownClassName}`}
         >
-          {/* 搜索框 */}
           {enableSearch && (
             <div className="border-b border-stone-200 p-1.5 bg-[#faf7f0]">
               <input
                 ref={searchInputRef}
                 type="text"
+                aria-label="搜索下拉选项"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索选项..."
@@ -174,18 +228,29 @@ export default function Select<T extends string = string>({
             </div>
           )}
 
-          {/* 选项清单（去除多余滚动条，保留顺畅滚动手感） */}
-          <div className="max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5">
+          <div
+            id={listboxId}
+            role="listbox"
+            className="max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5"
+          >
             {filteredOptions.length === 0 ? (
               <div className="px-3 py-3 text-center text-xs text-stone-400">
                 未找到匹配项
               </div>
             ) : (
-              filteredOptions.map((opt) => {
+              filteredOptions.map((opt, idx) => {
                 const isSelected = opt.value === value
+                const isHighlighted = idx === activeIndex
                 return (
-                  <div
+                  <button
                     key={String(opt.value)}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    disabled={opt.disabled}
+                    onMouseEnter={() => {
+                      if (!opt.disabled) setActiveIndex(idx)
+                    }}
                     onClick={() => {
                       if (!opt.disabled) {
                         onChange(opt.value)
@@ -193,12 +258,14 @@ export default function Select<T extends string = string>({
                         setSearch('')
                       }
                     }}
-                    className={`flex items-center justify-between gap-2 rounded px-2.5 py-1.5 transition select-none text-xs ${
+                    className={`w-full flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-left transition select-none text-xs ${
                       opt.disabled
                         ? 'cursor-not-allowed opacity-40 text-stone-400'
                         : isSelected
                           ? 'bg-[#fdf0ee] font-bold text-[#df4e3e] cursor-pointer'
-                          : 'text-[#1f1f1f] hover:bg-stone-100 cursor-pointer'
+                          : isHighlighted
+                            ? 'bg-stone-100 text-[#1f1f1f] cursor-pointer'
+                            : 'text-[#1f1f1f] hover:bg-stone-100 cursor-pointer'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
@@ -219,6 +286,7 @@ export default function Select<T extends string = string>({
 
                     {isSelected && (
                       <svg
+                        aria-hidden="true"
                         className="w-3.5 h-3.5 text-[#df4e3e] shrink-0"
                         fill="none"
                         viewBox="0 0 24 24"
@@ -228,7 +296,7 @@ export default function Select<T extends string = string>({
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
                     )}
-                  </div>
+                  </button>
                 )
               })
             )}

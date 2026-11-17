@@ -5,6 +5,7 @@ import {
   getBezierPath,
   type EdgeProps,
 } from '@xyflow/react'
+import { memo } from 'react'
 
 import type { Cardinality } from '../types/dsl'
 import { CARDINALITY_LABEL } from '../types/dsl'
@@ -35,11 +36,9 @@ function CrowFoot({
 
   switch (position) {
     case Position.Left:
-      // 目标节点在右侧，边从左向右接入：在 (x - depth, y) 处分叉，紧贴 (x, y ± spread)
       d = `M ${x} ${y - spread} L ${x - depth} ${y} L ${x} ${y + spread}`
       break
     case Position.Right:
-      // 源节点在左侧，边从左向右伸出：在 (x + depth, y) 处分叉，紧贴 (x, y ± spread)
       d = `M ${x} ${y - spread} L ${x + depth} ${y} L ${x} ${y + spread}`
       break
     default:
@@ -70,7 +69,15 @@ function endsOf(cardinality: Cardinality): { sourceMany: boolean; targetMany: bo
   }
 }
 
-export default function RelationEdge({
+type EdgeVisualState =
+  | 'idle'
+  | 'selected'
+  | 'hovered'
+  | 'source-focus'
+  | 'target-focus'
+  | 'dimmed'
+
+function RelationEdge({
   id,
   sourceX,
   sourceY,
@@ -97,82 +104,79 @@ export default function RelationEdge({
 
   const deleteRelation = useStore((state) => state.deleteRelation)
   const select = useStore((state) => state.select)
-  const selection = useStore((state) => state.selection)
-  const hoveredEntityId = useStore((state) => state.hoveredEntityId)
-  const hoveredRelationId = useStore((state) => state.hoveredRelationId)
   const setHoveredRelationId = useStore((state) => state.setHoveredRelationId)
 
   const relation = data?.relation
+  const srcEntityId = relation?.source_entity_id
+  const tgtEntityId = relation?.target_entity_id
+
+  // 原始字符串粒度 Selector：鼠标在非关联节点间移动时返回值恒为 'dimmed'，彻底消除全图连线无效重绘
+  const visualState: EdgeVisualState = useStore((state) => {
+    const sel = state.selection
+    const hovEnt = state.hoveredEntityId
+    const hovRel = state.hoveredRelationId
+
+    if (isEdgeSelectedFromProps || (sel?.kind === 'relation' && sel.id === id)) {
+      return 'selected'
+    }
+    if (hovRel === id) {
+      return 'hovered'
+    }
+    const isSrcHovered = hovEnt !== null && hovEnt === srcEntityId
+    const isTgtHovered = hovEnt !== null && hovEnt === tgtEntityId
+    const isSrcSelected = sel?.kind === 'entity' && sel.id === srcEntityId
+    const isTgtSelected = sel?.kind === 'entity' && sel.id === tgtEntityId
+
+    if (isSrcHovered || isSrcSelected) {
+      return 'source-focus'
+    }
+    if (isTgtHovered || isTgtSelected) {
+      return 'target-focus'
+    }
+    if (sel || hovEnt || hovRel) {
+      return 'dimmed'
+    }
+    return 'idle'
+  })
+
   const cardinality = relation?.cardinality ?? 'one_to_many'
   const { sourceMany, targetMany } = endsOf(cardinality)
 
-  // 1. 判断是否被直接选中，或所属源/宿实体节点被选中
-  const isSelected = isEdgeSelectedFromProps || (selection?.kind === 'relation' && selection.id === id)
-  const isNodeSelected =
-    selection?.kind === 'entity' &&
-    (selection.id === relation?.source_entity_id || selection.id === relation?.target_entity_id)
+  const isSelected = visualState === 'selected'
+  const isHovered = visualState === 'hovered'
+  const isFocused =
+    isSelected || isHovered || visualState === 'source-focus' || visualState === 'target-focus'
 
-  // 2. 判断是否被直接悬停，或所属源/宿实体节点被悬停
-  const isHovered = hoveredRelationId === id
-  const isNodeHovered =
-    hoveredEntityId !== null &&
-    (hoveredEntityId === relation?.source_entity_id || hoveredEntityId === relation?.target_entity_id)
-
-  // 3. 全局是否有任何实体或边正处于交互状态中
-  const hasGlobalFocus = Boolean(
-    selection || hoveredEntityId || hoveredRelationId
-  )
-
-  const isFocused = isSelected || isNodeSelected || isHovered || isNodeHovered
-
-  // 自适应计算关系徽标坐标：
-  // 1. 对于相邻两列连线（|dx| <= 360）：使用默认贝塞尔曲线中点（t = 0.5），自然居中在两表之间的通道正中；
-  // 2. 对于跨列长连线（|dx| > 360，如 users ➔ reviews 跨越多列）：
-  //    若使用全长百分比（如 50% 或 78%），极易砸在中间途经的表格腹部或边框上（如之前的 remark 字段碰撞）。
-  //    因此将徽标稳定安置在进门前的平滑走廊中（距离目标端点 55px 处）：
-  //    - 不贴死在锚点上（保留 55px 宽敞距离，不拥挤）；
-  //    - 绝对处在列间纯净通道中（与两边表框均有 35px+ 留白，绝不撞表）；
-  //    - 且稳稳浮现在该外键字段入边的水平引导线上。
   const dx = targetX - sourceX
   let labelX = defaultLabelX
   let labelY = defaultLabelY
 
   if (Math.abs(dx) > 360) {
-    const isSourceFocus =
-      (hoveredEntityId && relation && hoveredEntityId === relation.source_entity_id) ||
-      (selection?.kind === 'entity' && selection.id === relation?.source_entity_id)
-
-    if (isSourceFocus) {
-      // 聚焦源表时，徽标舒展在出表后 55px 的平滑走廊上
+    if (visualState === 'source-focus') {
       labelX = dx > 0 ? sourceX + 55 : sourceX - 55
       labelY = sourceY
     } else {
-      // 默认及聚焦目标表时，徽标平滑浮现在进表前 55px 的平滑走廊上
       labelX = dx > 0 ? targetX - 55 : targetX + 55
       labelY = targetY
     }
   }
 
-  // 样式三态分级：
-  // State 1: 无焦点交互（常驻素雅态）—— 柔和 1.25px 浅灰线，隐藏 1:N 徽标，还画板以干净呼吸感
-  // State 2: 交互焦点态（选中或悬停）—— 加粗高亮为墨黑或赤陶红，展现 1:N 徽标
-  // State 3: 背景退避态（非关联边）—— 自动大幅淡化至 12% 半透明，彻底消除铁丝网毛线团感
   let stroke = '#9ca3af'
   let strokeWidth = 1.25
   let opacity = 0.55
   let showBadge = false
 
-  if (!hasGlobalFocus) {
+  if (visualState === 'idle') {
     stroke = '#9ca3af'
     strokeWidth = 1.25
     opacity = 0.55
     showBadge = false
   } else if (isFocused) {
     if (isSelected || isHovered) {
-      stroke = '#df4e3e' // 赤陶红高亮
+      stroke = '#df4e3e'
       strokeWidth = 2.5
     } else {
-      stroke = '#1f1f1f' // 所属表交互时的加粗墨黑线
+      stroke = '#1f1f1f'
       strokeWidth = 2.0
     }
     opacity = 1
@@ -192,7 +196,6 @@ export default function RelationEdge({
           transition: 'opacity 0.2s ease, stroke 0.2s ease',
         }}
       >
-        {/* 隐藏的加宽点击响应热区，大幅提升鼠标点选关系的灵敏度 */}
         <path
           d={path}
           fill="none"
@@ -207,7 +210,6 @@ export default function RelationEdge({
           }}
         />
 
-        {/* 贝塞尔平滑流线 */}
         <BaseEdge
           path={path}
           markerEnd={markerEnd}
@@ -218,7 +220,6 @@ export default function RelationEdge({
           }}
         />
 
-        {/* 规范鸦爪符号标注端点（仅在“多”端渲染贴边抓手） */}
         {sourceMany && (
           <CrowFoot
             x={sourceX}
@@ -239,7 +240,6 @@ export default function RelationEdge({
         )}
       </g>
 
-      {/* 关系基数徽章：仅在焦点高亮时平滑渐现浮现，静止时隐去，彻底消灭全屏浮空药丸 */}
       <EdgeLabelRenderer>
         <div
           onClick={(e) => {
@@ -256,8 +256,8 @@ export default function RelationEdge({
             isSelected
               ? 'border-[#df4e3e] bg-[#fdf0ee] text-[#df4e3e] shadow-[2px_2px_0px_#df4e3e]'
               : isHovered
-              ? 'border-[#df4e3e] bg-white text-[#df4e3e] shadow-[2px_2px_0px_#df4e3e]'
-              : 'border-[#1f1f1f] bg-white text-[#1f1f1f]'
+                ? 'border-[#df4e3e] bg-white text-[#df4e3e] shadow-[2px_2px_0px_#df4e3e]'
+                : 'border-[#1f1f1f] bg-white text-[#1f1f1f]'
           }`}
           style={{
             position: 'absolute',
@@ -268,6 +268,7 @@ export default function RelationEdge({
           {isSelected && (
             <button
               type="button"
+              aria-label="删除此关联关系"
               title="删除此关联关系"
               onClick={(e) => {
                 e.stopPropagation()
@@ -283,3 +284,5 @@ export default function RelationEdge({
     </>
   )
 }
+
+export default memo(RelationEdge)

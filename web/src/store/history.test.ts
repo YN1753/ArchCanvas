@@ -146,4 +146,119 @@ useStore.setState({
   console.log('✓ 概念模型（陈氏 ER）新增/修改/关联与撤销/重做集成测试通过')
 }
 
+// 5. 测试防抖窗口内输入后改回原值（空净变更自动弹出栈顶补丁）与陈氏排版重置撤销
+{
+  useStore.getState().resetHistory()
+  useStore.setState({
+    design: {
+      entities: [
+        {
+          id: 'ent_revert_test',
+          name: 'accounts',
+          attributes: [],
+        },
+      ],
+      relations: [],
+    },
+    chenPositions: { ent_revert_test: { x: 320, y: 180 } },
+    selection: null,
+  })
+
+  assert.equal(useStore.getState().canUndo, false)
+
+  // 600ms 防抖窗口内先改名再立刻改回原名，净补丁为空，必须自动弹出空历史项
+  useStore.getState().renameEntity('ent_revert_test', 'accounts_temp')
+  assert.equal(useStore.getState().canUndo, true)
+  useStore.getState().renameEntity('ent_revert_test', 'accounts')
+  assert.equal(useStore.getState().design.entities[0].name, 'accounts')
+  assert.equal(useStore.getState().canUndo, false, '防抖窗口内改回原值后历史栈不应残留空补丁')
+
+  // resetChenPositions 必须接入历史栈支持撤销与重做
+  useStore.getState().resetChenPositions()
+  assert.deepEqual(useStore.getState().chenPositions, {})
+  assert.equal(useStore.getState().canUndo, true)
+
+  useStore.getState().undo()
+  assert.deepEqual(useStore.getState().chenPositions, { ent_revert_test: { x: 320, y: 180 } })
+
+  useStore.getState().redo()
+  assert.deepEqual(useStore.getState().chenPositions, {})
+
+  console.log('✓ 防抖还原空补丁清理与陈氏排版重置 Undo/Redo 测试通过')
+}
+
+// 6. 测试飞行中保存并发修改保护（[P0-FE-01] mutationCount 防回滚 & saveNow 等待在途请求）
+await (async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    let fetchCount = 0
+    let resolveFirstSave: () => void = () => {}
+
+    globalThis.fetch = (async (_input, init) => {
+      fetchCount++
+      const callIdx = fetchCount
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        entities?: unknown[]
+        relations?: unknown[]
+      }
+      if (callIdx === 1) {
+        await new Promise<void>((r) => {
+          resolveFirstSave = r
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: {
+            design: {
+              entities: body.entities || [],
+              relations: body.relations || [],
+            },
+            warnings: [],
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    useStore.getState().resetHistory()
+    useStore.setState({
+      project: {
+        id: 'proj_concurrent_save',
+        name: '并发保存测试项目',
+        description: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      design: { entities: [], relations: [] },
+      selection: null,
+    })
+
+    // 第一次修改并立即触发在途保存
+    useStore.getState().addEntity({ x: 100, y: 100 })
+    assert.equal(useStore.getState().design.entities.length, 1)
+    const firstSavePromise = useStore.getState().flushSave()
+
+    // 在第一次保存请求尚未返回（in-flight）期间，用户新增第二张表
+    useStore.getState().addEntity({ x: 400, y: 100 })
+    assert.equal(useStore.getState().design.entities.length, 2)
+
+    // 放行第一次旧响应：绝不能将画布回滚回 1 张表，且 saveNow 必须等待全部落盘完成
+    const saveNowPromise = useStore.getState().saveNow()
+    resolveFirstSave?.()
+    await Promise.all([firstSavePromise, saveNowPromise])
+
+    assert.equal(useStore.getState().design.entities.length, 2, '飞行中旧响应不得覆盖并发新增的第二张实体表')
+    assert.ok(fetchCount >= 2, '在途期间产生的第二次修改必须自动补发落盘请求')
+    console.log('✓ 飞行中保存并发修改保护与 saveNow 等待落盘回归测试通过')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})()
+
+// 清理防抖保存定时器，防止阻塞测试进程退出
+useStore.getState().resetHistory()
+useStore.setState({ project: null })
+
 console.log('History Slice 全部集成测试通过！\n')

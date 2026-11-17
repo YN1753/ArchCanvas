@@ -27,7 +27,6 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
   },
 
   addEntity(customPosition) {
-    get().recordSnapshot()
     const { design } = get()
     const name = uniqueEntityName(design, 'new_table')
     const entity: Entity = {
@@ -60,8 +59,11 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
           [entity.id],
         )
 
-    get().recompute(placed, { selection: { kind: 'entity', id: entity.id } })
-    get().scheduleSave()
+    get().mutate(placed, undefined, {
+      selection: { kind: 'entity', id: entity.id },
+      inspectorOpen: true,
+    })
+    return entity.id
   },
 
   renameEntity(id, name) {
@@ -79,18 +81,23 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
   },
 
   deleteEntity(id) {
-    get().recordSnapshot()
     const { design, selection, chenPositions, project } = get()
+    const removedRelationIDs = new Set(
+      design.relations
+        .filter((relation) => relation.source_entity_id === id || relation.target_entity_id === id)
+        .map((relation) => relation.id),
+    )
     const next: ERDesign = {
       entities: design.entities.filter((entity) => entity.id !== id),
-      relations: design.relations.filter(
-        (relation) => relation.source_entity_id !== id && relation.target_entity_id !== id,
-      ),
+      relations: design.relations.filter((relation) => !removedRelationIDs.has(relation.id)),
     }
-    const removedRelations = design.relations.length - next.relations.length
+    const removedRelations = removedRelationIDs.size
     const nextChenPositions = { ...chenPositions }
     delete nextChenPositions[id]
     delete nextChenPositions[`junction-${id}`]
+    for (const relId of removedRelationIDs) {
+      delete nextChenPositions[`rel-${relId}`]
+    }
     for (const key of Object.keys(nextChenPositions)) {
       if (key.startsWith(`attr-${id}-`)) {
         delete nextChenPositions[key]
@@ -99,19 +106,25 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
     if (project) {
       saveChenPositions(project.id, nextChenPositions)
     }
-    set({ chenPositions: nextChenPositions })
-    get().recompute(next, {
-      selection: selection?.kind === 'entity' && selection.id === id ? null : selection,
+
+    const nextSelection =
+      (selection?.kind === 'entity' && selection.id === id) ||
+      (selection?.kind === 'relation' && removedRelationIDs.has(selection.id))
+        ? null
+        : selection
+
+    get().mutate(next, undefined, {
+      chenPositions: nextChenPositions,
+      selection: nextSelection,
+      ...(removedRelations > 0
+        ? {
+            toast: {
+              kind: 'info',
+              text: `已删除实体，并连带移除 ${removedRelations} 条关系`,
+            },
+          }
+        : {}),
     })
-    get().scheduleSave()
-    if (removedRelations > 0) {
-      set({
-        toast: {
-          kind: 'info',
-          text: `已删除实体，并连带移除 ${removedRelations} 条关系`,
-        },
-      })
-    }
   },
 
   addAttribute(entityID) {
@@ -217,61 +230,65 @@ export const createErDesignSlice: StateCreator<Store, [], [], ErDesignSlice> = (
       return
     }
 
-    get().recordSnapshot()
     const relation: Relation = {
       id: localID('rel'),
       source_entity_id: sourceEntityID,
       target_entity_id: targetEntityID,
       cardinality: 'one_to_many',
     }
-    get().recompute(
+    get().mutate(
       { ...design, relations: [...design.relations, relation] },
-      { selection: { kind: 'relation', id: relation.id } },
+      undefined,
+      {
+        selection: { kind: 'relation', id: relation.id },
+        inspectorOpen: true,
+      },
     )
-    get().scheduleSave()
   },
 
   updateRelation(id, patch) {
-    get().recordSnapshot()
     const { design } = get()
-    get().recompute({
-      ...design,
-      relations: design.relations.map((relation) =>
-        relation.id === id ? { ...relation, ...patch } : relation,
-      ),
-    })
-    get().scheduleSave()
+    get().mutate(
+      {
+        ...design,
+        relations: design.relations.map((relation) =>
+          relation.id === id ? { ...relation, ...patch } : relation,
+        ),
+      },
+      `update_relation_${id}`,
+    )
   },
 
   deleteRelation(id) {
-    get().recordSnapshot()
     const { design, selection, chenPositions, project } = get()
     const nextChenPositions = { ...chenPositions }
     delete nextChenPositions[`rel-${id}`]
     if (project) {
       saveChenPositions(project.id, nextChenPositions)
     }
-    set({ chenPositions: nextChenPositions })
-    get().recompute(
+    get().mutate(
       {
         ...design,
         relations: design.relations.filter((relation) => relation.id !== id),
       },
-      { selection: selection?.kind === 'relation' && selection.id === id ? null : selection },
+      undefined,
+      {
+        chenPositions: nextChenPositions,
+        selection: selection?.kind === 'relation' && selection.id === id ? null : selection,
+      },
     )
-    get().scheduleSave()
   },
 
   autoLayout() {
-    get().recordSnapshot()
     const { design } = get()
-    get().recompute(layoutDesign(design))
-    get().scheduleSave()
+    get().mutate(layoutDesign(design))
   },
 
   importDesign(design) {
-    get().recordSnapshot()
-    get().recompute(ensureLayout(design), { selection: null, aiResult: null, aiError: null })
-    get().scheduleSave()
+    get().mutate(ensureLayout(design), undefined, {
+      selection: null,
+      aiResult: null,
+      aiError: null,
+    })
   },
 })

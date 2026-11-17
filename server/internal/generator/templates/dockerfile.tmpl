@@ -1,16 +1,22 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
-COPY go.mod go.sum* ./
-RUN go mod download
+{{- if eq .DBDriver "sqlite" }}
+RUN apk add --no-cache gcc musl-dev
+{{- end }}
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/server cmd/server/main.go
+RUN go mod tidy
+{{- if eq .DBDriver "sqlite" }}
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/server ./cmd/server
+{{- else }}
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/server ./cmd/server
+{{- end }}
 
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/server /app/server
 COPY configs/ /app/configs/
 
-EXPOSE {{ .Port }}
+EXPOSE {{ .PortNum }}
 CMD ["/app/server"]

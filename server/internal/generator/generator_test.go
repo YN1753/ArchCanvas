@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"archcanvas/internal/domain"
-	"archcanvas/request"
+	"archcanvas/internal/dto"
 )
 
 func TestGenerateFileTreeFromDesign(t *testing.T) {
@@ -163,7 +163,7 @@ func TestGenerateFileTreeFromDesign(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:        "proj_123",
 		ModuleName:       "example.com/myapp",
 		Port:             "8080",
@@ -332,7 +332,7 @@ func TestGenerateDuplicateAndSelfReferencingRelations(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:  "proj_tree",
 		ModuleName: "example.com/treeapp",
 		Port:       "8080",
@@ -458,7 +458,7 @@ func TestGenerateManyToManyAssociations(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:  "proj_m2m",
 		ModuleName: "example.com/m2mapp",
 		Port:       "8080",
@@ -555,7 +555,7 @@ func TestGenerateIntegerPrimaryKeyVariants(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:  "proj_pk_variants",
 		ModuleName: "example.com/pkapp",
 		Port:       "8080",
@@ -676,7 +676,7 @@ func TestGenerateFileTree_E2EBuild(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:  "proj_e2e_build",
 		ModuleName: "example.com/e2eapp",
 		Port:       "8080",
@@ -787,7 +787,7 @@ func TestGenerateKeywordsAndInvalidIdentifiers(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:  "proj_kw_test",
 		ModuleName: "example.com/kwapp",
 		Port:       "8080",
@@ -944,7 +944,7 @@ func TestGenerateGoldenFiles(t *testing.T) {
 		},
 	}
 
-	req := request.GenerateRequest{
+	req := dto.GenerateRequest{
 		ProjectID:        "proj_golden",
 		ModuleName:       "example.com/goldenapp",
 		Port:             "8080",
@@ -1057,7 +1057,7 @@ func TestGenerateFileTree_EmptyOrMessyModuleName(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		req := request.GenerateRequest{
+		req := dto.GenerateRequest{
 			ModuleName: c.rawModule,
 			Port:       "8080",
 			DBDriver:   "sqlite",
@@ -1081,7 +1081,3 @@ func TestGenerateFileTree_EmptyOrMessyModuleName(t *testing.T) {
 		}
 	}
 }
-
-
-
-

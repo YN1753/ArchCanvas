@@ -3,13 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ArchCanvas · ER 设计</title>
-    <script type="module" crossorigin src="/assets/index-DOrAzjT_.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/rolldown-runtime-W7wSyTde.js">
-    <link rel="modulepreload" crossorigin href="/assets/erStore-Dj6N9pLl.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-CfA0GjNC.css">
+    <title>ArchCanvas · 开发态后端已就绪</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #faf7f0;
+        color: #1f1f1f;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 520px;
+        margin: 24px;
+        padding: 28px;
+        background: #ffffff;
+        border: 1.5px solid #1f1f1f;
+        border-radius: 16px;
+        box-shadow: 4px 4px 0 #1f1f1f;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+      p {
+        margin: 0 0 12px;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #57534e;
+      }
+      code {
+        padding: 2px 6px;
+        background: #f5f1e6;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <main>
+      <h1>ArchCanvas Go API 服务正在运行</h1>
+      <p>当前二进制未嵌入生产前端构建产物（开发占位页）。</p>
+      <p>前后端分离开发请运行 <code>cd web &amp;&amp; npm run dev</code> 并访问 <code>http://localhost:5173</code>；单可执行文件打包请在仓库根目录执行 <code>make build</code>。</p>
+    </main>
   </body>
 </html>

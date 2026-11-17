@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"strings"
 
+	"archcanvas/internal/dto"
 	"archcanvas/internal/generator"
 	"archcanvas/pkg/response"
-	"archcanvas/request"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,15 +22,15 @@ func NewGeneratorHandler(svc *generator.GeneratorService) GeneratorHandler {
 
 // Preview 生成并返回文件树与源码 (供前端弹窗高亮预览)
 func (h *GeneratorHandler) Preview(c *gin.Context) {
-	var req request.GenerateRequest
+	var req dto.GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error(), nil)
+		respondBindError(c, err, "参数错误: "+err.Error())
 		return
 	}
 
 	files, err := h.svc.GenerateFileTree(c.Request.Context(), req)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "生成工程预览代码失败")
 		return
 	}
 
@@ -39,15 +39,15 @@ func (h *GeneratorHandler) Preview(c *gin.Context) {
 
 // Download 生成并在内存中打包为 ZIP 文件流直接推给浏览器下载
 func (h *GeneratorHandler) Download(c *gin.Context) {
-	var req request.GenerateRequest
+	var req dto.GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error(), nil)
+		respondBindError(c, err, "参数错误: "+err.Error())
 		return
 	}
 
 	buf, err := h.svc.GenerateZip(c.Request.Context(), req)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "打包下载工程代码失败")
 		return
 	}
 
@@ -59,7 +59,6 @@ func (h *GeneratorHandler) Download(c *gin.Context) {
 		fileName = "archcanvas-app"
 	}
 
-	// 遵循 RFC 5987 / RFC 6266 标准，同时输出 ASCII fallback 与 UTF-8 编码文件名
 	asciiFallback := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
 			return r

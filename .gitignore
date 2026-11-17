@@ -9,10 +9,12 @@ web/dist/
 server/internal/static/dist/*
 !server/internal/static/dist/.gitkeep
 !server/internal/static/dist/index.html
-configs/
-data/
+/configs/
+/data/
 server/configs/.env
 server/configs/config.yaml
+!server/configs/config.example.yaml
+!server/configs/.env.example
 server/data/
 archcanvas
 archcanvas.exe

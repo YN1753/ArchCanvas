@@ -61,15 +61,10 @@ jobs:
           cd server
           go vet ./...
 
-      - name: Run Go Tests with Race Detector
+      - name: Run Go Tests & Benchmark Gate with Race Detector
         run: |
           cd server
           go test -v -race ./...
-
-      - name: Run AI Quality & Architecture Benchmark Gate (35 Scenarios)
-        run: |
-          cd server
-          go test -v ./internal/eval -run TestRunBenchmarkSuite
 
       - name: Verify Server Build
         run: |

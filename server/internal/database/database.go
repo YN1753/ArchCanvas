@@ -15,7 +15,7 @@ import (
 
 // InitSQLite 初始化并打开 SQLite 数据库，自动确保存储目录存在并执行所有数据表模型迁移。
 func InitSQLite(cfg config.Database) (*gorm.DB, error) {
-	if cfg.Path == "" {
+	if strings.TrimSpace(cfg.Path) == "" {
 		return nil, fmt.Errorf("database path is required")
 	}
 
@@ -23,7 +23,10 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 	if idx := strings.IndexByte(rawPath, '?'); idx >= 0 {
 		rawPath = rawPath[:idx]
 	}
-	isMemory := rawPath == ":memory:" || strings.HasPrefix(rawPath, "file::memory:")
+	lowerDSN := strings.ToLower(cfg.Path)
+	isMemory := rawPath == ":memory:" ||
+		strings.HasPrefix(rawPath, "file::memory:") ||
+		strings.Contains(lowerDSN, "mode=memory")
 
 	// 自动确保目录存在
 	if !isMemory && filepath.Dir(rawPath) != "." {
@@ -32,26 +35,39 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 		}
 	}
 
-	// 将 WAL、busy_timeout 与 synchronous 注入 DSN，确保连接池中每个新建连接均自动继承 PRAGMA 配置
+	// 将 WAL、busy_timeout、synchronous、_txlock=immediate 与 _foreign_keys=on 注入 DSN，
+	// 确保写事务直接获取 RESERVED 锁并排队等待 busy_timeout，消除并发读写升级锁导致的瞬时 SQLITE_BUSY。
 	dsn := cfg.Path
 	if !isMemory {
 		sep := "?"
 		if strings.Contains(dsn, "?") {
 			sep = "&"
 		}
-		dsn = dsn + sep + "_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL"
+		dsn = dsn + sep + "_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_txlock=immediate&_foreign_keys=on"
 	}
 
-	// 打开 SQLite 数据库连接
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
-		// 当前模型只通过 ID 建立逻辑关联，不生成数据库级强外键
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database %q: %w", cfg.Path, err)
 	}
 
-	// 执行表结构自动迁移
+	// 必须在 AutoMigrate 之前配置连接池：
+	// 1. 内存库必须固定单连接，否则多连接会访问彼此隔离的空白内存库；
+	// 2. 文件库采用合理并发上限配合 WAL + IMMEDIATE 锁，兼顾读写并发与写锁平滑排队。
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("get underlying sql.DB for %q: %w", cfg.Path, err)
+	}
+	if isMemory {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+	} else {
+		sqlDB.SetMaxOpenConns(8)
+		sqlDB.SetMaxIdleConns(4)
+	}
+
 	if err := db.AutoMigrate(
 		&model.Project{},
 		&model.Entity{},
@@ -61,18 +77,8 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 		&model.Conversation{},
 		&model.Message{},
 	); err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("auto migrate database: %w", err)
-	}
-
-	// 调优底层连接池参数，兼顾本地多协程读写吞吐并防范文件句柄溢出
-	if sqlDB, err := db.DB(); err == nil {
-		if isMemory {
-			sqlDB.SetMaxOpenConns(1)
-			sqlDB.SetMaxIdleConns(1)
-		} else {
-			sqlDB.SetMaxOpenConns(50)
-			sqlDB.SetMaxIdleConns(10)
-		}
 	}
 
 	return db, nil

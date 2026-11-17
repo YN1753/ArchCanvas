@@ -8,8 +8,8 @@ import (
 
 	"archcanvas/internal/agent"
 	"archcanvas/internal/domain"
+	"archcanvas/internal/dto"
 	"archcanvas/internal/service/tools"
-	"archcanvas/request"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -105,7 +105,7 @@ func TestAgent_EnrichSemantics_Cancellation_NoRuleFallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	res, err := svc.EnrichSemantics(ctx, request.EnrichSemanticsReq{
+	res, err := svc.EnrichSemantics(ctx, dto.EnrichSemanticsReq{
 		Design: &domain.ERDesign{
 			Entities: []domain.Entity{
 				{ID: "e1", Name: "users"},
@@ -140,7 +140,7 @@ func TestAgent_ProposeConcepts_ClientDisconnect_CleanTermination(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	outCh, err := svc.ProposeConcepts(ctx, request.ProposeConceptsReq{
+	outCh, err := svc.ProposeConcepts(ctx, dto.ProposeConceptsReq{
 		ProjectID: "proj_cancel_1",
 		Input:     "这是一个复杂的需求分析设计，包含多个模块",
 	})

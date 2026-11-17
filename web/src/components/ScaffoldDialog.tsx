@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, type GeneratedFile } from '../api/client'
 import { useStore } from '../store/erStore'
 
@@ -292,6 +292,22 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
     return selectedFile.content.split('\n')
   }, [selectedFile])
 
+  const highlightedCodeLines = useMemo(() => {
+    const filePath = selectedFile?.path || ''
+    return codeLines.map((line) => highlightLine(line, filePath))
+  }, [codeLines, selectedFile?.path])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   const breadcrumbs = useMemo(() => {
     if (!selectedFile) return []
     return selectedFile.path.split('/')
@@ -304,8 +320,8 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
     try {
       await api.downloadScaffold(requestPayload)
       onClose()
-    } catch (err: any) {
-      setError(err.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -321,8 +337,8 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
       const defaultPick = res.find((f) => f.path.includes('main.go')) || res[0]
       setSelectedFilePath(defaultPick ? defaultPick.path : '')
       setMode('preview')
-    } catch (err: any) {
-      setError(err.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -342,8 +358,17 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="flex h-[750px] w-[1140px] max-w-[96vw] max-h-[92vh] flex-col rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[6px_6px_0px_#1f1f1f] overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scaffold-dialog-title"
+        onClick={(e) => e.stopPropagation()}
+        className="flex h-[750px] w-[1140px] max-w-[96vw] max-h-[92vh] flex-col rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white shadow-[6px_6px_0px_#1f1f1f] overflow-hidden"
+      >
         {/* 顶部标题栏 (一致的 #faf7f0 暖纸底色与 1.5px 黑线) */}
         <div className="flex items-center justify-between border-b-[1.5px] border-[#1f1f1f] bg-[#faf7f0] px-6 py-4 select-none">
           <div className="flex items-center gap-3">
@@ -351,15 +376,18 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
               GO
             </div>
             <div>
-              <h2 className="text-sm font-bold text-[#1f1f1f]">导出 Go 后端脚手架</h2>
+              <h2 id="scaffold-dialog-title" className="text-sm font-bold text-[#1f1f1f]">
+                导出 Go 后端脚手架
+              </h2>
               <p className="text-xs text-stone-500">基于当前画板数据模型，生成开箱即用的独立 Go Web 工程</p>
             </div>
           </div>
 
           <button
             type="button"
+            aria-label="关闭弹窗"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white text-stone-700 hover:bg-stone-50 transition shadow-2xs font-bold"
+            className="flex h-8 w-8 items-center justify-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white text-stone-700 hover:bg-stone-50 transition shadow-2xs font-bold cursor-pointer"
           >
             ✕
           </button>
@@ -700,25 +728,20 @@ export default function ScaffoldDialog({ onClose }: { onClose: () => void }) {
                 {/* 暖纸印刷分色代码主视窗 */}
                 <div className="flex-1 overflow-auto font-mono text-xs leading-relaxed selection:bg-[#df4e3e] selection:text-white [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-stone-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
                   <div className="min-w-full inline-block py-2">
-                    {codeLines.map((line, idx) => {
-                      const highlighted = highlightLine(line, selectedFile?.path || '')
-                      return (
-                        <div
-                          key={idx}
-                          className="flex hover:bg-[#faf7f0] transition-colors group leading-6"
-                        >
-                          {/* 吸附固定行号（淡米棕底色） */}
-                          <span className="w-12 select-none pr-3 text-right font-mono text-[11px] text-stone-400 group-hover:text-stone-700 bg-[#f4ede2] sticky left-0 shrink-0 border-r-[1.5px] border-[#e5ded0]">
-                            {idx + 1}
-                          </span>
-                          {/* 高亮印刷代码内容 */}
-                          <span
-                            className="pl-3.5 pr-6 font-mono text-[12px] whitespace-pre text-[#1f1f1f]"
-                            dangerouslySetInnerHTML={{ __html: highlighted || ' ' }}
-                          />
-                        </div>
-                      )
-                    })}
+                    {highlightedCodeLines.map((highlighted, idx) => (
+                      <div
+                        key={idx}
+                        className="flex hover:bg-[#faf7f0] transition-colors group leading-6"
+                      >
+                        <span className="w-12 select-none pr-3 text-right font-mono text-[11px] text-stone-400 group-hover:text-stone-700 bg-[#f4ede2] sticky left-0 shrink-0 border-r-[1.5px] border-[#e5ded0]">
+                          {idx + 1}
+                        </span>
+                        <span
+                          className="pl-3.5 pr-6 font-mono text-[12px] whitespace-pre text-[#1f1f1f]"
+                          dangerouslySetInnerHTML={{ __html: highlighted || ' ' }}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>

@@ -107,6 +107,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.apt_pkg }}
 
+      - name: Clear Placeholder & Download Web Dist Artifact
+        shell: bash
+        run: rm -rf server/internal/static/dist/*
+
       - name: Download Web Dist Artifact
         uses: actions/download-artifact@v4
         with:
@@ -140,12 +144,11 @@ jobs:
         run: |
           mkdir -p release-pkg/configs
           cp ${{ matrix.binary_name }} release-pkg/
-          cp README.md release-pkg/ || true
-          if [ -f server/configs/config.yaml ]; then
-            cp server/configs/config.yaml release-pkg/configs/
-          fi
+          cp README.md LICENSE release-pkg/
+          cp server/configs/config.example.yaml release-pkg/configs/
+          cp server/configs/.env.example release-pkg/configs/
           cd release-pkg
-          tar -czf ../${{ matrix.target }}.tar.gz *
+          tar -czf ../${{ matrix.target }}.tar.gz ${{ matrix.binary_name }} README.md LICENSE configs
 
       - name: Package Release Archive (zip)
         if: matrix.archive_format == 'zip'
@@ -153,19 +156,45 @@ jobs:
         run: |
           mkdir -p release-pkg/configs
           cp ${{ matrix.binary_name }} release-pkg/
-          cp README.md release-pkg/ || true
-          if [ -f server/configs/config.yaml ]; then
-            cp server/configs/config.yaml release-pkg/configs/
-          fi
+          cp README.md LICENSE release-pkg/
+          cp server/configs/config.example.yaml release-pkg/configs/
+          cp server/configs/.env.example release-pkg/configs/
           cd release-pkg
-          7z a -tzip ../${{ matrix.target }}.zip *
+          7z a -tzip ../${{ matrix.target }}.zip ${{ matrix.binary_name }} README.md LICENSE configs
 
-      - name: Upload Package to GitHub Release
+      - name: Upload Matrix Release Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target }}
+          path: ${{ matrix.target }}.${{ matrix.archive_format }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Generate Checksums & Publish GitHub Release
+    needs: build-binaries
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Matrix Packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate sha256sums.txt
+        run: |
+          cd release-assets
+          sha256sum archcanvas-* | sort -k 2 > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            archcanvas-*.tar.gz
-            archcanvas-*.zip
+            release-assets/archcanvas-*.tar.gz
+            release-assets/archcanvas-*.zip
+            release-assets/sha256sums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

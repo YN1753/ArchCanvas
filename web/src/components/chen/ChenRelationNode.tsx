@@ -1,7 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
-import { useStore } from '../../store/erStore'
 import type { Cardinality } from '../../types/dsl'
 
 export interface ChenRelationNodeData extends Record<string, unknown> {
@@ -16,22 +15,10 @@ export interface ChenRelationNodeData extends Record<string, unknown> {
 export type ChenRelationNodeType = Node<ChenRelationNodeData, 'chenRelation'>
 
 function ChenRelationNode({ data, selected }: NodeProps<ChenRelationNodeType>) {
-  const select = useStore((state) => state.select)
-
-  const handleClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (data.relationId) {
-      select({ kind: 'relation', id: data.relationId })
-    }
-  }
-
   const isSelected = selected
 
   return (
-    <div
-      onClick={handleClick}
-      className="group relative flex h-[74px] w-[114px] cursor-pointer items-center justify-center select-none"
-    >
+    <div className="group relative flex h-[74px] w-[114px] cursor-pointer items-center justify-center select-none">
       {/* 4 顶点精确锚点：Top, Right, Bottom, Left（支持双向源/宿对接） */}
       <Handle type="target" position={Position.Top} id="top" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
       <Handle type="target" position={Position.Top} id="top-target" className="!top-0 !h-2 !w-2 !border-none !bg-transparent" />
@@ -51,6 +38,7 @@ function ChenRelationNode({ data, selected }: NodeProps<ChenRelationNodeType>) {
 
       {/* 经典陈氏菱形 SVG 矢量绘制（带暖纸野兽派硬阴影） */}
       <svg
+        aria-hidden="true"
         className="absolute inset-0 h-full w-full overflow-visible"
         viewBox="0 0 114 74"
         fill="none"

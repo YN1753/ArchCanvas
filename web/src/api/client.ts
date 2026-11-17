@@ -1,11 +1,24 @@
 import type {
+  Cardinality,
   ConceptualDesign,
   DatabaseDialect,
   ERDesign,
   SchemaReviewReport,
 } from '../types/dsl'
 
-const BASE = import.meta.env.VITE_API_BASE ?? '/api/v1'
+const BASE = import.meta.env?.VITE_API_BASE || '/api/v1'
+
+function buildAuthHeaders(): Record<string, string> {
+  const envToken = import.meta.env?.VITE_AUTH_TOKEN as string | undefined
+  let storedToken: string | null = null
+  try {
+    if (typeof localStorage !== 'undefined') {
+      storedToken = localStorage.getItem('archcanvas_auth_token')
+    }
+  } catch {}
+  const token = (storedToken || envToken || '').trim()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 interface Envelope<T> {
   code: number
@@ -18,7 +31,7 @@ export interface Project {
   name: string
   description: string
   conceptual_design?: ConceptualDesign
-  er_design: ERDesign
+  er_design?: ERDesign
   created_at: string
   updated_at: string
 }
@@ -93,32 +106,8 @@ export interface RequirementResult {
   questions: string[]
 }
 
-export interface ExecutionOperation {
-  operation: string
-  target_type: string
-  target: string
-  reason: string
-  source: string
-}
-
-export interface ExecutionResult {
-  summary: string
-  operations: ExecutionOperation[]
-  need_clarification: boolean
-  questions: string[]
-}
-
-export interface ReviewResult {
-  approved: boolean
-  summary: string
-  problems: string[]
-  suggestions: string[]
-}
-
 export interface ERDesignAnalysisResult {
   requirement: RequirementResult | null
-  execution: ExecutionResult | null
-  review: ReviewResult | null
   applied: boolean
   note?: string
   design?: ERDesign
@@ -148,6 +137,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...buildAuthHeaders(),
         ...(init?.headers ?? {}),
       },
     })
@@ -175,16 +165,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data
 }
 
-export interface ChatEvent<T = any> {
-  type: 'thinking' | 'status' | 'tool_call' | 'result' | 'error' | 'done' | 'message'
-  data: T
-}
+export type ChatEventType =
+  | 'thinking'
+  | 'status'
+  | 'tool_call'
+  | 'result'
+  | 'error'
+  | 'done'
+  | 'message'
 
-export interface ChatStreamParams {
-  project_id: string
-  input: string
-  model_provider?: string
-  model_name?: string
+export interface ChatEvent<T = unknown> {
+  type: ChatEventType
+  data: T
 }
 
 export interface ProposeConceptsParams {
@@ -222,7 +214,17 @@ export interface EnrichedSemanticsResult {
   conceptual_design: ConceptualDesign
 }
 
-async function streamPost<T = any>(
+export interface ProposeConceptsPayload {
+  summary?: string
+  need_clarification?: boolean
+  clarification_cards?: ClarificationCard[]
+  questions?: string[]
+  conceptual_design?: ConceptualDesign
+}
+
+const PLAIN_TEXT_SSE_EVENTS = new Set<string>(['thinking', 'status', 'error', 'done'])
+
+export async function streamPost<T = unknown>(
   endpoint: string,
   params: unknown,
   callbacks: {
@@ -238,12 +240,14 @@ async function streamPost<T = any>(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...buildAuthHeaders(),
       },
       body: JSON.stringify(params),
       signal,
     })
-  } catch (err: any) {
-    if (err?.name === 'AbortError' || signal?.aborted) {
+  } catch (err: unknown) {
+    const isAbort = err instanceof Error && err.name === 'AbortError'
+    if (isAbort || signal?.aborted) {
       return
     }
     const error = new ApiError(0, `无法连接后端服务（${String(err)}）`)
@@ -255,7 +259,7 @@ async function streamPost<T = any>(
     const text = await response.text()
     let msg = `请求失败（HTTP ${response.status}）`
     try {
-      const parsed = JSON.parse(text)
+      const parsed = JSON.parse(text) as { message?: string }
       if (parsed.message) msg = parsed.message
     } catch {}
     const error = new ApiError(response.status, msg)
@@ -271,7 +275,7 @@ async function streamPost<T = any>(
 
   const decoder = new TextDecoder()
   let buffer = ''
-  let currentEvent = 'message'
+  let currentEvent: ChatEventType = 'message'
   let dataLines: string[] = []
 
   const dispatchEvent = () => {
@@ -284,16 +288,35 @@ async function streamPost<T = any>(
     const eventType = currentEvent
     currentEvent = 'message'
 
-    let parsedData: any = rawData
-    try {
-      parsedData = JSON.parse(rawData)
-    } catch {
-      parsedData = rawData
+    let parsedData: unknown = rawData
+    if (!PLAIN_TEXT_SSE_EVENTS.has(eventType)) {
+      try {
+        parsedData = JSON.parse(rawData)
+      } catch {
+        parsedData = rawData
+      }
     }
     callbacks.onEvent({
-      type: eventType as any,
-      data: parsedData,
+      type: eventType,
+      data: parsedData as T,
     })
+  }
+
+  const processLine = (line: string) => {
+    // 严格按 SSE 空行边界派发事件，避免全空白文本 token 被误判为事件分隔符
+    if (line === '') {
+      dispatchEvent()
+      return
+    }
+    if (line.startsWith(':')) {
+      return
+    }
+    if (line.startsWith('event:')) {
+      currentEvent = (line.slice(6).trim() || 'message') as ChatEventType
+    } else if (line.startsWith('data:')) {
+      // 后端 gin-contrib/sse 输出格式为 `data:<chunk>`（冒号后无协议空格），直接保留 slice(5) 以免吞掉英文词首空格
+      dataLines.push(line.slice(5))
+    }
   }
 
   try {
@@ -306,59 +329,42 @@ async function streamPost<T = any>(
       buffer = lines.pop() ?? ''
 
       for (const line of lines) {
-        if (!line.trim()) {
-          dispatchEvent()
-          continue
-        }
-        if (line.startsWith(':')) {
-          continue
-        }
-        if (line.startsWith('event:')) {
-          currentEvent = line.slice(6).trim()
-        } else if (line.startsWith('data:')) {
-          const content = line.startsWith('data: ') ? line.slice(6) : line.slice(5)
-          dataLines.push(content)
-        }
+        processLine(line)
       }
     }
 
-    if (buffer.trim()) {
-      if (buffer.startsWith('event:')) {
-        currentEvent = buffer.slice(6).trim()
-      } else if (buffer.startsWith('data:')) {
-        const content = buffer.startsWith('data: ') ? buffer.slice(6) : buffer.slice(5)
-        dataLines.push(content)
+    // 冲刷流末尾残余多字节字符
+    buffer += decoder.decode()
+    if (buffer.length > 0) {
+      const trailingLines = buffer.split(/\r\n|\r|\n/)
+      for (const line of trailingLines) {
+        processLine(line)
       }
     }
     dispatchEvent()
-  } catch (err: any) {
-    if (err?.name === 'AbortError' || signal?.aborted) {
+  } catch (err: unknown) {
+    const isAbort = err instanceof Error && err.name === 'AbortError'
+    if (isAbort || signal?.aborted) {
       return
     }
-    callbacks.onError?.(err)
-    throw err
+    const normalized = err instanceof Error ? err : new Error(String(err))
+    callbacks.onError?.(normalized)
+    throw normalized
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {}
   }
+
   if (!signal?.aborted) {
     callbacks.onDone?.()
   }
 }
 
-export function chatStream(
-  params: ChatStreamParams,
-  callbacks: {
-    onEvent: (event: ChatEvent) => void
-    onError?: (err: Error) => void
-    onDone?: () => void
-  },
-  signal?: AbortSignal,
-): Promise<void> {
-  return streamPost('/agent/chat', params, callbacks, signal)
-}
-
 export function proposeConceptsStream(
   params: ProposeConceptsParams,
   callbacks: {
-    onEvent: (event: ChatEvent) => void
+    onEvent: (event: ChatEvent<ProposeConceptsPayload | string>) => void
     onError?: (err: Error) => void
     onDone?: () => void
   },
@@ -370,7 +376,7 @@ export function proposeConceptsStream(
 export function derivePhysicalStream(
   params: DerivePhysicalParams,
   callbacks: {
-    onEvent: (event: ChatEvent) => void
+    onEvent: (event: ChatEvent<ERDesign | string>) => void
     onError?: (err: Error) => void
     onDone?: () => void
   },
@@ -382,13 +388,13 @@ export function derivePhysicalStream(
 export function reviewSchemaStream(
   params: ReviewSchemaParams,
   callbacks: {
-    onEvent: (event: ChatEvent<SchemaReviewReport>) => void
+    onEvent: (event: ChatEvent<SchemaReviewReport | string>) => void
     onError?: (err: Error) => void
     onDone?: () => void
   },
   signal?: AbortSignal,
 ): Promise<void> {
-  return streamPost<SchemaReviewReport>('/agent/review-schema', params, callbacks, signal)
+  return streamPost<SchemaReviewReport | string>('/agent/review-schema', params, callbacks, signal)
 }
 
 export const api = {
@@ -406,10 +412,14 @@ export const api = {
       body: JSON.stringify({ project_id }),
     }),
 
-  updateProject: (project_id: string, name: string, description = '') =>
+  updateProject: (project_id: string, name: string, description?: string) =>
     request<Project>('/projects/update', {
       method: 'POST',
-      body: JSON.stringify({ project_id, name, description }),
+      body: JSON.stringify({
+        project_id,
+        name,
+        ...(description !== undefined ? { description } : {}),
+      }),
     }),
 
   getProject: (id: string) =>
@@ -426,9 +436,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({
         project_id: id,
-        entities: design.entities,
+        entities: (design.entities ?? []).map((e) => ({
+          ...e,
+          attributes: (e.attributes ?? []).map((attr) => ({
+            ...attr,
+            default_value:
+              attr.default_value === undefined || attr.default_value === null
+                ? undefined
+                : String(attr.default_value),
+          })),
+        })),
         relations: (design.relations ?? []).map((r) => {
-          const card = r.cardinality || (r as any).relation_type_id || 'one_to_many'
+          const card: Cardinality =
+            r.cardinality || (r.relation_type_id as Cardinality | undefined) || 'one_to_many'
           return {
             ...r,
             relation_type_id: card,
@@ -450,7 +470,6 @@ export const api = {
       }),
     }),
 
-  chatStream,
   proposeConceptsStream,
   derivePhysicalStream,
   reviewSchemaStream,
@@ -458,20 +477,25 @@ export const api = {
   /**
    * 一键调用轻量 LLM 推导全图概念层语义
    */
-  enrichSemantics: (params: EnrichSemanticsParams) =>
+  enrichSemantics: (params: EnrichSemanticsParams, signal?: AbortSignal) =>
     request<EnrichedSemanticsResult>('/agent/enrich-semantics', {
       method: 'POST',
       body: JSON.stringify(params),
+      signal,
     }),
 
   /**
-   * 获取可用的大模型列表（语义化 GET /models/list）。
-   * 支持通过 BaseURL 动态获取指定服务地址的模型，未指定时获取服务端配置的模型。
+   * 获取可用的大模型列表。
+   * 当携带自定义 base_url 或 api_key 探测时使用 POST JSON Body 传参，避免密钥出现在 URL Query 与日志中。
    */
   getModels: (params?: GetModelsParams) => {
+    if (params?.base_url || params?.api_key) {
+      return request<AvailableModelsResponse>('/models/list', {
+        method: 'POST',
+        body: JSON.stringify(params),
+      })
+    }
     const query = new URLSearchParams()
-    if (params?.base_url) query.set('base_url', params.base_url)
-    if (params?.api_key) query.set('api_key', params.api_key)
     if (params?.provider) query.set('provider', params.provider)
     const qs = query.toString()
     return request<AvailableModelsResponse>(qs ? `/models/list?${qs}` : '/models/list')
@@ -501,12 +525,28 @@ export const api = {
   downloadScaffold: async (params: GenerateRequest) => {
     const res = await fetch(`${BASE}/generator/download`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(),
+      },
       body: JSON.stringify(params),
     })
     if (!res.ok) {
       const text = await res.text()
-      throw new Error(`下载脚手架失败: ${text}`)
+      let message = `下载脚手架失败（HTTP ${res.status}）`
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { message?: string }
+          if (parsed.message) {
+            message = parsed.message
+          } else {
+            message = `下载脚手架失败: ${text.slice(0, 200)}`
+          }
+        } catch {
+          message = `下载脚手架失败: ${text.slice(0, 200)}`
+        }
+      }
+      throw new ApiError(res.status, message)
     }
     const blob = await res.blob()
     const url = window.URL.createObjectURL(blob)
@@ -520,7 +560,9 @@ export const api = {
     document.body.appendChild(a)
     a.click()
     a.remove()
-    window.URL.revokeObjectURL(url)
+    window.setTimeout(() => {
+      window.URL.revokeObjectURL(url)
+    }, 1000)
   },
 
   /**
@@ -563,4 +605,3 @@ export interface GeneratedFile {
   content: string
   size: number
 }
-

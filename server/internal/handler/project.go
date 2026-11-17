@@ -2,10 +2,9 @@ package handler
 
 import (
 	"archcanvas/internal/domain"
+	"archcanvas/internal/dto"
 	"archcanvas/internal/service"
 	"archcanvas/pkg/response"
-	"archcanvas/request"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +24,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 	ctx := c.Request.Context()
 	projects, err := h.ProjectService.ListProjects(ctx)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "获取项目列表失败")
 		return
 	}
 	response.Success(c, projects)
@@ -34,15 +33,15 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 // CreateProject 创建新项目 (POST /api/v1/projects/create)
 func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.CreateProjectReq
+	var req dto.CreateProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
 	p, err := h.ProjectService.CreateProject(ctx, req.Name, req.Description)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "创建项目失败")
 		return
 	}
 	response.Success(c, p)
@@ -51,14 +50,14 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 // DeleteProject 删除项目 (POST /api/v1/projects/delete)
 func (h *ProjectHandler) DeleteProject(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.DeleteProjectReq
+	var req dto.DeleteProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "project_id is required", nil)
+		respondBindError(c, err, "project_id is required")
 		return
 	}
 
 	if err := h.ProjectService.DeleteProject(ctx, req.ProjectID); err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "删除项目失败")
 		return
 	}
 	response.Success(c, gin.H{"deleted": true, "id": req.ProjectID})
@@ -67,15 +66,15 @@ func (h *ProjectHandler) DeleteProject(c *gin.Context) {
 // UpdateProject 更新项目信息 (POST /api/v1/projects/update)
 func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.UpdateProjectReq
+	var req dto.UpdateProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
 	p, err := h.ProjectService.UpdateProject(ctx, req.ProjectID, req.Name, req.Description)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "更新项目信息失败")
 		return
 	}
 	response.Success(c, p)
@@ -84,15 +83,15 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 // GetProject 获取项目详情 (GET /api/v1/projects/detail?id=xxx)
 func (h *ProjectHandler) GetProject(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.GetProjectReq
+	var req dto.GetProjectReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "project id is required", nil)
+		respondBindError(c, err, "project id is required")
 		return
 	}
 
 	p, err := h.ProjectService.GetProject(ctx, req.ID)
 	if err != nil {
-		response.Fail(c, http.StatusNotFound, "project not found: "+err.Error(), nil)
+		respondServiceError(c, err, "读取项目详情失败")
 		return
 	}
 	response.Success(c, p)
@@ -101,15 +100,15 @@ func (h *ProjectHandler) GetProject(c *gin.Context) {
 // GetERDesign 获取项目 ER 结构 (GET /api/v1/projects/get-er-design?id=xxx)
 func (h *ProjectHandler) GetERDesign(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.GetERDesignReq
+	var req dto.GetERDesignReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "project id is required", nil)
+		respondBindError(c, err, "project id is required")
 		return
 	}
 
 	design, err := h.ProjectService.GetERDesign(ctx, req.ID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "获取物理数据表模型失败")
 		return
 	}
 	response.Success(c, design)
@@ -118,9 +117,9 @@ func (h *ProjectHandler) GetERDesign(c *gin.Context) {
 // SaveERDesign 保存项目 ER 结构 (POST /api/v1/projects/save-er-design)
 func (h *ProjectHandler) SaveERDesign(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.SaveERDesignReq
+	var req dto.SaveERDesignReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
@@ -131,7 +130,7 @@ func (h *ProjectHandler) SaveERDesign(c *gin.Context) {
 
 	result, err := h.ProjectService.SaveERDesign(ctx, req.ProjectID, design)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "保存物理数据表设计失败")
 		return
 	}
 	response.Success(c, result)
@@ -140,14 +139,14 @@ func (h *ProjectHandler) SaveERDesign(c *gin.Context) {
 // GetConceptualDesign 获取项目概念模型 (GET /api/v1/projects/get-conceptual-design)
 func (h *ProjectHandler) GetConceptualDesign(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.GetConceptualDesignReq
+	var req dto.GetConceptualDesignReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "project id is required")
 		return
 	}
 	design, err := h.ProjectService.GetConceptualDesign(ctx, req.ID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "获取概念模型失败")
 		return
 	}
 	response.Success(c, design)
@@ -156,31 +155,50 @@ func (h *ProjectHandler) GetConceptualDesign(c *gin.Context) {
 // SaveConceptualDesign 保存项目概念模型 (POST /api/v1/projects/save-conceptual-design)
 func (h *ProjectHandler) SaveConceptualDesign(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.SaveConceptualDesignReq
+	var req dto.SaveConceptualDesignReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
 	if err := h.ProjectService.SaveConceptualDesign(ctx, req.ProjectID, req.Design); err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "保存概念模型失败")
 		return
 	}
 	response.Success(c, "success")
 }
 
-// GetModels 获取或探测可用大模型列表 (GET /api/v1/models/list)
+// GetModels 获取已配置可用大模型列表 (GET /api/v1/models/list)
 func (h *ProjectHandler) GetModels(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.GetModelsReq
+	var req dto.GetModelsReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
 	models, err := h.ProjectService.GetAvailableModels(ctx, req)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "获取可用模型列表失败")
+		return
+	}
+	response.Success(c, models)
+}
+
+// ProbeModels 通过 POST JSON Body 安全探测远程端点模型列表 (POST /api/v1/models/list 或 /probe)
+func (h *ProjectHandler) ProbeModels(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req dto.GetModelsReq
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			respondBindError(c, err, "")
+			return
+		}
+	}
+
+	models, err := h.ProjectService.GetAvailableModels(ctx, req)
+	if err != nil {
+		respondServiceError(c, err, "探测远程端点可用模型列表失败")
 		return
 	}
 	response.Success(c, models)
@@ -189,15 +207,15 @@ func (h *ProjectHandler) GetModels(c *gin.Context) {
 // SaveModel 保存模型配置 (POST /api/v1/models/save)
 func (h *ProjectHandler) SaveModel(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.SaveModelReq
+	var req dto.SaveModelReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
+		respondBindError(c, err, "")
 		return
 	}
 
 	models, err := h.ProjectService.SaveModelConfig(ctx, req)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "保存模型配置失败")
 		return
 	}
 	response.Success(c, models)
@@ -206,15 +224,15 @@ func (h *ProjectHandler) SaveModel(c *gin.Context) {
 // ListMessages 获取项目的历史对话消息 (GET /api/v1/projects/messages?project_id=xxx)
 func (h *ProjectHandler) ListMessages(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.ListMessagesReq
+	var req dto.ListMessagesReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "project_id is required: "+err.Error(), nil)
+		respondBindError(c, err, "project_id is required")
 		return
 	}
 
-	messages, err := h.ProjectService.ListProjectMessages(ctx, req.ProjectID)
+	messages, err := h.ProjectService.ListProjectMessageDTOs(ctx, req.ProjectID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "获取历史对话失败")
 		return
 	}
 	response.Success(c, messages)
@@ -223,14 +241,14 @@ func (h *ProjectHandler) ListMessages(c *gin.Context) {
 // ClearMessages 清空项目的历史对话 (POST /api/v1/projects/messages/clear)
 func (h *ProjectHandler) ClearMessages(c *gin.Context) {
 	ctx := c.Request.Context()
-	var req request.ClearMessagesReq
+	var req dto.ClearMessagesReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "project_id is required: "+err.Error(), nil)
+		respondBindError(c, err, "project_id is required")
 		return
 	}
 
 	if err := h.ProjectService.ClearProjectMessages(ctx, req.ProjectID); err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error(), nil)
+		respondServiceError(c, err, "清空历史对话失败")
 		return
 	}
 	response.Success(c, gin.H{"cleared": true, "project_id": req.ProjectID})

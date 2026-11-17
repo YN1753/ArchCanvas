@@ -13,6 +13,7 @@ import (
 	"{{ .ModuleName }}/internal/repository"
 	"{{ .ModuleName }}/internal/router"
 	"{{ .ModuleName }}/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -26,6 +27,10 @@ func main() {
 		}
 	}
 
+	if cfg.Server.Mode == gin.ReleaseMode {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	// 2. 初始化数据库连接池与 AutoMigrate 建表
 	db, err := database.InitDB(cfg.Database)
 	if err != nil {
@@ -33,10 +38,12 @@ func main() {
 	}
 
 	{{- if .EnableRedis }}
-	// 3. (可选) 初始化 Redis 连接
-	_, err = cache.InitRedis(cfg.Redis)
+	// 3. (可选) 初始化 Redis 连接并确保退出时释放连接池
+	rdb, err := cache.InitRedis(cfg.Redis)
 	if err != nil {
 		log.Printf("警告: Redis 连接失败: %v", err)
+	} else if rdb != nil {
+		defer func() { _ = rdb.Close() }()
 	}
 	{{- end }}
 

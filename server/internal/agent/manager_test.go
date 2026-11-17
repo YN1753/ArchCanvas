@@ -10,23 +10,22 @@ import (
 	"time"
 
 	"archcanvas/internal/config"
-	"archcanvas/request"
+	"archcanvas/internal/dto"
 )
 
 func TestNewModelManager_GracefulDegradation(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. 测试提供商配置为空时，正常实例化而不 panic
 	emptyConfigs := make(map[string]config.ModelConfig)
 	mgrEmpty := NewModelManager(ctx, emptyConfigs, "non_existent", t.TempDir())
 	if mgrEmpty == nil {
 		t.Fatal("expected ModelManager instance, got nil")
 	}
 
-	// 2. 测试配置了无效模型提供商/模型名称时，正常降级而不 panic
 	invalidConfigs := map[string]config.ModelConfig{
 		"custom_provider": {
 			Type:         "unknown_type",
+			APIKey:       "test-key",
 			DefaultModel: "test_model",
 		},
 	}
@@ -41,7 +40,6 @@ func TestNewModelManager_GracefulDegradation(t *testing.T) {
 		t.Errorf("expected CurrentName test_model, got %s", mgrInvalid.CurrentName)
 	}
 
-	// 验证获取不可用模型时返回具体错误，而非导致进程 panic
 	_, err := mgrInvalid.GetChatModel(ctx, "custom_provider", "test_model")
 	if err == nil {
 		t.Error("expected error for unknown_type model, got nil")
@@ -55,6 +53,16 @@ func TestModelManager_ConcurrentSafety(t *testing.T) {
 		"mock2": {Type: "openai", BaseURL: "http://localhost:8001", DefaultModel: "deepseek-r1"},
 	}
 	mgr := NewModelManager(ctx, configs, "mock1", t.TempDir())
+	mgr.HTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "gpt-4o"}]}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	const goroutines = 50
 	var wg sync.WaitGroup
@@ -63,15 +71,15 @@ func TestModelManager_ConcurrentSafety(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			if idx%3 == 0 {
+			switch idx % 4 {
+			case 0:
 				_ = mgr.CurrentModelKey()
-			} else if idx%3 == 1 {
-				mgr.mu.Lock()
-				mgr.CurrentProvider = "mock2"
-				mgr.CurrentName = "deepseek-r1"
-				mgr.mu.Unlock()
-			} else {
+			case 1:
+				_, _ = mgr.SwitchModel(ctx, "deepseek-r1", "mock2")
+			case 2:
 				_, _ = mgr.GetChatModel(ctx, "mock1", "gpt-4o")
+			default:
+				_, _ = mgr.GetAvailableModels(ctx, dto.GetModelsReq{})
 			}
 		}(i)
 	}
@@ -88,34 +96,30 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestFetchModelsHTTPWithRetry_ExponentialBackoff(t *testing.T) {
 	attempts := 0
 
-	// 使用内存 RoundTripper 模拟服务，避免沙箱环境下 TCP socket 监听被隔离阻止
-	originalTransport := httpClient.Transport
-	defer func() { httpClient.Transport = originalTransport }()
-
-	httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		attempts++
-		if attempts < 3 {
-			// 前两次模拟服务瞬时过载 503
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts < 3 {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Status:     "503 Service Unavailable",
+					Body:       io.NopCloser(strings.NewReader("service unavailable")),
+					Header:     make(http.Header),
+				}, nil
+			}
 			return &http.Response{
-				StatusCode: http.StatusServiceUnavailable,
-				Status:     "503 Service Unavailable",
-				Body:       io.NopCloser(strings.NewReader("service unavailable")),
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "gpt-4o"}]}`)),
 				Header:     make(http.Header),
 			}, nil
-		}
-		// 第三次成功恢复
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "gpt-4o"}]}`)),
-			Header:     make(http.Header),
-		}, nil
-	})
+		}),
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	models, status, err := fetchModelsHTTPWithRetry(ctx, "http://mock-api.internal/v1/models", "fake_key")
+	models, status, err := fetchModelsHTTPWithRetryClient(ctx, mockClient, "http://mock-api.internal/v1/models", "fake_key")
 	if err != nil {
 		t.Fatalf("expected retry to succeed eventually, got err: %v", err)
 	}
@@ -130,48 +134,86 @@ func TestFetchModelsHTTPWithRetry_ExponentialBackoff(t *testing.T) {
 	}
 }
 
-func TestGetAvailableModels_ReadOnlyAndSSRFGuard(t *testing.T) {
+func TestGetAvailableModels_SSRFAndKeyExfiltrationDefense(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. 拦截非法协议与云元数据地址
-	if _, err := FetchModelsFromBaseURL(ctx, "file:///etc/passwd", ""); err == nil {
-		t.Error("expected error for file:// scheme, got nil")
+	// 1. 拦截非法协议、云元数据地址与内嵌凭据 URL
+	badURLs := []string{
+		"file:///etc/passwd",
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/latest/meta-data",
+		"http://[fd00:ec2::254]/latest/meta-data",
+		"http://0.0.0.0:8080/v1",
+		"https://user:pass@example.com/v1",
 	}
-	if _, err := FetchModelsFromBaseURL(ctx, "http://169.254.169.254/latest/meta-data", ""); err == nil {
-		t.Error("expected error for link-local metadata IP, got nil")
+	for _, u := range badURLs {
+		if _, err := FetchModelsFromBaseURL(ctx, u, ""); err == nil {
+			t.Errorf("expected SSRF validation error for %q, got nil", u)
+		}
 	}
 
-	// 2. 验证只读探测 GetAvailableModels 不会污染内存中的 Configs
-	originalTransport := httpClient.Transport
-	defer func() { httpClient.Transport = originalTransport }()
-
-	httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "custom-model-1"}]}`)),
-			Header:     make(http.Header),
-		}, nil
-	})
+	// 2. 验证 [P0-SEC-01]: 探测非预配置 BaseURL 时绝不泄露已存储的真实 APIKey
+	var capturedAuthHeader string
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			capturedAuthHeader = req.Header.Get("Authorization")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(`{"data": [{"id": "custom-model-1"}]}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	configs := map[string]config.ModelConfig{
-		"openai": {Type: "openai", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-4o"},
+		"openai": {
+			Type:         "openai",
+			BaseURL:      "https://api.openai.com/v1",
+			APIKey:       "sk-TOP-SECRET-STORED-KEY",
+			DefaultModel: "gpt-4o",
+		},
 	}
 	mgr := NewModelManager(ctx, configs, "openai", t.TempDir())
+	mgr.HTTPClient = mockClient
 
-	res, err := mgr.GetAvailableModels(ctx, request.GetModelsReq{
-		Provider: "probed_provider",
-		BaseURL:  "https://example.com/v1",
+	// 攻击模拟：指定 provider=openai 但篡改 base_url 为攻击者域名，且不传 api_key
+	res, err := mgr.GetAvailableModels(ctx, dto.GetModelsReq{
+		Provider: "openai",
+		BaseURL:  "https://attacker.example.com/v1",
 	})
 	if err != nil {
 		t.Fatalf("GetAvailableModels failed: %v", err)
 	}
+	if capturedAuthHeader != "" {
+		t.Fatalf("CRITICAL: stored API key was leaked to custom base_url! Authorization=%q", capturedAuthHeader)
+	}
 	if len(res.Models) != 1 || res.Models[0].Model != "custom-model-1" {
 		t.Errorf("unexpected models: %+v", res.Models)
 	}
-	if _, exists := mgr.Configs["probed_provider"]; exists {
-		t.Error("expected GetAvailableModels not to mutate mgr.Configs with probed_provider")
+
+	// 正向验证：当探测的 BaseURL 与预配置的 openai BaseURL 一致时，正常携带已存 APIKey
+	_, err = mgr.GetAvailableModels(ctx, dto.GetModelsReq{
+		Provider: "openai",
+		BaseURL:  "https://api.openai.com/v1/",
+	})
+	if err != nil {
+		t.Fatalf("GetAvailableModels matching base_url failed: %v", err)
+	}
+	if capturedAuthHeader != "Bearer sk-TOP-SECRET-STORED-KEY" {
+		t.Errorf("expected stored key on matching base_url, got %q", capturedAuthHeader)
+	}
+
+	// 3. 验证 SaveAndSwitchModel 修改 BaseURL 但不传新 APIKey 时清空旧密钥
+	_, err = mgr.SaveAndSwitchModel(ctx, dto.SaveModelReq{
+		Provider: "openai",
+		Model:    "custom-model-1",
+		BaseURL:  "https://new-endpoint.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("SaveAndSwitchModel failed: %v", err)
+	}
+	if mgr.Configs["openai"].APIKey != "" {
+		t.Fatalf("expected stored APIKey cleared when BaseURL changed without new key, got %q", mgr.Configs["openai"].APIKey)
 	}
 }
-
-

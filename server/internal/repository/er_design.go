@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"archcanvas/internal/domain"
 	"archcanvas/internal/model"
-
-	"strings"
-
+	"archcanvas/internal/validator"
 	"archcanvas/pkg/id"
+
 	"gorm.io/gorm"
 )
 
@@ -36,8 +37,12 @@ func (r *ERDesignRepository) GetByProjectID(
 		return nil, ErrProjectIDRequired
 	}
 
+	return getERDesignWithDB(r.db.WithContext(ctx), projectID)
+}
+
+func getERDesignWithDB(tx *gorm.DB, projectID string) (*domain.ERDesign, error) {
 	entities := make([]model.Entity, 0)
-	if err := r.db.WithContext(ctx).
+	if err := tx.
 		Where("project_id = ?", projectID).
 		Order("id ASC").
 		Find(&entities).Error; err != nil {
@@ -51,16 +56,16 @@ func (r *ERDesignRepository) GetByProjectID(
 			entityIDs = append(entityIDs, entity.ID)
 		}
 
-		if err := r.db.WithContext(ctx).
+		if err := tx.
 			Where("entity_id IN ?", entityIDs).
-			Order("entity_id ASC, id ASC").
+			Order("entity_id ASC, sort_order ASC, id ASC").
 			Find(&attributes).Error; err != nil {
 			return nil, fmt.Errorf("find attributes for project %q: %w", projectID, err)
 		}
 	}
 
 	relations := make([]model.Relation, 0)
-	if err := r.db.WithContext(ctx).
+	if err := tx.
 		Where("project_id = ?", projectID).
 		Order("id ASC").
 		Find(&relations).Error; err != nil {
@@ -95,7 +100,9 @@ func (r *ERDesignRepository) GetByProjectID(
 
 		var indexes []domain.IndexDefinition
 		if entity.Indexes != "" && entity.Indexes != "[]" {
-			_ = json.Unmarshal([]byte(entity.Indexes), &indexes)
+			if err := json.Unmarshal([]byte(entity.Indexes), &indexes); err != nil {
+				return nil, fmt.Errorf("unmarshal indexes for entity %q: %w", entity.Name, err)
+			}
 		}
 		if indexes == nil {
 			indexes = make([]domain.IndexDefinition, 0)
@@ -140,8 +147,21 @@ func (r *ERDesignRepository) SaveByProjectID(
 	if projectID == "" {
 		return nil, ErrProjectIDRequired
 	}
+	if err := validator.ValidateERDesignInput(entities, relations); err != nil {
+		return nil, err
+	}
 
+	var saved *domain.ERDesign
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 0. 校验目标项目存在，防止写入孤儿实体记录
+		var projectCount int64
+		if err := tx.Model(&model.Project{}).Where("id = ?", projectID).Count(&projectCount).Error; err != nil {
+			return fmt.Errorf("verify project existence: %w", err)
+		}
+		if projectCount == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
 		// 1. 读取当前项目已有的实体、属性和关系快照
 		var oldEntities []model.Entity
 		if err := tx.Where("project_id = ?", projectID).Find(&oldEntities).Error; err != nil {
@@ -184,36 +204,118 @@ func (r *ERDesignRepository) SaveByProjectID(
 			oldRelationsByID[rel.ID] = rel
 		}
 
-		// 2. 映射与 Diff 计算：实体 (Entities)
+		// 预查询所有候选外部 UUID 是否已被其他项目占用，彻底根除跨项目 JSON 导入导致的全局主键冲突
+		foreignEntCandidates := make([]string, 0)
+		foreignAttrCandidates := make([]string, 0)
+		foreignRelCandidates := make([]string, 0)
+		for _, e := range entities {
+			if id.IsValidUUID(e.ID) {
+				if _, owned := oldEntitiesByID[e.ID]; !owned {
+					foreignEntCandidates = append(foreignEntCandidates, e.ID)
+				}
+			}
+			for _, a := range e.Attributes {
+				if id.IsValidUUID(a.ID) {
+					foreignAttrCandidates = append(foreignAttrCandidates, a.ID)
+				}
+			}
+		}
+		for _, rel := range relations {
+			if id.IsValidUUID(rel.ID) {
+				if _, owned := oldRelationsByID[rel.ID]; !owned {
+					foreignRelCandidates = append(foreignRelCandidates, rel.ID)
+				}
+			}
+		}
+
+		takenEntUUIDs := make(map[string]bool)
+		if len(foreignEntCandidates) > 0 {
+			var taken []string
+			if err := tx.Model(&model.Entity{}).Where("id IN ? AND project_id <> ?", foreignEntCandidates, projectID).Pluck("id", &taken).Error; err != nil {
+				return fmt.Errorf("check taken entity UUIDs: %w", err)
+			}
+			for _, u := range taken {
+				takenEntUUIDs[u] = true
+			}
+		}
+
+		takenAttrUUIDs := make(map[string]bool)
+		if len(foreignAttrCandidates) > 0 {
+			var existingForeignAttrs []model.Attribute
+			if err := tx.Select("id", "entity_id").Where("id IN ?", foreignAttrCandidates).Find(&existingForeignAttrs).Error; err != nil {
+				return fmt.Errorf("check taken attribute UUIDs: %w", err)
+			}
+			for _, a := range existingForeignAttrs {
+				if _, ownedEnt := oldEntitiesByID[a.EntityID]; !ownedEnt {
+					takenAttrUUIDs[a.ID] = true
+				}
+			}
+		}
+
+		takenRelUUIDs := make(map[string]bool)
+		if len(foreignRelCandidates) > 0 {
+			var taken []string
+			if err := tx.Model(&model.Relation{}).Where("id IN ? AND project_id <> ?", foreignRelCandidates, projectID).Pluck("id", &taken).Error; err != nil {
+				return fmt.Errorf("check taken relation UUIDs: %w", err)
+			}
+			for _, u := range taken {
+				takenRelUUIDs[u] = true
+			}
+		}
+
+		// 2. 两阶段实体 ID 解析（Pass 1: 严格按已有 ID 绑定；Pass 2: 对未绑定项按未占用的旧表名回退匹配）
+		// 彻底解决「将 users 改名为 accounts 同时新增一张 users 表」时新表劫持旧表 ID 误删字段的缺陷。
 		entityIDMap := make(map[string]string, len(entities)*3)
 		matchedOldEntityIDs := make(map[string]bool, len(oldEntities))
+		usedNewEntityIDs := make(map[string]bool, len(entities))
+		resolvedEntityIDs := make([]string, len(entities))
+
+		// Pass 1: 按当前项目已拥有的 Entity ID 精确锁定
+		for i, e := range entities {
+			if oldEnt, ok := oldEntitiesByID[e.ID]; ok && !matchedOldEntityIDs[oldEnt.ID] {
+				resolvedEntityIDs[i] = oldEnt.ID
+				matchedOldEntityIDs[oldEnt.ID] = true
+				usedNewEntityIDs[oldEnt.ID] = true
+			}
+		}
+
+		// Pass 2: 按未占用的旧表名回退匹配，或签发/保留无冲突的新 UUIDv7
+		for i, e := range entities {
+			if resolvedEntityIDs[i] != "" {
+				continue
+			}
+			entNameClean := strings.TrimSpace(e.Name)
+			if oldEnt, ok := oldEntitiesByName[strings.ToLower(entNameClean)]; ok && !matchedOldEntityIDs[oldEnt.ID] {
+				resolvedEntityIDs[i] = oldEnt.ID
+				matchedOldEntityIDs[oldEnt.ID] = true
+				usedNewEntityIDs[oldEnt.ID] = true
+			} else if id.IsValidUUID(e.ID) && !takenEntUUIDs[e.ID] && !usedNewEntityIDs[e.ID] {
+				resolvedEntityIDs[i] = e.ID
+				usedNewEntityIDs[e.ID] = true
+			} else {
+				newID := id.NewUUIDv7()
+				resolvedEntityIDs[i] = newID
+				usedNewEntityIDs[newID] = true
+			}
+		}
 
 		var entitiesToInsert []model.Entity
 		var entitiesToUpdate []model.Entity
+		validSavedEntityIDs := make(map[string]bool, len(entities))
 
-		for _, e := range entities {
-			var entityID string
-			if oldEnt, ok := oldEntitiesByID[e.ID]; ok {
-				entityID = oldEnt.ID
-			} else if oldEnt, ok := oldEntitiesByName[strings.ToLower(e.Name)]; ok {
-				entityID = oldEnt.ID
-			} else if id.IsValidUUID(e.ID) {
-				entityID = e.ID
-			} else {
-				entityID = id.NewUUIDv7()
-			}
+		for i, e := range entities {
+			entityID := resolvedEntityIDs[i]
+			entNameClean := strings.TrimSpace(e.Name)
+			validSavedEntityIDs[entityID] = true
 
 			if e.ID != "" {
 				entityIDMap[e.ID] = entityID
 				entityIDMap[strings.ToLower(e.ID)] = entityID
 			}
-			entityIDMap[e.Name] = entityID
-			entityIDMap[strings.ToLower(e.Name)] = entityID
+			entityIDMap[entNameClean] = entityID
+			entityIDMap[strings.ToLower(entNameClean)] = entityID
 			entityIDMap[entityID] = entityID
 
-			matchedOldEntityIDs[entityID] = true
-
-			// 解析坐标（优先使用传入坐标，缺失则沿用旧坐标）
 			var posX, posY *float64
 			if e.Position != nil {
 				x := e.Position.X
@@ -226,22 +328,24 @@ func (r *ERDesignRepository) SaveByProjectID(
 			} else if oldPos, ok := oldPosByID[e.ID]; ok {
 				posX = oldPos[0]
 				posY = oldPos[1]
-			} else if oldPos, ok := oldPosByName[strings.ToLower(e.Name)]; ok {
+			} else if oldPos, ok := oldPosByName[strings.ToLower(entNameClean)]; ok {
 				posX = oldPos[0]
 				posY = oldPos[1]
 			}
 
 			indexesJSON := ""
 			if len(e.Indexes) > 0 {
-				if bytes, err := json.Marshal(e.Indexes); err == nil {
-					indexesJSON = string(bytes)
+				bytes, err := json.Marshal(e.Indexes)
+				if err != nil {
+					return fmt.Errorf("marshal indexes for entity %q: %w", entNameClean, err)
 				}
+				indexesJSON = string(bytes)
 			}
 
 			entModel := model.Entity{
 				ID:              entityID,
 				ProjectID:       projectID,
-				Name:            e.Name,
+				Name:            entNameClean,
 				Comment:         e.Comment,
 				Indexes:         indexesJSON,
 				IsJunctionTable: e.IsJunctionTable,
@@ -270,20 +374,14 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 		}
 
-		// 3. Diff 计算：属性 (Attributes)
+		// 3. 两阶段属性 ID 解析与列顺序 (sort_order) 持久化
 		var attrsToInsert []model.Attribute
 		var attrsToUpdate []model.Attribute
 		var attrsToDeleteIDs []string
+		usedGlobalAttrIDs := make(map[string]bool)
 
-		for _, e := range entities {
-			entityID := entityIDMap[e.ID]
-			if entityID == "" {
-				entityID = entityIDMap[e.Name]
-			}
-			if entityID == "" {
-				entityID = entityIDMap[strings.ToLower(e.Name)]
-			}
-
+		for i, e := range entities {
+			entityID := resolvedEntityIDs[i]
 			existingAttrs := oldAttrsByEntityID[entityID]
 			existingAttrsByID := make(map[string]model.Attribute, len(existingAttrs))
 			existingAttrsByName := make(map[string]model.Attribute, len(existingAttrs))
@@ -293,24 +391,58 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 
 			matchedAttrIDs := make(map[string]bool, len(e.Attributes))
-			for _, attr := range e.Attributes {
-				var attrID string
-				if oldA, ok := existingAttrsByID[attr.ID]; ok {
-					attrID = oldA.ID
-				} else if oldA, ok := existingAttrsByName[strings.ToLower(attr.Name)]; ok {
-					attrID = oldA.ID
-				} else if id.IsValidUUID(attr.ID) {
-					attrID = attr.ID
-				} else {
-					attrID = id.NewUUIDv7()
+			resolvedAttrIDs := make([]string, len(e.Attributes))
+
+			// Pass 1: 按所属表的已有 Attribute ID 精确锁定
+			for j, attr := range e.Attributes {
+				if oldA, ok := existingAttrsByID[attr.ID]; ok && !matchedAttrIDs[oldA.ID] {
+					resolvedAttrIDs[j] = oldA.ID
+					matchedAttrIDs[oldA.ID] = true
+					usedGlobalAttrIDs[oldA.ID] = true
 				}
+			}
 
-				matchedAttrIDs[attrID] = true
+			// Pass 2: 按未占用的字段名回退匹配，或签发无冲突 UUIDv7
+			for j, attr := range e.Attributes {
+				if resolvedAttrIDs[j] != "" {
+					continue
+				}
+				attrNameClean := strings.TrimSpace(attr.Name)
+				if oldA, ok := existingAttrsByName[strings.ToLower(attrNameClean)]; ok && !matchedAttrIDs[oldA.ID] {
+					resolvedAttrIDs[j] = oldA.ID
+					matchedAttrIDs[oldA.ID] = true
+					usedGlobalAttrIDs[oldA.ID] = true
+				} else if id.IsValidUUID(attr.ID) && !takenAttrUUIDs[attr.ID] && !usedGlobalAttrIDs[attr.ID] {
+					// 同时避免与当前项目中其他表的旧属性 ID 冲突
+					var ownedElsewhere bool
+					for _, oa := range oldAttributes {
+						if oa.ID == attr.ID && oa.EntityID != entityID {
+							ownedElsewhere = true
+							break
+						}
+					}
+					if !ownedElsewhere {
+						resolvedAttrIDs[j] = attr.ID
+						usedGlobalAttrIDs[attr.ID] = true
+					} else {
+						newID := id.NewUUIDv7()
+						resolvedAttrIDs[j] = newID
+						usedGlobalAttrIDs[newID] = true
+					}
+				} else {
+					newID := id.NewUUIDv7()
+					resolvedAttrIDs[j] = newID
+					usedGlobalAttrIDs[newID] = true
+				}
+			}
 
+			for j, attr := range e.Attributes {
+				attrID := resolvedAttrIDs[j]
 				attrModel := model.Attribute{
 					ID:           attrID,
 					EntityID:     entityID,
-					Name:         attr.Name,
+					SortOrder:    j,
+					Name:         strings.TrimSpace(attr.Name),
 					Comment:      attr.Comment,
 					DBType:       attr.DBType,
 					CodeType:     attr.CodeType,
@@ -323,6 +455,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 				if oldA, ok := existingAttrsByID[attrID]; ok {
 					if oldA.Name != attrModel.Name ||
+						oldA.SortOrder != attrModel.SortOrder ||
 						oldA.Comment != attrModel.Comment ||
 						oldA.DBType != attrModel.DBType ||
 						oldA.CodeType != attrModel.CodeType ||
@@ -347,40 +480,51 @@ func (r *ERDesignRepository) SaveByProjectID(
 
 		// 4. Diff 计算：关联关系 (Relations)
 		matchedOldRelIDs := make(map[string]bool, len(oldRelations))
+		usedRelIDs := make(map[string]bool, len(relations))
 		var relsToInsert []model.Relation
 		var relsToUpdate []model.Relation
 
 		for _, rel := range relations {
-			sourceID := rel.SourceEntityID
+			sourceID := strings.TrimSpace(rel.SourceEntityID)
 			if mapped, ok := entityIDMap[sourceID]; ok {
 				sourceID = mapped
 			} else if mapped, ok := entityIDMap[strings.ToLower(sourceID)]; ok {
 				sourceID = mapped
 			}
 
-			targetID := rel.TargetEntityID
+			targetID := strings.TrimSpace(rel.TargetEntityID)
 			if mapped, ok := entityIDMap[targetID]; ok {
 				targetID = mapped
 			} else if mapped, ok := entityIDMap[strings.ToLower(targetID)]; ok {
 				targetID = mapped
 			}
 
+			if !validSavedEntityIDs[sourceID] || !validSavedEntityIDs[targetID] {
+				return validator.NewValidationError("关联关系引用了不存在的实体端点 (%q -> %q)", rel.SourceEntityID, rel.TargetEntityID)
+			}
+
+			relType := strings.TrimSpace(rel.Cardinality)
+			if relType == "" {
+				relType = strings.TrimSpace(rel.RelationTypeID)
+			}
+			if relType == "" {
+				relType = "one_to_many"
+			}
+
 			var relID string
-			if _, ok := oldRelationsByID[rel.ID]; ok {
+			if _, ok := oldRelationsByID[rel.ID]; ok && !matchedOldRelIDs[rel.ID] {
 				relID = rel.ID
 			} else {
-				// 尝试通过 source + target + type 匹配历史关系，保持 ID 稳定
 				for _, oldR := range oldRelations {
 					if !matchedOldRelIDs[oldR.ID] &&
 						oldR.SourceEntityID == sourceID &&
 						oldR.TargetEntityID == targetID &&
-						oldR.RelationTypeID == rel.RelationTypeID {
+						oldR.RelationTypeID == relType {
 						relID = oldR.ID
 						break
 					}
 				}
 				if relID == "" {
-					// 宽松匹配：source + target
 					for _, oldR := range oldRelations {
 						if !matchedOldRelIDs[oldR.ID] &&
 							oldR.SourceEntityID == sourceID &&
@@ -391,7 +535,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 					}
 				}
 				if relID == "" {
-					if id.IsValidUUID(rel.ID) {
+					if id.IsValidUUID(rel.ID) && !takenRelUUIDs[rel.ID] && !usedRelIDs[rel.ID] {
 						relID = rel.ID
 					} else {
 						relID = id.NewUUIDv7()
@@ -400,14 +544,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 
 			matchedOldRelIDs[relID] = true
-
-			relType := rel.RelationTypeID
-			if relType == "" {
-				relType = rel.Cardinality
-			}
-			if relType == "" {
-				relType = "one_to_many"
-			}
+			usedRelIDs[relID] = true
 
 			relModel := model.Relation{
 				ID:             relID,
@@ -436,21 +573,18 @@ func (r *ERDesignRepository) SaveByProjectID(
 		}
 
 		// 5. 按照安全依赖顺序执行数据库增删改
-		// 5.1 删除废弃的关联关系
 		if len(relsToDeleteIDs) > 0 {
 			if err := tx.Where("id IN ?", relsToDeleteIDs).Delete(&model.Relation{}).Error; err != nil {
 				return fmt.Errorf("delete obsolete relations: %w", err)
 			}
 		}
 
-		// 5.2 删除废弃的属性
 		if len(attrsToDeleteIDs) > 0 {
 			if err := tx.Where("id IN ?", attrsToDeleteIDs).Delete(&model.Attribute{}).Error; err != nil {
 				return fmt.Errorf("delete obsolete attributes: %w", err)
 			}
 		}
 
-		// 5.3 删除被移除的实体（及其孤立属性和关联）
 		if len(entitiesToDeleteIDs) > 0 {
 			if err := tx.Where("entity_id IN ?", entitiesToDeleteIDs).Delete(&model.Attribute{}).Error; err != nil {
 				return fmt.Errorf("delete cascade attributes of removed entities: %w", err)
@@ -463,23 +597,22 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 		}
 
-		// 5.4 避免重命名实体时触发 SQLite (project_id, name) 唯一索引冲突
+		// 避免重命名实体时触发 SQLite (project_id, name) 唯一索引冲突
 		for _, ent := range entitiesToUpdate {
-			if oldEnt, ok := oldEntitiesByID[ent.ID]; ok && oldEnt.Name != ent.Name {
+			if oldEnt, ok := oldEntitiesByID[ent.ID]; ok && !strings.EqualFold(oldEnt.Name, ent.Name) || (ok && oldEnt.Name != ent.Name) {
 				if conflicting, exists := oldEntitiesByName[strings.ToLower(ent.Name)]; exists && conflicting.ID != ent.ID {
 					tempName := fmt.Sprintf("%s__renaming_%s", conflicting.Name, id.NewUUIDv7()[:8])
 					if err := tx.Model(&model.Entity{}).Where("id = ?", conflicting.ID).Update("name", tempName).Error; err != nil {
-						return fmt.Errorf("rename collision resolution: %w", err)
+						return fmt.Errorf("entity rename collision resolution: %w", err)
 					}
 				}
 			}
 		}
 
-		// 5.5 更新已有实体
 		for _, ent := range entitiesToUpdate {
 			if err := tx.Model(&model.Entity{}).
 				Where("id = ?", ent.ID).
-				Updates(map[string]interface{}{
+				Updates(map[string]any{
 					"name":              ent.Name,
 					"comment":           ent.Comment,
 					"indexes":           ent.Indexes,
@@ -491,30 +624,31 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 		}
 
-		// 5.6 批量插入新实体
 		if len(entitiesToInsert) > 0 {
 			if err := tx.Create(&entitiesToInsert).Error; err != nil {
 				return fmt.Errorf("insert new entities: %w", err)
 			}
 		}
 
-		// 5.7 避免属性重命名时触发 (entity_id, name) 唯一索引冲突
+		// 避免属性重命名时触发 (entity_id, name) 唯一索引冲突（严格检查错误）
 		for _, attr := range attrsToUpdate {
 			existingAttrs := oldAttrsByEntityID[attr.EntityID]
 			for _, oldA := range existingAttrs {
 				if oldA.ID != attr.ID && strings.EqualFold(oldA.Name, attr.Name) {
 					tempName := fmt.Sprintf("%s__renaming_%s", oldA.Name, id.NewUUIDv7()[:8])
-					_ = tx.Model(&model.Attribute{}).Where("id = ?", oldA.ID).Update("name", tempName).Error
+					if err := tx.Model(&model.Attribute{}).Where("id = ?", oldA.ID).Update("name", tempName).Error; err != nil {
+						return fmt.Errorf("attribute rename collision resolution: %w", err)
+					}
 				}
 			}
 		}
 
-		// 5.8 更新已有属性
 		for _, attr := range attrsToUpdate {
 			if err := tx.Model(&model.Attribute{}).
 				Where("id = ?", attr.ID).
-				Updates(map[string]interface{}{
+				Updates(map[string]any{
 					"name":           attr.Name,
+					"sort_order":     attr.SortOrder,
 					"comment":        attr.Comment,
 					"db_type":        attr.DBType,
 					"code_type":      attr.CodeType,
@@ -528,18 +662,16 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 		}
 
-		// 5.9 批量插入新属性
 		if len(attrsToInsert) > 0 {
 			if err := tx.Create(&attrsToInsert).Error; err != nil {
 				return fmt.Errorf("insert new attributes: %w", err)
 			}
 		}
 
-		// 5.10 更新已有关系
 		for _, rel := range relsToUpdate {
 			if err := tx.Model(&model.Relation{}).
 				Where("id = ?", rel.ID).
-				Updates(map[string]interface{}{
+				Updates(map[string]any{
 					"source_entity_id": rel.SourceEntityID,
 					"target_entity_id": rel.TargetEntityID,
 					"relation_type_id": rel.RelationTypeID,
@@ -548,13 +680,23 @@ func (r *ERDesignRepository) SaveByProjectID(
 			}
 		}
 
-		// 5.11 批量插入新关系
 		if len(relsToInsert) > 0 {
 			if err := tx.Create(&relsToInsert).Error; err != nil {
 				return fmt.Errorf("insert new relations: %w", err)
 			}
 		}
 
+		// 联动更新所属项目的 updated_at 时间戳
+		if err := tx.Model(&model.Project{}).Where("id = ?", projectID).Update("updated_at", time.Now()).Error; err != nil {
+			return fmt.Errorf("touch project updated_at: %w", err)
+		}
+
+		// 在同一事务快照中读取返回最新状态，保证可重复读一致性
+		resDesign, err := getERDesignWithDB(tx, projectID)
+		if err != nil {
+			return err
+		}
+		saved = resDesign
 		return nil
 	})
 
@@ -562,7 +704,7 @@ func (r *ERDesignRepository) SaveByProjectID(
 		return nil, fmt.Errorf("save er design for project %q: %w", projectID, err)
 	}
 
-	return r.GetByProjectID(ctx, projectID)
+	return saved, nil
 }
 
 func float64PtrEqual(a, b *float64) bool {
