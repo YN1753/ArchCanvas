@@ -30,12 +30,86 @@ func (r *ProjectRepository) List(ctx context.Context) ([]model.Project, error) {
 	var projects []model.Project
 	// 显式裁剪大字段 conceptual_design，避免列表接口传输和反序列化冗余 JSON
 	if err := r.db.WithContext(ctx).
-		Select("id", "name", "description", "created_at", "updated_at").
-		Order("created_at DESC").
+		Select("id", "name", "description", "visitor_id", "is_template", "template_order", "created_at", "updated_at").
+		Order("is_template DESC, template_order ASC, created_at DESC").
 		Find(&projects).Error; err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	return projects, nil
+}
+
+// ListForShowcaseVisitor 仅返回官方只读样板工程与当前匿名访客名下的私有草稿项目。
+func (r *ProjectRepository) ListForShowcaseVisitor(ctx context.Context, visitorID string) ([]model.Project, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("project repository database is nil")
+	}
+	var projects []model.Project
+	q := r.db.WithContext(ctx).
+		Select("id", "name", "description", "visitor_id", "is_template", "template_order", "created_at", "updated_at")
+	if visitorID != "" {
+		q = q.Where("is_template = ? OR visitor_id = ?", true, visitorID)
+	} else {
+		q = q.Where("is_template = ?", true)
+	}
+	if err := q.Order("is_template DESC, template_order ASC, created_at DESC").Find(&projects).Error; err != nil {
+		return nil, fmt.Errorf("list showcase projects: %w", err)
+	}
+	return projects, nil
+}
+
+// CountByVisitorID 统计某位匿名访客名下的非模板项目数，防范恶意刷建空项目。
+func (r *ProjectRepository) CountByVisitorID(ctx context.Context, visitorID string) (int64, error) {
+	if r == nil || r.db == nil || visitorID == "" {
+		return 0, nil
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&model.Project{}).
+		Where("is_template = ? AND visitor_id = ?", false, visitorID).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// ListExpiredVisitorProjectIDs 查询超过指定截止时间未更新的所有非模板访客临时项目 ID。
+func (r *ProjectRepository) ListExpiredVisitorProjectIDs(ctx context.Context, cutoff time.Time) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Model(&model.Project{}).
+		Where("is_template = ? AND visitor_id <> '' AND updated_at < ?", false, cutoff).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// UpsertTemplateProject 幂等写入或修复官方演示样板工程元数据与概念模型。
+func (r *ProjectRepository) UpsertTemplateProject(ctx context.Context, p model.Project) error {
+	if r == nil || r.db == nil {
+		return errors.New("project repository database is nil")
+	}
+	now := time.Now()
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = now
+	}
+	p.UpdatedAt = now
+	p.IsTemplate = true
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"name":              p.Name,
+			"description":       p.Description,
+			"visitor_id":        p.VisitorID,
+			"is_template":       true,
+			"template_order":    p.TemplateOrder,
+			"conceptual_design": p.ConceptualDesign,
+			"updated_at":        now,
+		}),
+	}).Create(&p).Error
 }
 
 func (r *ProjectRepository) GetByID(ctx context.Context, id string) (*model.Project, error) {
@@ -50,6 +124,10 @@ func (r *ProjectRepository) GetByID(ctx context.Context, id string) (*model.Proj
 }
 
 func (r *ProjectRepository) Create(ctx context.Context, name, description string) (*model.Project, error) {
+	return r.CreateWithVisitor(ctx, name, description, "")
+}
+
+func (r *ProjectRepository) CreateWithVisitor(ctx context.Context, name, description, visitorID string) (*model.Project, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("project repository database is nil")
 	}
@@ -58,6 +136,8 @@ func (r *ProjectRepository) Create(ctx context.Context, name, description string
 		ID:          id.NewUUIDv7(),
 		Name:        name,
 		Description: description,
+		VisitorID:   visitorID,
+		IsTemplate:  false,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

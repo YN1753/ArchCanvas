@@ -3,6 +3,7 @@ package handler
 import (
 	"archcanvas/internal/domain"
 	"archcanvas/internal/dto"
+	"archcanvas/internal/middleware"
 	"archcanvas/internal/service"
 	"archcanvas/pkg/response"
 
@@ -11,12 +12,18 @@ import (
 
 type ProjectHandler struct {
 	ProjectService *service.ProjectService
+	QuotaManager   *middleware.ShowcaseQuotaManager
 }
 
 func NewProjectHandler(projectService *service.ProjectService) ProjectHandler {
 	return ProjectHandler{
 		ProjectService: projectService,
 	}
+}
+
+func (h ProjectHandler) WithQuotaManager(qm *middleware.ShowcaseQuotaManager) ProjectHandler {
+	h.QuotaManager = qm
+	return h
 }
 
 // ListProjects 获取全部项目列表 (GET /api/v1/projects/list)
@@ -252,4 +259,59 @@ func (h *ProjectHandler) ClearMessages(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"cleared": true, "project_id": req.ProjectID})
+}
+
+// ForkProject 克隆样板或现有项目至当前访客沙盒 (POST /api/v1/projects/fork)
+func (h *ProjectHandler) ForkProject(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req dto.ForkProjectReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondBindError(c, err, "project_id is required")
+		return
+	}
+
+	forked, err := h.ProjectService.ForkProject(ctx, req.ProjectID, req.Name)
+	if err != nil {
+		respondServiceError(c, err, "克隆沙盒副本失败")
+		return
+	}
+	response.Success(c, forked)
+}
+
+// ShowcaseStatus 返回当前实例演示沙盒模式状态与当前访客 IP 剩余免费 AI 体验额度 (GET /api/v1/showcase/status)
+func (h *ProjectHandler) ShowcaseStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	enabled := (h.QuotaManager != nil && h.QuotaManager.Enabled()) ||
+		(h.ProjectService != nil && h.ProjectService.ShowcaseCfg.Enabled) ||
+		middleware.IsShowcaseMode(ctx)
+	if !enabled {
+		response.Success(c, dto.ShowcaseStatusResp{Enabled: false})
+		return
+	}
+
+	cfg := h.ProjectService.ShowcaseCfg
+	cfg.NormalizeDefaults()
+	if h.QuotaManager != nil {
+		cfg = h.QuotaManager.Config()
+	}
+
+	var ipUsed, globalUsed int
+	if h.QuotaManager != nil {
+		clientIP := middleware.ExtractShowcaseClientIP(c.Request)
+		ipUsed, globalUsed, _ = h.QuotaManager.GetUsage(ctx, clientIP)
+	}
+
+	response.Success(c, dto.ShowcaseStatusResp{
+		Enabled:               true,
+		VisitorID:             middleware.GetVisitorID(ctx),
+		IPDailyLimit:          cfg.IPDailyLimit,
+		IPUsed:                ipUsed,
+		IPRemaining:           max(0, cfg.IPDailyLimit-ipUsed),
+		GlobalDailyLimit:      cfg.GlobalDailyLimit,
+		GlobalUsed:            globalUsed,
+		GlobalRemaining:       max(0, cfg.GlobalDailyLimit-globalUsed),
+		VisitorTTLHours:       cfg.VisitorTTLHours,
+		MaxProjectsPerVisitor: cfg.MaxProjectsPerVisitor,
+		ReadonlyModels:        true,
+	})
 }

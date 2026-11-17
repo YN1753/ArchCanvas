@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"archcanvas/internal/validator"
@@ -205,6 +206,32 @@ func LoadWithError(configDir string) (*Config, error) {
 		defaultProvider = modelNames[0]
 	}
 	cfg.Agent.DefaultModelProvider = defaultProvider
+
+	// 解析简历公开演示沙盒模式配置（支持 SHOWCASE_MODE=true/1/yes/on 或 config.yaml showcase.enabled）
+	if rawMode := strings.ToLower(strings.TrimSpace(lookupEnv("SHOWCASE_MODE"))); rawMode != "" {
+		cfg.Showcase.Enabled = rawMode == "true" || rawMode == "1" || rawMode == "yes" || rawMode == "on"
+	}
+	if vStr := strings.TrimSpace(lookupEnv("SHOWCASE_IP_DAILY_LIMIT")); vStr != "" {
+		if n, err := strconv.Atoi(vStr); err == nil && n > 0 {
+			cfg.Showcase.IPDailyLimit = n
+		}
+	}
+	if vStr := strings.TrimSpace(lookupEnv("SHOWCASE_GLOBAL_DAILY_LIMIT")); vStr != "" {
+		if n, err := strconv.Atoi(vStr); err == nil && n > 0 {
+			cfg.Showcase.GlobalDailyLimit = n
+		}
+	}
+	if vStr := strings.TrimSpace(lookupEnv("SHOWCASE_VISITOR_TTL_HOURS")); vStr != "" {
+		if n, err := strconv.Atoi(vStr); err == nil && n > 0 {
+			cfg.Showcase.VisitorTTLHours = n
+		}
+	}
+	if vStr := strings.TrimSpace(lookupEnv("SHOWCASE_MAX_PROJECTS_PER_VISITOR")); vStr != "" {
+		if n, err := strconv.Atoi(vStr); err == nil && n > 0 {
+			cfg.Showcase.MaxProjectsPerVisitor = n
+		}
+	}
+	cfg.Showcase.NormalizeDefaults()
 
 	return &cfg, nil
 }

@@ -41,6 +41,11 @@ func (a *AgentService) ProposeConcepts(
 	ctx context.Context,
 	req dto.ProposeConceptsReq,
 ) (<-chan StreamEvent, error) {
+	if a.ProjectService != nil && strings.TrimSpace(req.ProjectID) != "" {
+		if _, err := a.ProjectService.EnsureWritableProject(ctx, req.ProjectID); err != nil {
+			return nil, err
+		}
+	}
 	outCh := make(chan StreamEvent, sseChannelBufferSize)
 	runCtx, finishRun := a.lifecycle.beginRun(ctx, req.ProjectID, defaultAgentRunTimeout)
 
@@ -188,6 +193,11 @@ func (a *AgentService) DerivePhysical(
 	ctx context.Context,
 	req dto.DerivePhysicalReq,
 ) (<-chan StreamEvent, error) {
+	if a.ProjectService != nil && strings.TrimSpace(req.ProjectID) != "" {
+		if _, err := a.ProjectService.EnsureWritableProject(ctx, req.ProjectID); err != nil {
+			return nil, err
+		}
+	}
 	outCh := make(chan StreamEvent, sseChannelBufferSize)
 	// 在启动异步协程前深拷贝传入的指针结构，防范调用方并发修改共享内存
 	reqConceptSnapshot := deepCopyConceptualDesign(req.ConceptualDesign)
@@ -312,6 +322,14 @@ func (a *AgentService) ReviewSchema(
 	ctx context.Context,
 	req dto.ReviewSchemaReq,
 ) (<-chan StreamEvent, error) {
+	var isReadOnlyTemplate bool
+	if a.ProjectService != nil && strings.TrimSpace(req.ProjectID) != "" {
+		proj, err := a.ProjectService.EnsureReadableProject(ctx, req.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		isReadOnlyTemplate = proj.IsTemplate
+	}
 	outCh := make(chan StreamEvent, sseChannelBufferSize)
 	runCtx, finishRun := a.lifecycle.beginRun(ctx, req.ProjectID, defaultAgentRunTimeout)
 
@@ -322,7 +340,7 @@ func (a *AgentService) ReviewSchema(
 		sendEvent := makeStreamSender(runCtx, outCh)
 
 		var convID string
-		if a.ProjectService != nil && a.ProjectService.MessageRepo != nil && req.ProjectID != "" {
+		if !isReadOnlyTemplate && a.ProjectService != nil && a.ProjectService.MessageRepo != nil && req.ProjectID != "" {
 			if conv, err := a.ProjectService.MessageRepo.GetOrCreateConversation(runCtx, req.ProjectID); err == nil && conv != nil {
 				convID = conv.ID
 			}

@@ -6,6 +6,7 @@ import (
 	"archcanvas/internal/database"
 	"archcanvas/internal/generator"
 	"archcanvas/internal/handler"
+	"archcanvas/internal/middleware"
 	"archcanvas/internal/repository"
 	"archcanvas/internal/router"
 	"archcanvas/internal/service"
@@ -35,11 +36,12 @@ var (
 
 func main() {
 	var (
-		portFlag    int
-		hostFlag    string
-		configFlag  string
-		dataFlag    string
-		versionFlag bool
+		portFlag     int
+		hostFlag     string
+		configFlag   string
+		dataFlag     string
+		showcaseFlag bool
+		versionFlag  bool
 	)
 
 	flag.IntVar(&portFlag, "port", 0, "HTTP 服务监听端口（优先级高于配置文件与环境变量）")
@@ -49,6 +51,7 @@ func main() {
 	flag.StringVar(&configFlag, "c", "", "指定配置文件目录路径（简写）")
 	flag.StringVar(&dataFlag, "data", "", "指定 SQLite 数据库文件路径（默认: 可执行文件同级 data/archcanvas.db）")
 	flag.StringVar(&dataFlag, "d", "", "指定 SQLite 数据库文件路径（简写）")
+	flag.BoolVar(&showcaseFlag, "showcase", false, "启用公开演示沙盒模式（等价于 SHOWCASE_MODE=true）")
 	flag.BoolVar(&versionFlag, "version", false, "显示版本信息")
 	flag.BoolVar(&versionFlag, "v", false, "显示版本信息（简写）")
 	flag.Parse()
@@ -96,6 +99,10 @@ func main() {
 	if cfg.Service.Host == "" {
 		cfg.Service.Host = "127.0.0.1"
 	}
+	if showcaseFlag {
+		cfg.Showcase.Enabled = true
+	}
+	cfg.Showcase.NormalizeDefaults()
 
 	// 数据库路径优先级: 命令行参数 -data > 配置文件（相对路径自动定位到可执行文件基准目录）
 	if dataFlag != "" {
@@ -118,9 +125,17 @@ func main() {
 	messageRepo := repository.NewMessageRepository(db)
 
 	modelManager := agent.NewModelManager(appCtx, cfg.Agent.Models, cfg.Agent.DefaultModelProvider, configDir)
+	quotaManager := middleware.NewShowcaseQuotaManager(db, cfg.Showcase)
 
 	projectService := service.NewProjectService(projectRepo, erDesignRepo, messageRepo, modelManager)
-	projectHandler := handler.NewProjectHandler(projectService)
+	projectService.SetShowcaseConfig(cfg.Showcase)
+	if cfg.Showcase.Enabled {
+		if err := projectService.SeedOfficialShowcaseProjects(appCtx); err != nil {
+			slog.Error("初始化官方演示样板工程失败", "error", err)
+		}
+		projectService.StartShowcaseSweeper(appCtx, quotaManager)
+	}
+	projectHandler := handler.NewProjectHandler(projectService).WithQuotaManager(quotaManager)
 
 	agentService := service.NewAgentService(modelManager, projectService)
 	agentHandler := handler.NewAgentHandler(agentService)
@@ -134,7 +149,7 @@ func main() {
 	healthHandler := handler.NewHealthHandler(db)
 
 	totalHandler := handler.NewTotalHandler(agentHandler, projectHandler, generatorHandler, healthHandler)
-	r := router.InitRouter(totalHandler)
+	r := router.InitRouterWithShowcase(totalHandler, quotaManager)
 
 	printBanner(cfg, configDir)
 
@@ -234,6 +249,10 @@ func printBanner(cfg *config.Config, configDir string) {
 	}
 	fmt.Printf("  │  * 数据文件     : %-41s│\n", truncatePath(cfg.Database.Path, 41))
 	fmt.Printf("  │  * 配置目录     : %-41s│\n", truncatePath(configDir, 41))
+	if cfg.Showcase.Enabled {
+		modeSummary := fmt.Sprintf("已启用 (单IP %d次/日 · 全站 %d次/日 · %dh清扫)", cfg.Showcase.IPDailyLimit, cfg.Showcase.GlobalDailyLimit, cfg.Showcase.VisitorTTLHours)
+		fmt.Printf("  │  * 演示沙盒模式 : %-41s│\n", modeSummary)
+	}
 	fmt.Println("  ╰─────────────────────────────────────────────────────────────╯")
 	fmt.Println()
 }

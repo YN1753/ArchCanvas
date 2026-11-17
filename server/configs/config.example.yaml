@@ -10,6 +10,14 @@ server:
 database:
   path: ./data/archcanvas.db
 
+showcase:
+  # 公网免登录简历演示模式（也可通过环境变量 SHOWCASE_MODE=true 或命令行 -showcase 开启）
+  enabled: false
+  ip_daily_limit: 20
+  global_daily_limit: 100
+  visitor_ttl_hours: 24
+  max_projects_per_visitor: 10
+
 agent:
   default_model_provider: deepseek
   models:

@@ -37,6 +37,14 @@ func respondServiceError(c *gin.Context, err error, publicFallback string) {
 		response.Fail(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	if validator.IsForbiddenError(err) {
+		response.Fail(c, http.StatusForbidden, err.Error(), nil)
+		return
+	}
+	if validator.IsRateLimitError(err) {
+		response.Fail(c, http.StatusTooManyRequests, err.Error(), nil)
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		response.Fail(c, http.StatusNotFound, "目标资源或项目不存在", nil)
 		return

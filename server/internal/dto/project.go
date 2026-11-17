@@ -53,3 +53,22 @@ type ListMessagesReq struct {
 type ClearMessagesReq struct {
 	ProjectID string `json:"project_id" binding:"required"`
 }
+
+type ForkProjectReq struct {
+	ProjectID string `json:"project_id" binding:"required"`
+	Name      string `json:"name,omitempty"`
+}
+
+type ShowcaseStatusResp struct {
+	Enabled               bool   `json:"enabled"`
+	VisitorID             string `json:"visitor_id,omitempty"`
+	IPDailyLimit          int    `json:"ip_daily_limit,omitempty"`
+	IPUsed                int    `json:"ip_used,omitempty"`
+	IPRemaining           int    `json:"ip_remaining,omitempty"`
+	GlobalDailyLimit      int    `json:"global_daily_limit,omitempty"`
+	GlobalUsed            int    `json:"global_used,omitempty"`
+	GlobalRemaining       int    `json:"global_remaining,omitempty"`
+	VisitorTTLHours       int    `json:"visitor_ttl_hours,omitempty"`
+	MaxProjectsPerVisitor int    `json:"max_projects_per_visitor,omitempty"`
+	ReadonlyModels        bool   `json:"readonly_models,omitempty"`
+}

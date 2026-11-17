@@ -7,6 +7,7 @@ import type {
   ProjectMessage,
   ProviderInfo,
   SaveModelParams,
+  ShowcaseStatus,
 } from '../api/client'
 import type {
   Attribute,
@@ -81,6 +82,8 @@ export interface ProjectSlice {
   bootError: string | null
   projects: Project[]
   project: Project | null
+  showcase: ShowcaseStatus | null
+  forkingProject: boolean
 
   models: ModelItem[]
   providers: ProviderInfo[]
@@ -90,6 +93,9 @@ export interface ProjectSlice {
 
   bootstrap: () => Promise<void>
   retryBootstrap: () => Promise<void>
+  fetchShowcaseStatus: () => Promise<void>
+  forkProject: (sourceId?: string, customName?: string) => Promise<Project | null>
+  ensureWritableProject: () => Promise<string | null>
   selectProject: (id: string) => Promise<void>
   createProject: (name: string, description?: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>

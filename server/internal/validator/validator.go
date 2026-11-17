@@ -29,6 +29,42 @@ func IsValidationError(err error) bool {
 	return errors.As(err, &target)
 }
 
+// ForbiddenError 表示当前操作在安全策略或只读演示沙盒模式下被拒绝（映射为 HTTP 403）。
+type ForbiddenError struct {
+	Message string
+}
+
+func (e *ForbiddenError) Error() string {
+	return e.Message
+}
+
+func NewForbiddenError(format string, args ...any) error {
+	return &ForbiddenError{Message: fmt.Sprintf(format, args...)}
+}
+
+func IsForbiddenError(err error) bool {
+	var target *ForbiddenError
+	return errors.As(err, &target)
+}
+
+// RateLimitError 表示请求超出体验配额上限（映射为 HTTP 429）。
+type RateLimitError struct {
+	Message string
+}
+
+func (e *RateLimitError) Error() string {
+	return e.Message
+}
+
+func NewRateLimitError(format string, args ...any) error {
+	return &RateLimitError{Message: fmt.Sprintf(format, args...)}
+}
+
+func IsRateLimitError(err error) bool {
+	var target *RateLimitError
+	return errors.As(err, &target)
+}
+
 var (
 	providerNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 	sqlIdentRe     = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,127}$`)

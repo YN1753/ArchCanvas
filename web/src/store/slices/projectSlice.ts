@@ -1,25 +1,69 @@
 import type { StateCreator } from 'zustand'
 
-import { api, type GetModelsParams, type SaveModelParams } from '../../api/client'
+import {
+  api,
+  setShowcaseQuotaListener,
+  type GetModelsParams,
+  type Project,
+  type SaveModelParams,
+} from '../../api/client'
 import { ensureLayout } from '../../flow/layout'
 import { emptyConceptualDesign } from '../../types/dsl'
 import type { ProjectSlice, Store } from '../types'
-import { errorMessage, loadChenPositions } from '../utils'
+import { errorMessage, loadChenPositions, saveChenPositions } from '../utils'
 
 let isBootstrapping = false
 let projectSwitchSeq = 0
+let inFlightForkPromise: Promise<string | null> | null = null
 
-export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (set, get) => ({
-  ready: false,
-  bootError: null,
-  projects: [],
-  project: null,
+export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (set, get) => {
+  setShowcaseQuotaListener(({ ipRemaining, globalRemaining }) => {
+    const cur = get().showcase
+    if (!cur?.enabled) return
+    set({
+      showcase: {
+        ...cur,
+        ...(ipRemaining !== undefined
+          ? {
+              ip_remaining: ipRemaining,
+              ip_used: cur.ip_daily_limit !== undefined ? Math.max(0, cur.ip_daily_limit - ipRemaining) : cur.ip_used,
+            }
+          : {}),
+        ...(globalRemaining !== undefined
+          ? {
+              global_remaining: globalRemaining,
+              global_used:
+                cur.global_daily_limit !== undefined
+                  ? Math.max(0, cur.global_daily_limit - globalRemaining)
+                  : cur.global_used,
+            }
+          : {}),
+      },
+    })
+  })
 
-  models: [],
-  providers: [],
-  selectedModel: null,
-  modelsLoading: false,
-  modelsError: null,
+  return {
+    ready: false,
+    bootError: null,
+    projects: [],
+    project: null,
+    showcase: null,
+    forkingProject: false,
+
+    models: [],
+    providers: [],
+    selectedModel: null,
+    modelsLoading: false,
+    modelsError: null,
+
+    async fetchShowcaseStatus() {
+      try {
+        const status = await api.getShowcaseStatus()
+        set({ showcase: status })
+      } catch {
+        // 离线或旧接口未开启时静默忽略
+      }
+    },
 
   async fetchModels(params?: GetModelsParams) {
     set({ modelsLoading: true, modelsError: null })
@@ -66,6 +110,10 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
 
   selectModel(provider: string, model: string, base_url?: string) {
     set({ selectedModel: { provider, model, base_url } })
+    // 公开演示沙盒模式下禁止覆写服务端 config.yaml，仅在当前浏览器会话内切换可用预置模型
+    if (get().showcase?.enabled) {
+      return
+    }
     const targetBaseURL =
       base_url ||
       get().providers.find((p) => p.name === provider)?.base_url ||
@@ -129,6 +177,7 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
     isBootstrapping = true
     const seq = ++projectSwitchSeq
     try {
+      void get().fetchShowcaseStatus()
       void get().fetchModels()
       let projects = await api.listProjects()
       if (projects.length === 0) {
@@ -318,4 +367,96 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       set({ toast: { kind: 'error', text: `更新项目失败: ${errorMessage(error)}` } })
     }
   },
-})
+
+  async forkProject(sourceId?: string, customName?: string): Promise<Project | null> {
+    const targetId = sourceId || get().project?.id
+    if (!targetId || get().forkingProject) return null
+    set({ forkingProject: true })
+    try {
+      const forked = await api.forkProject(targetId, customName)
+      const [projects, design] = await Promise.all([api.listProjects(), api.getERDesign(forked.id)])
+      const conceptualDesign =
+        forked.conceptual_design && forked.conceptual_design.concepts && forked.conceptual_design.concepts.length > 0
+          ? forked.conceptual_design
+          : emptyConceptualDesign()
+      const currentPos = get().chenPositions
+      if (Object.keys(currentPos).length > 0) {
+        saveChenPositions(forked.id, currentPos)
+      }
+      get().resetHistory()
+      set({
+        projects,
+        project: forked,
+        conceptualDesign,
+        agentPhase: conceptualDesign.concepts.length > 0 && design.entities.length === 0 ? 'concept_ready' : 'idle',
+        reviewReport: null,
+        selection: null,
+        messages: [],
+        toast: {
+          kind: 'info',
+          text: `已克隆专属沙盒副本「${forked.name}」，您可自由编辑与体验 AI 建模`,
+        },
+      })
+      get().recompute(ensureLayout(design))
+      return forked
+    } catch (error) {
+      set({ toast: { kind: 'error', text: `克隆项目副本失败: ${errorMessage(error)}` } })
+      return null
+    } finally {
+      set({ forkingProject: false })
+    }
+  },
+
+  async ensureWritableProject(): Promise<string | null> {
+    const current = get().project
+    if (!current) return null
+    if (!current.is_template) return current.id
+
+    if (inFlightForkPromise) {
+      return inFlightForkPromise
+    }
+
+    const run = (async (): Promise<string | null> => {
+      const pendingDesign = get().design
+      const pendingConceptual = get().conceptualDesign
+      const currentPos = get().chenPositions
+      set({ forkingProject: true })
+      try {
+        const forked = await api.forkProject(current.id)
+        if (pendingConceptual && (pendingConceptual.concepts?.length ?? 0) > 0) {
+          await api.saveConceptualDesign(forked.id, pendingConceptual)
+        }
+        let latestDesign = pendingDesign
+        if (pendingDesign && pendingDesign.entities.length > 0) {
+          const savedRes = await api.saveERDesign(forked.id, pendingDesign)
+          latestDesign = savedRes.design
+        }
+        if (Object.keys(currentPos).length > 0) {
+          saveChenPositions(forked.id, currentPos)
+        }
+        const projects = await api.listProjects()
+        set({
+          projects,
+          project: forked,
+          messages: [],
+          toast: {
+            kind: 'info',
+            text: `官方样板受只读保护，已自动为您创建专属沙盒副本「${forked.name}」保存修改`,
+          },
+        })
+        get().recompute(ensureLayout(latestDesign))
+        return forked.id
+      } catch (error) {
+        set({ toast: { kind: 'error', text: errorMessage(error) } })
+        return null
+      } finally {
+        set({ forkingProject: false })
+        inFlightForkPromise = null
+      }
+    })()
+
+    inFlightForkPromise = run
+    return run
+  },
+  }
+}

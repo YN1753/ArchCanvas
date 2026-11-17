@@ -7,6 +7,8 @@ export default function ProjectMenu() {
   const currentProject = useStore((state) => state.project)
   const selectProject = useStore((state) => state.selectProject)
   const createProject = useStore((state) => state.createProject)
+  const forkProject = useStore((state) => state.forkProject)
+  const forkingProject = useStore((state) => state.forkingProject)
   const deleteProject = useStore((state) => state.deleteProject)
   const updateProject = useStore((state) => state.updateProject)
 
@@ -117,6 +119,11 @@ export default function ProjectMenu() {
         <span className="max-w-[140px] truncate text-[#1f1f1f]">
           {currentProject?.name || '选择项目'}
         </span>
+        {currentProject?.is_template ? (
+          <span className="rounded bg-[#fdf0ee] border border-[#df4e3e]/40 px-1.5 py-0.2 text-[10px] font-bold text-[#df4e3e] shrink-0">
+            官方样板
+          </span>
+        ) : null}
         <svg
           aria-hidden="true"
           className={`w-3 h-3 text-stone-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
@@ -180,34 +187,57 @@ export default function ProjectMenu() {
                       <span className="w-2.5 shrink-0" />
                     )}
                     <span className="truncate">{p.name}</span>
+                    {p.is_template ? (
+                      <span className="rounded bg-stone-100 border border-stone-300 px-1 py-0.2 text-[9px] font-bold text-stone-600 shrink-0">
+                        只读样板
+                      </span>
+                    ) : null}
                   </button>
 
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition shrink-0 ml-2">
-                    <button
-                      type="button"
-                      aria-label={`重命名项目 ${p.name}`}
-                      title="重命名项目"
-                      onClick={() => setRenameTarget(p)}
-                      className="p-1 rounded text-stone-400 hover:text-stone-700 hover:bg-stone-200 transition cursor-pointer"
-                    >
-                      <svg aria-hidden="true" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                    </button>
-                    {projects.length > 1 ? (
+                  {p.is_template ? (
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
                       <button
                         type="button"
-                        aria-label={`删除项目 ${p.name}`}
-                        title="删除项目"
-                        onClick={() => setDeleteTarget(p)}
-                        className="p-1 rounded text-stone-400 hover:text-[#df4e3e] hover:bg-red-50 transition cursor-pointer"
+                        disabled={forkingProject}
+                        aria-label={`克隆样板 ${p.name} 到个人沙盒`}
+                        title="克隆副本到我的沙盒自由修改"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          void forkProject(p.id)
+                        }}
+                        className="rounded-md border border-stone-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-stone-700 hover:border-[#1f1f1f] hover:text-[#df4e3e] transition cursor-pointer disabled:opacity-50"
+                      >
+                        克隆
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition shrink-0 ml-2">
+                      <button
+                        type="button"
+                        aria-label={`重命名项目 ${p.name}`}
+                        title="重命名项目"
+                        onClick={() => setRenameTarget(p)}
+                        className="p-1 rounded text-stone-400 hover:text-stone-700 hover:bg-stone-200 transition cursor-pointer"
                       >
                         <svg aria-hidden="true" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
-                    ) : null}
-                  </div>
+                      {projects.length > 1 ? (
+                        <button
+                          type="button"
+                          aria-label={`删除项目 ${p.name}`}
+                          title="删除项目"
+                          onClick={() => setDeleteTarget(p)}
+                          className="p-1 rounded text-stone-400 hover:text-[#df4e3e] hover:bg-red-50 transition cursor-pointer"
+                        >
+                          <svg aria-hidden="true" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )
             })}

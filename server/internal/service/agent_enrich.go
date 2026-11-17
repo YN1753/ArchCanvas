@@ -49,6 +49,11 @@ func (a *AgentService) EnrichSemantics(
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	if a.ProjectService != nil && strings.TrimSpace(req.ProjectID) != "" {
+		if _, err := a.ProjectService.EnsureWritableProject(ctx, req.ProjectID); err != nil {
+			return nil, err
+		}
+	}
 
 	runCtx, finishRun := a.lifecycle.beginRun(ctx, req.ProjectID, defaultAgentRunTimeout)
 	defer finishRun()

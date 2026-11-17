@@ -68,6 +68,9 @@ export default function Toolbar({
   const targetDialect = useStore((state) => state.targetDialect)
   const enrichSemantics = useStore((state) => state.enrichSemantics)
   const aiRunning = useStore((state) => state.aiRunning)
+  const project = useStore((state) => state.project)
+  const forkProject = useStore((state) => state.forkProject)
+  const forkingProject = useStore((state) => state.forkingProject)
 
   const chenBackingMode = getChenBackingMode({ conceptualDesign, design, agentPhase })
   const isConceptualDraftMode = canvasViewMode === 'chen' && chenBackingMode === 'conceptual'
@@ -153,6 +156,18 @@ export default function Toolbar({
 
         {/* 项目管理器 */}
         <ProjectMenu />
+
+        {project?.is_template ? (
+          <button
+            type="button"
+            disabled={forkingProject}
+            onClick={() => void forkProject(project.id)}
+            className="hidden md:flex items-center gap-1 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#fdf0ee] px-2.5 py-1 text-xs font-bold text-[#df4e3e] shadow-[1.5px_1.5px_0px_#1f1f1f] hover:bg-[#fbe3df] active:translate-x-0.5 active:translate-y-0.5 transition select-none shrink-0 cursor-pointer disabled:opacity-50"
+            title="当前为只读官方样板工程；点击克隆到您的专属浏览器沙盒自由编辑（直接拖拽或发送 AI 指令也会自动为您克隆副本）"
+          >
+            <span>{forkingProject ? '克隆中…' : '克隆到我的沙盒'}</span>
+          </button>
+        ) : null}
 
         {/* AI 架构师侧栏开关 */}
         <button

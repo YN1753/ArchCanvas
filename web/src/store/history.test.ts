@@ -257,6 +257,75 @@ await (async () => {
   }
 })()
 
+// 7. 测试官方只读样板工程在编辑落盘时自动触发 Copy-on-Write 沙盒克隆（SHOWCASE_MODE 保护）
+await (async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    const calledPaths: string[] = []
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input)
+      calledPaths.push(url)
+      if (url.endsWith('/projects/fork')) {
+        return new Response(
+          JSON.stringify({
+            code: 200,
+            message: 'success',
+            data: {
+              id: 'proj_forked_sandbox_copy',
+              name: '电商交易履约系统 (沙盒副本)',
+              description: '副本',
+              is_template: false,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/projects/save-er-design')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { project_id: string; entities?: unknown[] }
+        assert.equal(body.project_id, 'proj_forked_sandbox_copy', '严禁向只读官方样板 ID 直接发起写请求')
+        return new Response(
+          JSON.stringify({
+            code: 200,
+            message: 'success',
+            data: { design: { entities: body.entities || [], relations: [] }, warnings: [] },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(
+        JSON.stringify({ code: 200, message: 'success', data: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    useStore.getState().resetHistory()
+    useStore.setState({
+      project: {
+        id: '01960000-0000-7000-8000-000000000001',
+        name: '电商交易履约系统',
+        description: '官方样板',
+        is_template: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      design: { entities: [], relations: [] },
+      selection: null,
+    })
+
+    useStore.getState().addEntity({ x: 160, y: 160 })
+    await useStore.getState().saveNow()
+
+    assert.equal(useStore.getState().project?.id, 'proj_forked_sandbox_copy', '编辑只读样板后应无缝切换至克隆副本')
+    assert.equal(useStore.getState().project?.is_template, false)
+    assert.ok(calledPaths.some((p) => p.endsWith('/projects/fork')))
+    console.log('✓ 演示沙盒模式只读样板自动 Copy-on-Write 克隆保存测试通过')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})()
+
 // 清理防抖保存定时器，防止阻塞测试进程退出
 useStore.getState().resetHistory()
 useStore.setState({ project: null })

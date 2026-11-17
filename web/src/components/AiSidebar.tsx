@@ -397,6 +397,7 @@ export default function AiSidebar() {
   const dismissAiResult = useStore((state) => state.dismissAiResult)
   const setAgentPhase = useStore((state) => state.setAgentPhase)
   const conceptualDesign = useStore((state) => state.conceptualDesign)
+  const showcase = useStore((state) => state.showcase)
 
   const [input, setInput] = useState('')
   const [confirmingClear, setConfirmingClear] = useState(false)
@@ -713,6 +714,22 @@ export default function AiSidebar() {
           }}
           className="border-t-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[0px_-2px_0px_#1f1f1f]"
         >
+          {showcase?.enabled ? (
+            <div className="mb-2 flex items-center justify-between rounded-lg border border-stone-200 bg-[#faf7f0] px-2.5 py-1 text-[10px] font-medium text-stone-600">
+              <span>演示沙盒（草稿隔离 · {showcase.visitor_ttl_hours ?? 24}h 自动清扫）</span>
+              <span
+                className={`font-mono font-bold ${
+                  (showcase.ip_remaining ?? 20) <= 0
+                    ? 'text-rose-600'
+                    : (showcase.ip_remaining ?? 20) <= 5
+                      ? 'text-amber-700'
+                      : 'text-emerald-700'
+                }`}
+              >
+                今日剩余 AI {showcase.ip_remaining ?? 20}/{showcase.ip_daily_limit ?? 20} 次
+              </span>
+            </div>
+          ) : null}
           <div className="rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#faf7f0] p-2.5 shadow-[2px_2px_0px_#1f1f1f] focus-within:border-[#df4e3e] transition">
             <label htmlFor="ai-sidebar-textarea" className="sr-only">
               向 AI 架构师描述您的业务需求或增量修改

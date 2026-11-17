@@ -76,6 +76,7 @@ func InitSQLite(cfg config.Database) (*gorm.DB, error) {
 		&model.AIContext{},
 		&model.Conversation{},
 		&model.Message{},
+		&model.ShowcaseQuota{},
 	); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("auto migrate database: %w", err)

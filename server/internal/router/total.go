@@ -8,8 +8,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// InitRouter 初始化 Gin 路由引擎并注册纯语义风格 API 路由（只使用 GET 与 POST）
+// InitRouter 初始化 Gin 路由引擎（保持原有签名向后兼容）
 func InitRouter(handlers handler.TotalHandler) *gin.Engine {
+	return InitRouterWithShowcase(handlers, nil)
+}
+
+// InitRouterWithShowcase 初始化 Gin 路由引擎，并在开启 SHOWCASE_MODE 时挂载访客沙盒隔离、敏感接口封锁与 AI 体验配额限流。
+func InitRouterWithShowcase(handlers handler.TotalHandler, quotaMgr *middleware.ShowcaseQuotaManager) *gin.Engine {
+	showcaseEnabled := quotaMgr != nil && quotaMgr.Enabled()
+	if !showcaseEnabled && handlers.Project.ProjectService != nil && handlers.Project.ProjectService.ShowcaseCfg.Enabled {
+		showcaseEnabled = true
+	}
+
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil) // 显式禁用默认全信任反向代理，防范客户端 IP 伪造
 	r.Use(middleware.TraceMiddleware())
@@ -18,15 +28,18 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	r.Use(middleware.CORS())
 	r.Use(middleware.MaxBodyBytes(middleware.DefaultMaxBodyBytes))
 	r.Use(middleware.OptionalTokenAuth())
+	r.Use(middleware.ShowcaseVisitorMiddleware(showcaseEnabled))
 
 	// 根路径健康探针（适配容器与反向代理探活）
 	r.GET("/healthz", handlers.Health.Check)
 
 	route := r.Group("/api/v1")
 	route.GET("healthz", handlers.Health.Check)
+	route.GET("showcase/status", handlers.Project.ShowcaseStatus)
 
-	// ================= 1. 模型管理 (纯语义 GET/POST) =================
+	// ================= 1. 模型管理 (演示模式下锁死 save 与 probe 防改配置与 SSRF) =================
 	models := route.Group("models")
+	models.Use(middleware.ShowcaseModelGuardMiddleware(showcaseEnabled))
 	{
 		models.GET("list", handlers.Project.GetModels)
 		// 支持通过 POST JSON Body 安全传递探测所需的 base_url 与 api_key，避免密钥出现在 URL Query 中
@@ -40,6 +53,7 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	{
 		projects.GET("list", handlers.Project.ListProjects)                            // 项目列表
 		projects.POST("create", handlers.Project.CreateProject)                        // 创建项目
+		projects.POST("fork", handlers.Project.ForkProject)                            // 克隆项目/样板至访客沙盒
 		projects.POST("delete", handlers.Project.DeleteProject)                        // 删除项目
 		projects.POST("update", handlers.Project.UpdateProject)                        // 更新/重命名项目
 		projects.GET("detail", handlers.Project.GetProject)                            // 项目详情
@@ -52,6 +66,9 @@ func InitRouter(handlers handler.TotalHandler) *gin.Engine {
 	}
 
 	agent := route.Group("agent")
+	if quotaMgr != nil && showcaseEnabled {
+		agent.Use(quotaMgr.AgentRateLimitMiddleware())
+	}
 	{
 		agent.POST("chat", handlers.Agent.Chat)
 		agent.POST("propose-concepts", handlers.Agent.ProposeConcepts) // Layer 1: 业务概念建模

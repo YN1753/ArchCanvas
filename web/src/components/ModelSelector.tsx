@@ -56,6 +56,7 @@ export default function ModelSelector({
   const selectModel = useStore((state) => state.selectModel)
   const saveAndSwitchModel = useStore((state) => state.saveAndSwitchModel)
   const fetchModels = useStore((state) => state.fetchModels)
+  const showcase = useStore((state) => state.showcase)
 
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<'list' | 'config'>('list')
@@ -345,19 +346,26 @@ export default function ModelSelector({
                 )}
               </div>
 
-              {/* 底部设置入口 */}
+              {/* 底部设置入口（公开演示沙盒模式下锁定服务端模型配置，防止密钥覆盖与 SSRF） */}
               <div className="pt-2 border-t border-stone-200 mt-1">
-                <button
-                  type="button"
-                  onClick={() => handleOpenConfig()}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 py-1.5 text-xs font-semibold text-stone-700 hover:border-[#1f1f1f] hover:bg-white hover:text-[#1f1f1f] hover:shadow-[1.5px_1.5px_0px_#1f1f1f] transition active:translate-x-0.5 active:translate-y-0.5"
-                >
-                  <svg className="w-3.5 h-3.5 text-stone-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <span>配置服务商与密钥…</span>
-                </button>
+                {showcase?.enabled ? (
+                  <div className="flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-[#faf7f0] px-2.5 py-1.5 text-[11px] font-medium text-stone-500">
+                    <span>🔒</span>
+                    <span>公开演示沙盒 · 已锁定预置模型配置</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenConfig()}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 py-1.5 text-xs font-semibold text-stone-700 hover:border-[#1f1f1f] hover:bg-white hover:text-[#1f1f1f] hover:shadow-[1.5px_1.5px_0px_#1f1f1f] transition active:translate-x-0.5 active:translate-y-0.5"
+                  >
+                    <svg className="w-3.5 h-3.5 text-stone-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span>配置服务商与密钥…</span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (

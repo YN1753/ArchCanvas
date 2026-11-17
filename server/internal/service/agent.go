@@ -145,6 +145,11 @@ func (a *AgentService) Chat(
 	ctx context.Context,
 	req dto.ChatReq,
 ) (<-chan StreamEvent, error) {
+	if a.ProjectService != nil && strings.TrimSpace(req.ProjectID) != "" {
+		if _, err := a.ProjectService.EnsureWritableProject(ctx, req.ProjectID); err != nil {
+			return nil, err
+		}
+	}
 	outCh := make(chan StreamEvent, sseChannelBufferSize)
 	runCtx, finishRun := a.lifecycle.beginRun(ctx, req.ProjectID, defaultAgentRunTimeout)
 

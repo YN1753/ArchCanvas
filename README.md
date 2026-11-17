@@ -297,6 +297,9 @@ ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go
 
    # 局域网暴露启动（建议同步配置 ARCHCANVAS_AUTH_TOKEN 保护 API）
    ARCHCANVAS_AUTH_TOKEN="your-secret-token" ./archcanvas -host 0.0.0.0 -p 8888 -d /data/my_archcanvas.db
+
+   # 公网免登录简历演示沙盒模式启动（内置 2 个只读官方样板 + 访客 Cookie/Header 隔离 24h 自动清扫 + 锁定模型配置 + Cloudflare 真实 IP 每日 AI 限流）
+   SHOWCASE_MODE=true ./archcanvas -host 0.0.0.0 -port 8080
    ```
 
 3. 终端启动 Banner 示例：
@@ -321,6 +324,7 @@ ArchCanvas 支持打包为全平台独立单可执行文件（前端已使用 Go
 | `-host` | - | `HOST` | `127.0.0.1` | HTTP 服务绑定主机地址（默认仅限本机访问；指定 `0.0.0.0` 可对局域网开放） |
 | `-config` | `-c` | - | `exe同级/configs` | 指定配置文件目录路径（首次运行若不存在自动生成 `0600` 权限默认配置） |
 | `-data` | `-d` | - | `exe同级/data/archcanvas.db` | 指定 SQLite 数据库文件路径（支持相对与绝对路径） |
+| `-showcase` | - | `SHOWCASE_MODE` | `false` | 开启公开演示沙盒模式（内置只读样板、访客隔离 24h 清扫、禁用 `models/save` 与 `probe`、AI 每日每 IP 20 次 / 全站 100 次限流） |
 | `-version` | `-v` | - | - | 查看当前版本号、Git Commit Hash 与构建时间 |
 | - | - | `ARCHCANVAS_AUTH_TOKEN` | 空（关闭） | 可选 API 访问令牌，开启后请求需携带 `Authorization: Bearer <token>` |
 

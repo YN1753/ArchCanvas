@@ -124,4 +124,41 @@ describe('API Client SSE Stream & Model Probe Security', () => {
     assert.ok(!calls[1].url.includes('sk-super-secret'), 'URL 中严禁出现明文 api_key')
     assert.ok(calls[1].body?.includes('sk-super-secret'), '敏感 api_key 应放在 JSON 请求体中传输')
   })
+
+  it('attaches X-Visitor-ID header on requests and notifies showcase quota listener from response headers', async () => {
+    const { setShowcaseQuotaListener } = await import('./client')
+    let capturedVisitorHeader = ''
+    let quotaUpdate: { ipRemaining?: number; globalRemaining?: number } | null = null
+    setShowcaseQuotaListener((u) => {
+      quotaUpdate = u
+    })
+
+    try {
+      globalThis.fetch = (async (_input, init) => {
+        const hdrs = init?.headers as Record<string, string> | undefined
+        capturedVisitorHeader = hdrs?.['X-Visitor-ID'] || ''
+        return new Response(
+          JSON.stringify({
+            code: 200,
+            message: 'success',
+            data: [],
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-RateLimit-Remaining': '17',
+              'X-GlobalLimit-Remaining': '92',
+            },
+          },
+        )
+      }) as typeof fetch
+
+      await api.listProjects()
+      assert.match(capturedVisitorHeader, /^[0-9a-f-]{36}$/i, '请求必须携带合法 UUID 格式的 X-Visitor-ID')
+      assert.deepEqual(quotaUpdate, { ipRemaining: 17, globalRemaining: 92 })
+    } finally {
+      setShowcaseQuotaListener(null)
+    }
+  })
 })

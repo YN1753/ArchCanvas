@@ -214,8 +214,15 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
   }
 
   async function flushSaveConceptual(): Promise<void> {
-    const { project, conceptualDesign } = get()
+    let { project } = get()
+    const { conceptualDesign } = get()
     if (!project) return
+    if (project.is_template) {
+      const forkedId = await get().ensureWritableProject()
+      if (!forkedId) return
+      project = get().project
+      if (!project) return
+    }
     const targetProjectId = project.id
     if (inFlightConceptualPromise) {
       saveConceptualPending = true
@@ -260,8 +267,18 @@ export const createHistorySlice: StateCreator<Store, [], [], HistorySlice> = (se
   }
 
   async function flushSave(): Promise<void> {
-    const { project, design } = get()
+    let { project } = get()
+    const { design } = get()
     if (!project) {
+      return
+    }
+    if (project.is_template) {
+      const forkedId = await get().ensureWritableProject()
+      if (!forkedId) return
+      savedErVersion = dirtyErVersion
+      erSaveState = 'saved'
+      erSaveError = null
+      syncCombinedSaveState()
       return
     }
     const targetProjectId = project.id

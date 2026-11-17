@@ -1,12 +1,68 @@
-import type {
-  Cardinality,
-  ConceptualDesign,
-  DatabaseDialect,
-  ERDesign,
-  SchemaReviewReport,
+import {
+  localID,
+  type Cardinality,
+  type ConceptualDesign,
+  type DatabaseDialect,
+  type ERDesign,
+  type SchemaReviewReport,
 } from '../types/dsl'
 
 const BASE = import.meta.env?.VITE_API_BASE || '/api/v1'
+const VISITOR_STORAGE_KEY = 'archcanvas_visitor_id'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+let inMemoryVisitorId: string | null = null
+
+export function getOrCreateVisitorID(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const existing = localStorage.getItem(VISITOR_STORAGE_KEY)?.trim()
+      if (existing && UUID_RE.test(existing)) {
+        inMemoryVisitorId = existing
+        return existing
+      }
+      const generated = localID()
+      localStorage.setItem(VISITOR_STORAGE_KEY, generated)
+      inMemoryVisitorId = generated
+      return generated
+    }
+  } catch {}
+  if (!inMemoryVisitorId) {
+    inMemoryVisitorId = localID()
+  }
+  return inMemoryVisitorId
+}
+
+type QuotaHeaderListener = (update: { ipRemaining?: number; globalRemaining?: number }) => void
+let quotaHeaderListener: QuotaHeaderListener | null = null
+
+export function setShowcaseQuotaListener(listener: QuotaHeaderListener | null): void {
+  quotaHeaderListener = listener
+}
+
+function captureResponseMetadata(res: Response): void {
+  try {
+    const serverVid = res.headers?.get?.('X-Visitor-ID')?.trim()
+    if (serverVid && UUID_RE.test(serverVid)) {
+      inMemoryVisitorId = serverVid
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(VISITOR_STORAGE_KEY, serverVid)
+      }
+    }
+    if (quotaHeaderListener && res.headers?.get) {
+      const ipRemStr = res.headers.get('X-RateLimit-Remaining')
+      const globalRemStr = res.headers.get('X-GlobalLimit-Remaining')
+      if (ipRemStr !== null || globalRemStr !== null) {
+        const ipRemaining = ipRemStr !== null ? Number(ipRemStr) : undefined
+        const globalRemaining = globalRemStr !== null ? Number(globalRemStr) : undefined
+        quotaHeaderListener({
+          ipRemaining: Number.isFinite(ipRemaining) ? ipRemaining : undefined,
+          globalRemaining: Number.isFinite(globalRemaining) ? globalRemaining : undefined,
+        })
+      }
+    }
+  } catch {}
+}
 
 function buildAuthHeaders(): Record<string, string> {
   const envToken = import.meta.env?.VITE_AUTH_TOKEN as string | undefined
@@ -17,7 +73,13 @@ function buildAuthHeaders(): Record<string, string> {
     }
   } catch {}
   const token = (storedToken || envToken || '').trim()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = {
+    'X-Visitor-ID': getOrCreateVisitorID(),
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
 }
 
 interface Envelope<T> {
@@ -30,10 +92,25 @@ export interface Project {
   id: string
   name: string
   description: string
+  is_template?: boolean
   conceptual_design?: ConceptualDesign
   er_design?: ERDesign
   created_at: string
   updated_at: string
+}
+
+export interface ShowcaseStatus {
+  enabled: boolean
+  visitor_id?: string
+  ip_daily_limit?: number
+  ip_used?: number
+  ip_remaining?: number
+  global_daily_limit?: number
+  global_used?: number
+  global_remaining?: number
+  visitor_ttl_hours?: number
+  max_projects_per_visitor?: number
+  readonly_models?: boolean
 }
 
 export interface ModelItem {
@@ -145,6 +222,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, `无法连接后端服务，请确认 server 已启动（${String(error)}）`)
   }
 
+  captureResponseMetadata(response)
+
   const text = await response.text()
   let envelope: Envelope<T> | null = null
   if (text) {
@@ -254,6 +333,8 @@ export async function streamPost<T = unknown>(
     callbacks.onError?.(error)
     throw error
   }
+
+  captureResponseMetadata(response)
 
   if (!response.ok) {
     const text = await response.text()
@@ -398,12 +479,23 @@ export function reviewSchemaStream(
 }
 
 export const api = {
+  getShowcaseStatus: () => request<ShowcaseStatus>('/showcase/status'),
+
   listProjects: () => request<Project[]>('/projects/list'),
 
   createProject: (name: string, description = '') =>
     request<Project>('/projects/create', {
       method: 'POST',
       body: JSON.stringify({ name, description }),
+    }),
+
+  forkProject: (project_id: string, name?: string) =>
+    request<Project>('/projects/fork', {
+      method: 'POST',
+      body: JSON.stringify({
+        project_id,
+        ...(name ? { name } : {}),
+      }),
     }),
 
   deleteProject: (project_id: string) =>

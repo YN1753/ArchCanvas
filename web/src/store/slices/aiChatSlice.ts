@@ -79,6 +79,10 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     async clearProjectMessages() {
       const { project } = get()
       if (!project) return
+      if (project.is_template) {
+        set({ toast: { kind: 'info', text: '官方演示样板对话为预设展示，请先点击「克隆副本」在沙盒中自由对话' } })
+        return
+      }
       const targetProjectId = project.id
       try {
         await api.clearProjectMessages(targetProjectId)
@@ -116,7 +120,8 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
       if (!project) return
       const trimmed = input.trim()
       if (!trimmed) return
-      const targetProjectId = project.id
+      const targetProjectId = project.is_template ? await get().ensureWritableProject() : project.id
+      if (!targetProjectId) return
       const controller = resetAbortController()
 
       const tempUserMsg: ProjectMessage = {
@@ -223,7 +228,8 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     async derivePhysical(dialect?: DatabaseDialect) {
       const { project, selectedModel, conceptualDesign } = get()
       if (!project) return
-      const targetProjectId = project.id
+      const targetProjectId = project.is_template ? await get().ensureWritableProject() : project.id
+      if (!targetProjectId) return
       const controller = resetAbortController()
       const targetDialect = dialect || get().targetDialect || 'mysql'
       set({
@@ -451,12 +457,13 @@ export const createAiChatSlice: StateCreator<Store, [], [], AiChatSlice> = (set,
     async enrichSemantics(options) {
       const { project, selectedModel, design } = get()
       if (!project) return
-      const targetProjectId = project.id
       const targetDesign = options?.design || design
       if (!targetDesign || !Array.isArray(targetDesign.entities) || targetDesign.entities.length === 0) {
         set({ toast: { kind: 'error', text: '当前画布无数据表，无法推导概念语义' } })
         return
       }
+      const targetProjectId = project.is_template ? await get().ensureWritableProject() : project.id
+      if (!targetProjectId) return
 
       const controller = resetAbortController()
       set({
