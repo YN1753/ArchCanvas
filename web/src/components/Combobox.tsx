@@ -1,4 +1,6 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredFloating } from '../hooks/useAnchoredFloating'
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
 import { useListboxNavigation } from '../hooks/useListboxNavigation'
 
@@ -36,7 +38,20 @@ export default function Combobox({
     setOpen(false)
   }, [])
 
-  useDismissibleLayer(containerRef, open, closeMenu, { closeOnEscape: false })
+  const { portalTarget, floatingStyle, floatingAttrs, isInsideFloatingTree } = useAnchoredFloating({
+    open,
+    anchorRef: containerRef,
+    preferredPlacement: 'bottom',
+    align: 'end',
+    widthMode: 176,
+    estimatedHeight: 280,
+    offset: 4,
+  })
+
+  useDismissibleLayer(containerRef, open, closeMenu, {
+    closeOnEscape: false,
+    shouldIgnoreOutsideTarget: isInsideFloatingTree,
+  })
 
   const selectedIndex = useMemo(
     () => filteredSuggestions.findIndex((s) => s.toLowerCase() === value.toLowerCase()),
@@ -63,7 +78,7 @@ export default function Combobox({
       ref={containerRef}
       className={`relative ${className}`}
       onBlur={(event) => {
-        if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
+        if (open && !isInsideFloatingTree(event.relatedTarget as Node | null)) {
           closeMenu()
         }
       }}
@@ -108,59 +123,64 @@ export default function Combobox({
         </button>
       </div>
 
-      {open && (
-        <div
-          ref={listboxRef}
-          id={listboxId}
-          role="listbox"
-          className="absolute right-0 top-full z-50 mt-1 max-h-80 w-44 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100"
-        >
-          <div className="px-2 py-1 text-[10px] font-bold text-stone-500 border-b border-stone-200 mb-0.5">
-            常用数据库类型
-          </div>
-          {filteredSuggestions.map((suggestion, idx) => {
-            const isSelected = suggestion.toLowerCase() === value.toLowerCase()
-            const isHighlighted = idx === activeIndex
-            return (
-              <button
-                key={suggestion}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                onMouseEnter={() => setActiveIndex(idx)}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                }}
-                onClick={() => {
-                  onChange(suggestion)
-                  closeMenu()
-                }}
-                className={`w-full flex items-center justify-between rounded px-2 py-1 text-left text-xs font-mono cursor-pointer transition ${
-                  isSelected
-                    ? 'bg-[#fdf0ee] font-bold text-[#df4e3e]'
-                    : isHighlighted
-                      ? 'bg-stone-100 text-[#1f1f1f]'
-                      : 'text-[#1f1f1f] hover:bg-stone-100'
-                }`}
-              >
-                <span>{suggestion}</span>
-                {isSelected && (
-                  <svg
-                    aria-hidden="true"
-                    className="w-3 h-3 text-[#df4e3e] shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2.5}
+      {open && portalTarget && floatingStyle
+        ? createPortal(
+            <div
+              {...floatingAttrs}
+              ref={listboxRef}
+              id={listboxId}
+              role="listbox"
+              style={floatingStyle}
+              className="overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white p-1 shadow-[3px_3px_0px_#1f1f1f] animate-in fade-in duration-100"
+            >
+              <div className="px-2 py-1 text-[10px] font-bold text-stone-500 border-b border-stone-200 mb-0.5">
+                常用数据库类型
+              </div>
+              {filteredSuggestions.map((suggestion, idx) => {
+                const isSelected = suggestion.toLowerCase() === value.toLowerCase()
+                const isHighlighted = idx === activeIndex
+                return (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onMouseEnter={() => setActiveIndex(idx)}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                    }}
+                    onClick={() => {
+                      onChange(suggestion)
+                      closeMenu()
+                    }}
+                    className={`w-full flex items-center justify-between rounded px-2 py-1 text-left text-xs font-mono cursor-pointer transition ${
+                      isSelected
+                        ? 'bg-[#fdf0ee] font-bold text-[#df4e3e]'
+                        : isHighlighted
+                          ? 'bg-stone-100 text-[#1f1f1f]'
+                          : 'text-[#1f1f1f] hover:bg-stone-100'
+                    }`}
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      )}
+                    <span>{suggestion}</span>
+                    {isSelected && (
+                      <svg
+                        aria-hidden="true"
+                        className="w-3 h-3 text-[#df4e3e] shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2.5}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                )
+              })}
+            </div>,
+            portalTarget,
+          )
+        : null}
     </div>
   )
 }

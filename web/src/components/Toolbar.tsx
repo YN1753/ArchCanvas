@@ -76,9 +76,9 @@ export default function Toolbar({
   const isConceptualDraftMode = canvasViewMode === 'chen' && chenBackingMode === 'conceptual'
 
   return (
-    <header className="flex items-center justify-between gap-2 border-b border-[#e5ded0] bg-[#faf7f0] px-3 xl:px-4 py-2.5 select-none shadow-2xs overflow-x-auto no-scrollbar">
+    <header className="relative z-40 flex items-center justify-between gap-1.5 xl:gap-2 border-b border-[#e5ded0] bg-[#faf7f0] px-2.5 xl:px-4 py-2.5 select-none shadow-2xs max-lg:overflow-x-auto lg:overflow-visible no-scrollbar">
       {/* 左侧：Logo、分段开关、项目选择、AI 架构师侧栏开关 */}
-      <div className="flex items-center gap-2 xl:gap-3 shrink-0">
+      <div className="flex items-center gap-1.5 xl:gap-2.5 shrink-0">
         {/* AC 红色圆形 Logo */}
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#df4e3e] text-white font-extrabold text-xs border-[1.5px] border-[#1f1f1f] shadow-xs shrink-0">
           AC
@@ -99,7 +99,7 @@ export default function Toolbar({
               setCanvasViewMode('chen')
             }}
             title="概念视图：以标准陈氏 ER 模型展示实体（矩形）、联系（菱形）、属性（椭圆）与基数"
-            className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1 text-xs font-bold rounded-lg transition ${
+            className={`flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-bold rounded-lg transition ${
               dslView === 'canvas' && canvasViewMode === 'chen'
                 ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
                 : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
@@ -110,7 +110,9 @@ export default function Toolbar({
               <polygon points="18,3 22,9 18,15 14,9" />
               <ellipse cx="6" cy="18" rx="4" ry="2.5" />
             </svg>
-            <span className="hidden sm:inline">概念 (陈氏)</span>
+            <span className="hidden sm:inline">
+              概念<span className="hidden xl:inline"> (陈氏)</span>
+            </span>
           </button>
 
           {/* 物理 (数据表) */}
@@ -122,7 +124,7 @@ export default function Toolbar({
               setCanvasViewMode('relational')
             }}
             title="物理视图：以真实数据库物理表展示字段类型、主外键约束与中间表"
-            className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1 text-xs font-bold rounded-lg transition ${
+            className={`flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-bold rounded-lg transition ${
               dslView === 'canvas' && canvasViewMode === 'relational'
                 ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
                 : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
@@ -132,7 +134,9 @@ export default function Toolbar({
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M3 9h18M3 15h18M9 9v12" />
             </svg>
-            <span className="hidden sm:inline">物理 (数据表)</span>
+            <span className="hidden sm:inline">
+              物理<span className="hidden xl:inline"> (数据表)</span>
+            </span>
           </button>
 
           {/* 源码 (DSL) */}
@@ -141,14 +145,16 @@ export default function Toolbar({
             aria-pressed={dslView === 'code'}
             onClick={() => setDslView('code')}
             title="源码视图：查看或导出底层的 JSON 领域模型规范"
-            className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1 text-xs font-bold rounded-lg transition ${
+            className={`flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-bold rounded-lg transition ${
               dslView === 'code'
                 ? 'border-[1.5px] border-[#df4e3e] bg-white text-[#df4e3e] shadow-2xs'
                 : 'text-stone-700 hover:text-[#df4e3e] font-semibold border-[1.5px] border-transparent'
             }`}
           >
             <span className="font-mono text-xs font-black">‹›</span>
-            <span className="hidden sm:inline">DSL 源码</span>
+            <span className="hidden sm:inline">
+              DSL<span className="hidden xl:inline"> 源码</span>
+            </span>
           </button>
         </div>
 
@@ -162,10 +168,11 @@ export default function Toolbar({
             type="button"
             disabled={forkingProject}
             onClick={() => void forkProject(project.id)}
-            className="hidden md:flex items-center gap-1 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#fdf0ee] px-2.5 py-1 text-xs font-bold text-[#df4e3e] shadow-[1.5px_1.5px_0px_#1f1f1f] hover:bg-[#fbe3df] active:translate-x-0.5 active:translate-y-0.5 transition select-none shrink-0 cursor-pointer disabled:opacity-50"
+            className="hidden md:flex items-center gap-1 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#fdf0ee] px-2 xl:px-2.5 py-1 text-xs font-bold text-[#df4e3e] shadow-[1.5px_1.5px_0px_#1f1f1f] hover:bg-[#fbe3df] active:translate-x-0.5 active:translate-y-0.5 transition select-none shrink-0 cursor-pointer disabled:opacity-50"
             title="当前为只读官方样板工程；点击克隆到您的专属浏览器沙盒自由编辑（直接拖拽或发送 AI 指令也会自动为您克隆副本）"
           >
-            <span>{forkingProject ? '克隆中…' : '克隆到我的沙盒'}</span>
+            <span className="hidden 2xl:inline">{forkingProject ? '克隆中…' : '克隆到我的沙盒'}</span>
+            <span className="2xl:hidden">{forkingProject ? '克隆中…' : '克隆沙盒'}</span>
           </button>
         ) : null}
 
@@ -174,7 +181,7 @@ export default function Toolbar({
           type="button"
           aria-pressed={aiSidebarOpen}
           onClick={toggleAiSidebar}
-          className={`flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] px-2.5 py-1 text-xs font-bold transition select-none shrink-0 ${
+          className={`flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] px-2 xl:px-2.5 py-1 text-xs font-bold transition select-none shrink-0 ${
             aiSidebarOpen
               ? 'bg-white text-[#df4e3e] shadow-[2px_2px_0px_#1f1f1f]'
               : 'bg-[#faf7f0] text-stone-600 hover:bg-white hover:text-stone-900'
@@ -190,7 +197,7 @@ export default function Toolbar({
       </div>
 
       {/* 右侧：撤销/重做、未保存虚线胶囊、导出Go脚手架、红色新建主按钮、检查器开关 */}
-      <div className="flex items-center gap-1.5 xl:gap-2.5 shrink-0">
+      <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
         {/* 撤销 / 重做 */}
         <div className="flex items-center rounded-xl border-[1.5px] border-[#1f1f1f] bg-white p-0.5 shadow-2xs">
           <button
@@ -233,7 +240,7 @@ export default function Toolbar({
           <svg aria-hidden="true" className="w-3.5 h-3.5 text-stone-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
           </svg>
-          <span className="hidden xl:inline">导入/导出</span>
+          <span className="hidden 2xl:inline">导入/导出</span>
         </button>
 
         {/* 架构体检按钮 */}
@@ -294,7 +301,8 @@ export default function Toolbar({
           <svg aria-hidden="true" className="w-3.5 h-3.5 text-stone-700 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          <span className="hidden xl:inline">导出 Go 脚手架</span>
+          <span className="hidden 2xl:inline">导出 Go 脚手架</span>
+          <span className="hidden xl:inline 2xl:hidden">脚手架</span>
         </button>
 
         {/* 红色新建主按钮：智能对齐陈氏视图底层数据源，确保新建项立即呈现在当前画布上 */}
@@ -307,10 +315,11 @@ export default function Toolbar({
               addEntity()
             }
           }}
-          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-3 xl:px-4 py-1.5 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer shrink-0"
+          className="flex items-center gap-1.5 rounded-xl border-[1.5px] border-[#1f1f1f] bg-[#df4e3e] px-2.5 xl:px-3.5 py-1.5 text-xs font-bold text-white shadow-[2px_2px_0px_#1f1f1f] hover:bg-[#c84031] active:translate-x-0.5 active:translate-y-0.5 transition select-none cursor-pointer shrink-0"
         >
           <span className="text-sm font-bold leading-none">+</span>
-          <span>{isConceptualDraftMode ? '新建业务概念' : '新建实体'}</span>
+          <span className="hidden 2xl:inline">{isConceptualDraftMode ? '新建业务概念' : '新建实体'}</span>
+          <span className="2xl:hidden">{isConceptualDraftMode ? '新建概念' : '新建实体'}</span>
         </button>
 
         {/* 帮助 / 诊断按钮 */}

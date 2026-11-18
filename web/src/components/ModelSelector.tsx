@@ -1,4 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredFloating } from '../hooks/useAnchoredFloating'
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
 import { useStore } from '../store/erStore'
 import Select from './Select'
@@ -76,7 +78,19 @@ export default function ModelSelector({ className = '' }: { className?: string }
     setIsManualInput(false)
   }, [])
 
-  useDismissibleLayer(popoverRef, open, dismissPopover)
+  const { portalTarget, floatingStyle, floatingAttrs, isInsideFloatingTree } = useAnchoredFloating({
+    open,
+    anchorRef: popoverRef,
+    preferredPlacement: 'top',
+    align: 'end',
+    widthMode: 314,
+    estimatedHeight: view === 'config' ? 420 : 320,
+    offset: 10,
+  })
+
+  useDismissibleLayer(popoverRef, open, dismissPopover, {
+    shouldIgnoreOutsideTarget: isInsideFloatingTree,
+  })
 
   // 打开配置视图时预填当前选中的 Provider
   const handleOpenConfig = (pName?: string) => {
@@ -239,9 +253,14 @@ export default function ModelSelector({ className = '' }: { className?: string }
         </svg>
       </button>
 
-      {/* 悬浮气泡面板 (Dock Popover) - 精确右偏移以居中于侧边栏，防止左侧裁剪 */}
-      {open ? (
-        <div className="absolute bottom-full right-[-34px] z-40 mb-2.5 w-[314px] rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[4px_4px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-100 select-none">
+      {/* 悬浮气泡面板 (Dock Popover) - 统一 Portal 定位，避开侧栏 overflow 裁切 */}
+      {open && portalTarget && floatingStyle
+        ? createPortal(
+            <div
+              {...floatingAttrs}
+              style={floatingStyle}
+              className="overflow-y-auto no-scrollbar rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-3 shadow-[4px_4px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-100 select-none"
+            >
           {view === 'list' ? (
             /* ================= 视图 1: 快捷模型切换 ================= */
             <div>
@@ -256,11 +275,12 @@ export default function ModelSelector({ className = '' }: { className?: string }
                 </div>
                 <button
                   type="button"
+                  aria-label="关闭模型选择面板"
                   onClick={() => setOpen(false)}
                   className="rounded-md p-1 text-stone-400 hover:text-[#1f1f1f] hover:bg-stone-100 transition"
                   title="关闭"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
@@ -561,8 +581,10 @@ export default function ModelSelector({ className = '' }: { className?: string }
               </div>
             </div>
           )}
-        </div>
-      ) : null}
+        </div>,
+            portalTarget,
+          )
+        : null}
     </div>
   )
 }

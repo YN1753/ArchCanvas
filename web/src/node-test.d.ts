@@ -9,6 +9,7 @@ declare module 'node:assert' {
     function deepEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T
     function deepStrictEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T
     function match(value: string, regExp: RegExp, message?: string | Error): void
+    function doesNotMatch(value: string, regExp: RegExp, message?: string | Error): void
     function throws(block: () => unknown, error?: RegExp | Error | ((err: unknown) => boolean), message?: string): void
     function rejects(
       asyncFn: (() => Promise<unknown>) | Promise<unknown>,
@@ -30,6 +31,7 @@ declare module 'node:assert/strict' {
     function deepEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T
     function deepStrictEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T
     function match(value: string, regExp: RegExp, message?: string | Error): void
+    function doesNotMatch(value: string, regExp: RegExp, message?: string | Error): void
     function throws(block: () => unknown, error?: RegExp | Error | ((err: unknown) => boolean), message?: string): void
     function rejects(
       asyncFn: (() => Promise<unknown>) | Promise<unknown>,
@@ -52,4 +54,23 @@ declare module 'node:test' {
   export function after(fn: () => void | Promise<void>): void
   export function beforeEach(fn: () => void | Promise<void>): void
   export function afterEach(fn: () => void | Promise<void>): void
+}
+
+declare module 'node:fs' {
+  export interface DirentLike {
+    name: string
+    isDirectory(): boolean
+  }
+  export function readFileSync(filePath: string, encoding: 'utf8'): string
+  export function readdirSync(dirPath: string, options: { withFileTypes: true }): DirentLike[]
+}
+
+declare module 'node:path' {
+  export function dirname(p: string): string
+  export function join(...paths: string[]): string
+  export function relative(from: string, to: string): string
+}
+
+declare module 'node:url' {
+  export function fileURLToPath(url: string | URL): string
 }

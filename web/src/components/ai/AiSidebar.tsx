@@ -46,9 +46,10 @@ export default function AiSidebar() {
   return (
     <aside
       aria-label="AI 架构师侧边栏"
+      inert={!aiSidebarOpen || undefined}
       className={`transition-all duration-200 ease-in-out flex flex-col border-r-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none z-30 shrink-0 overflow-hidden ${
         aiSidebarOpen
-          ? 'fixed inset-y-0 left-0 w-[360px] max-w-[92vw] lg:static opacity-100 shadow-[4px_0_16px_rgba(0,0,0,0.08)] lg:shadow-sm'
+          ? 'absolute inset-y-0 left-0 w-[360px] max-w-[92vw] lg:static opacity-100 shadow-[4px_0_16px_rgba(0,0,0,0.08)] lg:shadow-sm'
           : 'w-0 opacity-0 border-r-0 pointer-events-none'
       }`}
     >

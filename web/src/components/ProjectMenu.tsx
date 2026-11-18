@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Project } from '../api/client'
+import { useAnchoredFloating } from '../hooks/useAnchoredFloating'
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
 import { useStore } from '../store/erStore'
 import { isImeComposing } from '../utils/keyboard'
+import ModalDialog from './ui/ModalDialog'
+
+const MENU_WIDTH_PX = 288
 
 export default function ProjectMenu() {
   const projects = useStore((state) => state.projects)
@@ -32,24 +37,22 @@ export default function ProjectMenu() {
     setMenuOpen(false)
   }, [])
 
-  useDismissibleLayer(menuRef, menuOpen && !createOpen && !renameTarget && !deleteTarget, closeDropdown)
+  const { portalTarget, floatingStyle, floatingAttrs, isInsideFloatingTree } = useAnchoredFloating({
+    open: menuOpen,
+    anchorRef: menuRef,
+    preferredPlacement: 'bottom',
+    align: 'start',
+    widthMode: MENU_WIDTH_PX,
+    estimatedHeight: 280,
+    offset: 6,
+  })
 
-  useEffect(() => {
-    if (!createOpen && !renameTarget && !deleteTarget) return
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        if (deleteTarget) {
-          setDeleteTarget(null)
-        } else if (renameTarget) {
-          setRenameTarget(null)
-        } else if (createOpen) {
-          setCreateOpen(false)
-        }
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [createOpen, renameTarget, deleteTarget])
+  useDismissibleLayer(
+    menuRef,
+    menuOpen && !createOpen && !renameTarget && !deleteTarget,
+    closeDropdown,
+    { shouldIgnoreOutsideTarget: isInsideFloatingTree },
+  )
 
   useEffect(() => {
     if (createOpen) {
@@ -112,7 +115,7 @@ export default function ProjectMenu() {
         <svg aria-hidden="true" className="w-3.5 h-3.5 text-[#df4e3e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
         </svg>
-        <span className="max-w-[140px] truncate text-[#1f1f1f]">
+        <span className="max-w-[92px] xl:max-w-[112px] 2xl:max-w-[150px] truncate text-[#1f1f1f]">
           {currentProject?.name || '选择项目'}
         </span>
         {currentProject?.is_template ? (
@@ -132,12 +135,15 @@ export default function ProjectMenu() {
         </svg>
       </button>
 
-      {menuOpen ? (
-        <div
-          role="menu"
-          aria-label="项目列表"
-          className="absolute left-0 top-full z-50 mt-1.5 w-72 rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-100"
-        >
+      {menuOpen && portalTarget && floatingStyle
+        ? createPortal(
+            <div
+              {...floatingAttrs}
+              role="menu"
+              aria-label="项目列表"
+              style={floatingStyle}
+              className="flex flex-col rounded-2xl border-[1.5px] border-[#1f1f1f] bg-white p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-100"
+            >
           <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-stone-100">
             <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
               全部项目 ({projects.length})
@@ -238,25 +244,25 @@ export default function ProjectMenu() {
               )
             })}
           </div>
-        </div>
-      ) : null}
+        </div>,
+            portalTarget,
+          )
+        : null}
 
       {/* 新建项目 Modal */}
       {createOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-xs p-4"
-          onClick={() => setCreateOpen(false)}
+        <ModalDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          titleId="create-project-dialog-title"
+          className="w-full max-w-sm border-[2px]! bg-[#faf7f0]! shadow-[5px_5px_0px_#1f1f1f]!"
         >
           <form
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-project-dialog-title"
-            onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => {
               e.preventDefault()
               void handleCreate()
             }}
-            className="w-full max-w-sm rounded-2xl border-[2px] border-[#1f1f1f] bg-[#faf7f0] p-5 shadow-[5px_5px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-150"
+            className="p-5"
           >
             <h3 id="create-project-dialog-title" className="text-sm font-bold text-[#1f1f1f]">
               新建 ER 数据模型项目
@@ -320,25 +326,23 @@ export default function ProjectMenu() {
               </button>
             </div>
           </form>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {/* 重命名 Modal */}
       {renameTarget ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-xs p-4"
-          onClick={() => setRenameTarget(null)}
+        <ModalDialog
+          open={Boolean(renameTarget)}
+          onClose={() => setRenameTarget(null)}
+          titleId="rename-project-dialog-title"
+          className="w-full max-w-xs border-[2px]! bg-[#faf7f0]! shadow-[5px_5px_0px_#1f1f1f]!"
         >
           <form
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rename-project-dialog-title"
-            onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => {
               e.preventDefault()
               void handleRename()
             }}
-            className="w-full max-w-xs rounded-2xl border-[2px] border-[#1f1f1f] bg-[#faf7f0] p-5 shadow-[5px_5px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-150"
+            className="p-5"
           >
             <h3 id="rename-project-dialog-title" className="text-sm font-bold text-[#1f1f1f]">
               重命名项目
@@ -353,7 +357,7 @@ export default function ProjectMenu() {
                 value={renameName}
                 onChange={(e) => setRenameName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) {
+                  if (e.key === 'Enter' && isImeComposing(e)) {
                     e.preventDefault()
                     return
                   }
@@ -378,22 +382,18 @@ export default function ProjectMenu() {
               </button>
             </div>
           </form>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {/* 删除确认 Modal */}
       {deleteTarget ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-xs p-4"
-          onClick={() => setDeleteTarget(null)}
+        <ModalDialog
+          open={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          titleId="delete-project-dialog-title"
+          className="w-full max-w-xs border-[2px]! bg-[#faf7f0]! shadow-[5px_5px_0px_#1f1f1f]!"
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-project-dialog-title"
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xs rounded-2xl border-[2px] border-[#1f1f1f] bg-[#faf7f0] p-5 shadow-[5px_5px_0px_#1f1f1f] animate-in fade-in zoom-in-95 duration-150"
-          >
+          <div className="p-5">
             <div className="flex items-center gap-2 text-[#df4e3e] font-bold text-sm">
               <svg aria-hidden="true" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -421,7 +421,7 @@ export default function ProjectMenu() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalDialog>
       ) : null}
     </div>
   )

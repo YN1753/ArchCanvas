@@ -118,9 +118,10 @@ export default function InspectorShell() {
   return (
     <aside
       aria-label="架构属性检查器"
+      inert={!inspectorOpen || undefined}
       className={`transition-all duration-200 ease-in-out flex flex-col border-l-[1.5px] border-[#1f1f1f] bg-[#faf7f0] select-none shadow-sm z-30 shrink-0 overflow-hidden ${
         inspectorOpen
-          ? 'fixed inset-y-0 right-0 w-[340px] max-w-[92vw] xl:static opacity-100 shadow-[-4px_0_16px_rgba(0,0,0,0.08)] xl:shadow-sm'
+          ? 'absolute inset-y-0 right-0 w-[340px] max-w-[92vw] xl:static opacity-100 shadow-[-4px_0_16px_rgba(0,0,0,0.08)] xl:shadow-sm'
           : 'w-0 opacity-0 border-l-0 pointer-events-none'
       }`}
     >

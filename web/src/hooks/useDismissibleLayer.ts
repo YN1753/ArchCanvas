@@ -3,6 +3,8 @@ import { useEffect, useRef, type RefObject } from 'react'
 export interface UseDismissibleLayerOptions {
   closeOnEscape?: boolean
   closeOnOutsidePointer?: boolean
+  additionalRefs?: ReadonlyArray<RefObject<HTMLElement | null>>
+  shouldIgnoreOutsideTarget?: (target: Node) => boolean
 }
 
 /**
@@ -18,6 +20,10 @@ export function useDismissibleLayer(
   const closeOnOutsidePointer = options?.closeOnOutsidePointer ?? true
   const onDismissRef = useRef(onDismiss)
   onDismissRef.current = onDismiss
+  const additionalRefsRef = useRef(options?.additionalRefs)
+  additionalRefsRef.current = options?.additionalRefs
+  const ignoreOutsideRef = useRef(options?.shouldIgnoreOutsideTarget)
+  ignoreOutsideRef.current = options?.shouldIgnoreOutsideTarget
 
   useEffect(() => {
     if (!open) return
@@ -25,9 +31,11 @@ export function useDismissibleLayer(
     const handlePointerDown = (event: PointerEvent) => {
       if (!closeOnOutsidePointer) return
       const target = event.target as Node | null
-      if (containerRef.current && target && !containerRef.current.contains(target)) {
-        onDismissRef.current()
-      }
+      if (!target) return
+      if (containerRef.current?.contains(target)) return
+      if (additionalRefsRef.current?.some((ref) => ref.current?.contains(target))) return
+      if (ignoreOutsideRef.current?.(target)) return
+      onDismissRef.current()
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {

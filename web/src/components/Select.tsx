@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredFloating } from '../hooks/useAnchoredFloating'
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer'
 import { useListboxNavigation } from '../hooks/useListboxNavigation'
 
@@ -66,7 +68,20 @@ export default function Select<T extends string = string>({
     setSearch('')
   }, [])
 
-  useDismissibleLayer(containerRef, open, closeMenu, { closeOnEscape: false })
+  const { portalTarget, floatingStyle, floatingAttrs, isInsideFloatingTree } = useAnchoredFloating({
+    open,
+    anchorRef: containerRef,
+    preferredPlacement: placement,
+    align: 'start',
+    widthMode: 'min-match',
+    estimatedHeight: enableSearch ? 280 : 220,
+    offset: 4,
+  })
+
+  useDismissibleLayer(containerRef, open, closeMenu, {
+    closeOnEscape: false,
+    shouldIgnoreOutsideTarget: isInsideFloatingTree,
+  })
 
   useEffect(() => {
     if (open && enableSearch) {
@@ -113,7 +128,7 @@ export default function Select<T extends string = string>({
       title={title}
       onKeyDown={handleKeyDown}
       onBlur={(event) => {
-        if (open && containerRef.current && !containerRef.current.contains(event.relatedTarget as Node | null)) {
+        if (open && !isInsideFloatingTree(event.relatedTarget as Node | null)) {
           closeMenu()
         }
       }}
@@ -170,101 +185,110 @@ export default function Select<T extends string = string>({
         </svg>
       </button>
 
-      {open && (
-        <div
-          className={`absolute left-0 z-50 min-w-full overflow-hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white shadow-[3px_3px_0px_#1f1f1f] ${
-            placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'
-          } ${dropdownClassName}`}
-        >
-          {enableSearch && (
-            <div className="border-b border-stone-200 p-1.5 bg-[#faf7f0]">
-              <input
-                ref={searchInputRef}
-                type="text"
-                aria-label="搜索下拉选项"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索选项..."
-                className="w-full rounded border-[1.5px] border-[#1f1f1f] bg-white px-2 py-1 text-xs outline-none focus:border-[#df4e3e] focus:ring-1 focus:ring-[#df4e3e]/20"
-              />
-            </div>
-          )}
+      {open && portalTarget && floatingStyle
+        ? createPortal(
+            <div
+              {...floatingAttrs}
+              style={floatingStyle}
+              onKeyDown={handleKeyDown}
+              onBlur={(event) => {
+                if (open && !isInsideFloatingTree(event.relatedTarget as Node | null)) {
+                  closeMenu()
+                }
+              }}
+              className={`flex flex-col overflow-hidden rounded-lg border-[1.5px] border-[#1f1f1f] bg-white shadow-[3px_3px_0px_#1f1f1f] ${dropdownClassName}`}
+            >
+              {enableSearch && (
+                <div className="shrink-0 border-b border-stone-200 p-1.5 bg-[#faf7f0]">
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    aria-label="搜索下拉选项"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="搜索选项..."
+                    className="w-full rounded border-[1.5px] border-[#1f1f1f] bg-white px-2 py-1 text-xs outline-none focus:border-[#df4e3e] focus:ring-1 focus:ring-[#df4e3e]/20"
+                  />
+                </div>
+              )}
 
-          <div
-            ref={listboxRef}
-            id={listboxId}
-            role="listbox"
-            className="max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5"
-          >
-            {filteredOptions.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-stone-400">
-                未找到匹配项
-              </div>
-            ) : (
-              filteredOptions.map((opt, idx) => {
-                const isSelected = opt.value === value
-                const isHighlighted = idx === activeIndex
-                return (
-                  <button
-                    key={String(opt.value)}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    disabled={opt.disabled}
-                    onMouseEnter={() => {
-                      if (!opt.disabled) setActiveIndex(idx)
-                    }}
-                    onClick={() => {
-                      if (!opt.disabled) {
-                        onChange(opt.value)
-                        closeMenu()
-                      }
-                    }}
-                    className={`w-full flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-left transition select-none text-xs ${
-                      opt.disabled
-                        ? 'cursor-not-allowed opacity-40 text-stone-400'
-                        : isSelected
-                          ? 'bg-[#fdf0ee] font-bold text-[#df4e3e] cursor-pointer'
-                          : isHighlighted
-                            ? 'bg-stone-100 text-[#1f1f1f] cursor-pointer'
-                            : 'text-[#1f1f1f] hover:bg-stone-100 cursor-pointer'
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 truncate">
-                        <span className="truncate">{opt.label}</span>
-                        {opt.badge && (
-                          <span className="rounded bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.2 text-[9px] font-bold text-[#df4e3e] shrink-0">
-                            {opt.badge}
-                          </span>
-                        )}
-                      </div>
-                      {opt.sublabel && (
-                        <div className="text-[10px] text-stone-400 truncate mt-0.5">
-                          {opt.sublabel}
-                        </div>
-                      )}
-                    </div>
-
-                    {isSelected && (
-                      <svg
-                        aria-hidden="true"
-                        className="w-3.5 h-3.5 text-[#df4e3e] shrink-0"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2.5}
+              <div
+                ref={listboxRef}
+                id={listboxId}
+                role="listbox"
+                className="min-h-0 flex-1 max-h-80 overflow-y-auto no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden p-1 space-y-0.5"
+              >
+                {filteredOptions.length === 0 ? (
+                  <div className="px-3 py-3 text-center text-xs text-stone-400">
+                    未找到匹配项
+                  </div>
+                ) : (
+                  filteredOptions.map((opt, idx) => {
+                    const isSelected = opt.value === value
+                    const isHighlighted = idx === activeIndex
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        disabled={opt.disabled}
+                        onMouseEnter={() => {
+                          if (!opt.disabled) setActiveIndex(idx)
+                        }}
+                        onClick={() => {
+                          if (!opt.disabled) {
+                            onChange(opt.value)
+                            closeMenu()
+                          }
+                        }}
+                        className={`w-full flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-left transition select-none text-xs ${
+                          opt.disabled
+                            ? 'cursor-not-allowed opacity-40 text-stone-400'
+                            : isSelected
+                              ? 'bg-[#fdf0ee] font-bold text-[#df4e3e] cursor-pointer'
+                              : isHighlighted
+                                ? 'bg-stone-100 text-[#1f1f1f] cursor-pointer'
+                                : 'text-[#1f1f1f] hover:bg-stone-100 cursor-pointer'
+                        }`}
                       >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                )
-              })
-            )}
-          </div>
-        </div>
-      )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="truncate">{opt.label}</span>
+                            {opt.badge && (
+                              <span className="rounded bg-[#fdf0ee] border border-[#df4e3e]/30 px-1 py-0.2 text-[9px] font-bold text-[#df4e3e] shrink-0">
+                                {opt.badge}
+                              </span>
+                            )}
+                          </div>
+                          {opt.sublabel && (
+                            <div className="text-[10px] text-stone-400 truncate mt-0.5">
+                              {opt.sublabel}
+                            </div>
+                          )}
+                        </div>
+
+                        {isSelected && (
+                          <svg
+                            aria-hidden="true"
+                            className="w-3.5 h-3.5 text-[#df4e3e] shrink-0"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2.5}
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            </div>,
+            portalTarget,
+          )
+        : null}
     </div>
   )
 }
